@@ -64,21 +64,6 @@ Supprimer les volumes locaux de base de donnees :
 docker compose down -v
 ```
 
-## Script de push autopilote
-
-Le dossier `scripts/` contient un utilitaire Windows optionnel pour pousser ce squelette vers le depot GitHub cible :
-
-```powershell
-.\scripts\push_ubereats_scaffold.ps1
-```
-
-Le script clone ou reutilise le depot `toussaintcorporationinc/ubereats-claims-manager`, cree une branche, copie les fichiers du projet courant en excluant les secrets et caches locaux, commit puis pousse la branche. Il ne fait pas partie du lancement Docker et ne doit etre execute que lorsque le push GitHub est souhaite.
-
-Variables optionnelles :
-
-- `UBEREATS_CLAIMS_REPO_URL` : URL du depot cible ;
-- `UBEREATS_CLAIMS_TARGET_DIR` : dossier local du clone propre.
-
 ## Perimetre actuel
 
 Cette premiere base ne contient pas :
