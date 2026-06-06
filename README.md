@@ -1,6 +1,6 @@
 # Uber Eats Claims Manager
 
-Squelette technique V1 pour une application de gestion de reclamations Uber Eats.
+Application V1 pour gerer les reclamations Uber Eats de restaurants lorsque des commandes sont annulees apres preparation.
 
 Cette base contient :
 
@@ -11,6 +11,29 @@ Cette base contient :
 - un frontend Next.js TypeScript ;
 - un stockage local de fichiers pour le developpement ;
 - un `docker-compose.yml` pour lancer les trois services.
+
+## Domaine V1
+
+Le backend expose maintenant les premiers objets metier :
+
+- restaurants ;
+- commandes a reclamer ;
+- fichiers de preuve ;
+- brouillons internes d'email ;
+- fils email historisables sans integration externe ;
+- audit logs ;
+- dashboard de synthese.
+
+Les endpoints principaux sont :
+
+- `GET /health`
+- `GET|POST /v1/restaurants`
+- `GET|PATCH /v1/restaurants/{id}`
+- `GET|POST /v1/orders`
+- `GET|PATCH /v1/orders/{id}`
+- `GET|POST /v1/orders/{id}/evidence`
+- `GET /v1/orders/{id}/drafts`
+- `GET /v1/dashboard/summary`
 
 ## Demarrage rapide
 
@@ -38,6 +61,12 @@ Lancer les tests backend :
 
 ```bash
 docker compose exec backend pytest
+```
+
+Lancer les tests backend localement depuis `backend/` :
+
+```bash
+pytest -q
 ```
 
 Creer une migration Alembic :
@@ -71,7 +100,6 @@ Cette premiere base ne contient pas :
 - d'integration Gmail ;
 - d'integration OpenAI API ;
 - d'envoi reel d'email ;
-- de logique de relance ;
-- de logique metier avancee.
+- de relance automatique.
 
 Les fichiers sont stockes localement en developpement dans `backend/storage`.

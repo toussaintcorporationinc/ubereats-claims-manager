@@ -1,28 +1,38 @@
 # Status Flow
 
-Ce document decrit un flux cible simple pour les futures reclamations. Il n'est pas encore implemente dans cette base technique.
+Ce document decrit les statuts V1 des commandes a reclamer.
 
-## Statuts envisages
+## Statuts autorises
 
 - `draft` : reclamation creee mais incomplete ;
-- `ready_to_submit` : pieces et informations minimales presentes ;
-- `submitted` : reclamation envoyee ou declaree comme envoyee ;
-- `waiting_response` : attente d'une reponse ;
+- `missing_evidence` : preuves obligatoires manquantes ;
+- `ready_to_send` : dossier pret pour brouillon ou validation ;
+- `draft_email_created` : brouillon interne cree ;
+- `sent` : statut reserve a un futur envoi valide ;
+- `waiting_uber_response` : attente d'une reponse Uber Eats ;
+- `followup_1_sent` : premiere relance tracee dans le futur ;
+- `followup_2_sent` : deuxieme relance tracee dans le futur ;
+- `escalation_sent` : escalade tracee dans le futur ;
 - `accepted` : reclamation acceptee ;
-- `rejected` : reclamation rejetee ;
+- `payment_to_verify` : remboursement a verifier ;
+- `payment_confirmed` : remboursement confirme ;
+- `refused` : reclamation refusee ;
+- `manual_review` : traitement manuel requis ;
 - `closed` : dossier archive ou termine.
 
-## Transitions cible
+## Transitions cible indicatives
 
 ```text
-draft -> ready_to_submit -> submitted -> waiting_response
-waiting_response -> accepted -> closed
-waiting_response -> rejected -> closed
+draft -> missing_evidence -> ready_to_send -> draft_email_created
+draft_email_created -> sent -> waiting_uber_response
+waiting_uber_response -> accepted -> payment_to_verify -> payment_confirmed -> closed
+waiting_uber_response -> refused -> manual_review -> closed
 ```
 
-## Regles de base cible
+## Regles de base
 
 - une reclamation doit rester modifiable tant qu'elle est en `draft` ;
 - aucun envoi reel ne doit etre declenche automatiquement dans cette premiere base ;
-- les transitions definitives devront etre journalisees quand la logique metier sera ajoutee.
+- les relances automatiques ne sont pas implementees ;
+- les actions importantes doivent etre journalisees.
 
