@@ -234,7 +234,7 @@ def test_staff_cannot_create_order_on_unassigned_restaurant(unauthenticated_clie
     owner = register_owner(unauthenticated_client)
     restaurant = create_restaurant(unauthenticated_client, owner["access_token"])
     create_restaurant(unauthenticated_client, owner["access_token"], "Assigned")
-    staff = create_user(unauthenticated_client, owner["access_token"], "staff@example.com", "staff")
+    create_user(unauthenticated_client, owner["access_token"], "staff@example.com", "staff")
     staff_login = login(unauthenticated_client, "staff@example.com", "user-password")
 
     response = unauthenticated_client.post(

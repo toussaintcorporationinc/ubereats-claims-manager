@@ -1,6 +1,6 @@
 # Email Rules
 
-Ce document cadre les regles de brouillons email internes. Aucun envoi reel d'email n'est implemente dans la base actuelle.
+Ce document cadre les regles de brouillons email internes et de brouillons Gmail. Aucun envoi reel d'email n'est implemente dans la base actuelle.
 
 ## Principes cible
 
@@ -8,6 +8,7 @@ Ce document cadre les regles de brouillons email internes. Aucun envoi reel d'em
 - demander une validation utilisateur avant transmission ;
 - conserver une trace du contenu envoye quand l'envoi reel sera ajoute ;
 - separer la generation de contenu, la validation et l'envoi.
+- creer un brouillon Gmail uniquement apres action explicite d'un utilisateur autorise.
 
 ## Brouillons disponibles V1
 
@@ -18,6 +19,23 @@ Ce document cadre les regles de brouillons email internes. Aucun envoi reel d'em
 - `proof_reply`
 
 Les brouillons sont crees depuis des templates locaux dans `backend/app/templates/emails`.
+
+## Brouillons Gmail V1
+
+Un brouillon interne peut etre transforme en vrai brouillon Gmail via OAuth si `EMAIL_PROVIDER_ENABLED=true` et si l'utilisateur a connecte son compte Gmail.
+
+Regles :
+
+- aucun email n'est envoye automatiquement ;
+- le scope Gmail attendu est `https://www.googleapis.com/auth/gmail.compose` ;
+- `owner` peut creer un brouillon Gmail pour tous les restaurants ;
+- `manager` peut creer un brouillon Gmail pour ses restaurants assignes ;
+- `staff` ne peut pas creer de brouillon Gmail ;
+- le destinataire par defaut est `DEFAULT_UBER_EATS_SUPPORT_EMAIL` ;
+- les preuves peuvent etre jointes si `include_evidence=true` ;
+- seules les preuves existantes et accessibles via le service de stockage sont jointes ;
+- la taille totale des pieces jointes est limitee par `EMAIL_MAX_ATTACHMENT_TOTAL_MB` ;
+- chaque creation cree un `EmailProviderDraft` et un `AuditLog`.
 
 ## Regles de generation
 
@@ -40,8 +58,6 @@ Les brouillons sont crees depuis des templates locaux dans `backend/app/template
 
 ## Hors perimetre actuel
 
-- integration Gmail ;
-- OAuth Google ;
 - SMTP ;
 - envoi automatique ;
 - relances automatiques ;

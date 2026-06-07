@@ -7,6 +7,7 @@ const positiveStatuses = new Set([
   "created",
   "parsed",
   "confirmed",
+  "provider_draft_created",
 ]);
 const warningStatuses = new Set([
   "draft",

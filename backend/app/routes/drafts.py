@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import get_accessible_restaurant_ids, get_current_user
 from app.core.database import get_db
-from app.models import ClaimOrder, EmailDraft, Restaurant, User
+from app.models import ClaimOrder, EmailDraft, EmailProviderDraft, Restaurant, User
 from app.schemas.domain import EmailDraftSummaryRead
 
 router = APIRouter(prefix="/v1/drafts", tags=["drafts"])
@@ -38,16 +38,25 @@ def list_all_drafts(
 
     rows = db.execute(statement).all()
 
-    return [
-        EmailDraftSummaryRead(
-            id=row.id,
-            order_id=row.order_id,
-            draft_type=row.draft_type,
-            subject=row.subject,
-            status=row.status,
-            created_at=row.created_at,
-            restaurant_name=row.restaurant_name,
-            uber_order_number=row.uber_order_number,
-        )
-        for row in rows
-    ]
+    return [build_draft_summary(db, row) for row in rows]
+
+
+def build_draft_summary(db: Session, row: object) -> EmailDraftSummaryRead:
+    provider_draft = db.scalar(
+        select(EmailProviderDraft)
+        .where(EmailProviderDraft.email_draft_id == row.id)
+        .order_by(EmailProviderDraft.id.desc())
+    )
+    return EmailDraftSummaryRead(
+        id=row.id,
+        order_id=row.order_id,
+        draft_type=row.draft_type,
+        subject=row.subject,
+        status=row.status,
+        created_at=row.created_at,
+        restaurant_name=row.restaurant_name,
+        uber_order_number=row.uber_order_number,
+        provider=provider_draft.provider if provider_draft else None,
+        provider_status=provider_draft.status if provider_draft else None,
+        provider_draft_id=provider_draft.provider_draft_id if provider_draft else None,
+    )

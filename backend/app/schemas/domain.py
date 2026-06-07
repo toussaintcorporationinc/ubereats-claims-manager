@@ -36,6 +36,8 @@ EmailDraftStatus = Literal["created", "draft", "ready", "archived"]
 UserRole = Literal["owner", "manager", "staff"]
 ImportBatchStatus = Literal["uploaded", "parsed", "confirmed", "partially_imported", "failed", "cancelled"]
 ImportRowStatus = Literal["valid", "invalid", "duplicate", "unauthorized", "created", "skipped"]
+EmailProviderName = Literal["gmail"]
+EmailProviderDraftStatus = Literal["provider_draft_created", "failed"]
 
 
 class UserRead(BaseModel):
@@ -242,6 +244,9 @@ class EmailDraftRead(BaseModel):
     status: EmailDraftStatus
     created_at: datetime
     updated_at: datetime
+    provider: str | None = None
+    provider_status: str | None = None
+    provider_draft_id: str | None = None
 
 
 class EmailDraftSummaryRead(BaseModel):
@@ -253,6 +258,9 @@ class EmailDraftSummaryRead(BaseModel):
     created_at: datetime
     restaurant_name: str | None
     uber_order_number: str | None
+    provider: str | None = None
+    provider_status: str | None = None
+    provider_draft_id: str | None = None
 
 
 class DashboardRestaurantSummary(BaseModel):
@@ -355,4 +363,37 @@ class ImportConfirmResponse(BaseModel):
     created_orders_count: int
     skipped_rows: int
     errors: list[str]
+
+
+class GmailConnectionStatus(BaseModel):
+    connected: bool
+    email_address: str | None
+    provider: EmailProviderName
+    enabled: bool
+
+
+class GmailOAuthStartResponse(BaseModel):
+    authorization_url: str
+
+
+class GmailDraftCreate(BaseModel):
+    to_email: str | None = None
+    include_evidence: bool = True
+
+
+class EmailProviderDraftRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email_draft_id: int
+    provider: EmailProviderName
+    provider_draft_id: str | None
+    provider_thread_id: str | None
+    to_email: str
+    subject: str
+    status: EmailProviderDraftStatus
+    created_by_user_id: int
+    created_at: datetime
+    updated_at: datetime
+    error_message: str | None
 

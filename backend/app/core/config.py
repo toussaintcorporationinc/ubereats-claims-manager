@@ -14,6 +14,13 @@ class Settings(BaseSettings):
     max_evidence_file_size_mb: int = 15
     import_max_file_size_mb: int = 10
     import_storage_dir: Path = Path("data/imports")
+    gmail_oauth_client_id: str | None = None
+    gmail_oauth_client_secret: str | None = None
+    gmail_oauth_redirect_uri: str = "http://localhost:8000/v1/email/gmail/oauth/callback"
+    gmail_scopes: str = "https://www.googleapis.com/auth/gmail.compose"
+    default_uber_eats_support_email: str = "merchants@uber.com"
+    email_provider_enabled: bool = False
+    email_max_attachment_total_mb: int = 20
     backend_cors_origins: str | None = None
     cors_origins: str = "http://localhost:3000"
     secret_key: str | None = None

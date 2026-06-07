@@ -28,6 +28,7 @@ Le backend expose maintenant les premiers objets metier :
 - service de generation de brouillons internes d'email ;
 - upload local securise des fichiers de preuve ;
 - import massif CSV/XLSX des commandes annulees ;
+- creation de vrais brouillons Gmail via OAuth, sans envoi automatique ;
 - dashboard de synthese.
 
 Les endpoints principaux sont :
@@ -50,6 +51,11 @@ Les endpoints principaux sont :
 - `GET /v1/evidence/{id}/download`
 - `GET|POST /v1/orders/{id}/drafts`
 - `GET /v1/drafts`
+- `GET /v1/email/gmail/status`
+- `GET /v1/email/gmail/oauth/start`
+- `GET /v1/email/gmail/oauth/callback`
+- `POST /v1/email/gmail/disconnect`
+- `POST /v1/drafts/{id}/gmail-draft`
 - `GET /v1/dashboard/summary`
 - `POST /v1/imports/orders/preview`
 - `GET /v1/imports`
@@ -66,6 +72,8 @@ Les preuves peuvent etre ajoutees par upload local securise depuis le detail d'u
 
 Les commandes peuvent aussi etre importees en masse depuis `/imports/new` avec un fichier CSV ou XLSX. Le backend analyse les lignes, detecte erreurs, doublons et restaurants non autorises, puis cree uniquement les lignes valides lors de la confirmation.
 
+Les brouillons internes peuvent etre transformes en brouillons Gmail reels lorsque `EMAIL_PROVIDER_ENABLED=true` et que l'OAuth Gmail est configure. Cette integration utilise le scope `gmail.compose`, joint les preuves de la commande si demande et n'envoie jamais l'email automatiquement.
+
 ## Demarrage rapide
 
 1. Copier le fichier d'environnement :
@@ -76,6 +84,7 @@ cp .env.example .env
 
 Le stockage local des preuves utilise `EVIDENCE_STORAGE_BACKEND=local`, `EVIDENCE_STORAGE_DIR` et `MAX_EVIDENCE_FILE_SIZE_MB`.
 Les imports utilisent `IMPORT_STORAGE_DIR` et `IMPORT_MAX_FILE_SIZE_MB`.
+Gmail reste desactive par defaut avec `EMAIL_PROVIDER_ENABLED=false`. Pour tester la creation de brouillons Gmail, renseigner `GMAIL_OAUTH_CLIENT_ID`, `GMAIL_OAUTH_CLIENT_SECRET`, `GMAIL_OAUTH_REDIRECT_URI`, `GMAIL_SCOPES`, `DEFAULT_UBER_EATS_SUPPORT_EMAIL` et `EMAIL_MAX_ATTACHMENT_TOTAL_MB`.
 
 2. Lancer les services :
 
@@ -175,9 +184,8 @@ Documentation securite et roles : `docs/SECURITY.md`.
 
 ## Perimetre actuel
 
-Cette premiere base ne contient pas :
+Cette base contient une integration Gmail limitee a la creation de brouillons. Elle ne contient pas :
 
-- d'integration Gmail ;
 - d'integration OpenAI API ;
 - d'envoi reel d'email ;
 - d'envoi Gmail, Microsoft Graph ou SMTP ;

@@ -95,6 +95,9 @@ export type EmailDraft = {
   subject: string;
   body: string;
   status: string;
+  provider: "gmail" | null;
+  provider_status: string | null;
+  provider_draft_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -108,6 +111,40 @@ export type EmailDraftSummary = {
   created_at: string;
   restaurant_name: string | null;
   uber_order_number: string | null;
+  provider: "gmail" | null;
+  provider_status: string | null;
+  provider_draft_id: string | null;
+};
+
+export type GmailConnectionStatus = {
+  connected: boolean;
+  email_address: string | null;
+  provider: "gmail";
+  enabled: boolean;
+};
+
+export type GmailOAuthStartResponse = {
+  authorization_url: string;
+};
+
+export type GmailDraftCreatePayload = {
+  to_email?: string | null;
+  include_evidence: boolean;
+};
+
+export type EmailProviderDraft = {
+  id: number;
+  email_draft_id: number;
+  provider: "gmail";
+  provider_draft_id: string | null;
+  provider_thread_id: string | null;
+  to_email: string;
+  subject: string;
+  status: "provider_draft_created" | "failed";
+  created_by_user_id: number;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type DashboardRestaurantSummary = {
@@ -432,6 +469,14 @@ export const api = {
     }),
   getOrderDrafts: (id: number) => request<EmailDraft[]>(`/v1/orders/${id}/drafts`),
   getDrafts: () => request<EmailDraftSummary[]>("/v1/drafts"),
+  getGmailStatus: () => request<GmailConnectionStatus>("/v1/email/gmail/status"),
+  startGmailOAuth: () => request<GmailOAuthStartResponse>("/v1/email/gmail/oauth/start"),
+  disconnectGmail: () =>
+    request<{ disconnected: boolean }>("/v1/email/gmail/disconnect", {
+      method: "POST",
+    }),
+  createGmailDraft: (draftId: number, payload: GmailDraftCreatePayload) =>
+    postJson<EmailProviderDraft, GmailDraftCreatePayload>(`/v1/drafts/${draftId}/gmail-draft`, payload),
   previewOrderImport: (file: File) => {
     const formData = new FormData();
     formData.append("file", file);

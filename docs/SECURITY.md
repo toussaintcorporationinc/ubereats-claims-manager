@@ -55,6 +55,36 @@ Regles appliquees :
 - la taille maximale est controlee par `IMPORT_MAX_FILE_SIZE_MB` ;
 - les fichiers acceptes sont limites a `.csv` et `.xlsx`.
 
+## Gmail OAuth et brouillons provider
+
+La V1 Gmail cree uniquement des brouillons Gmail avec le scope `gmail.compose`. Aucun endpoint n'envoie automatiquement un email.
+
+Variables attendues :
+
+- `EMAIL_PROVIDER_ENABLED=false` par defaut ;
+- `GMAIL_OAUTH_CLIENT_ID` ;
+- `GMAIL_OAUTH_CLIENT_SECRET` ;
+- `GMAIL_OAUTH_REDIRECT_URI` ;
+- `GMAIL_SCOPES=https://www.googleapis.com/auth/gmail.compose` ;
+- `DEFAULT_UBER_EATS_SUPPORT_EMAIL` ;
+- `EMAIL_MAX_ATTACHMENT_TOTAL_MB`.
+
+Regles appliquees :
+
+- OAuth `state` est obligatoire et signe ;
+- les tokens Gmail ne sont jamais retournes par l'API ;
+- les tokens Gmail ne doivent jamais etre logges ;
+- les secrets OAuth restent uniquement dans l'environnement serveur ;
+- `EmailProviderDraft` conserve l'historique des brouillons crees sans exposer les tokens ;
+- la deconnexion supprime les tokens stockes et conserve l'historique provider ;
+- les pieces jointes sont lues via le service de stockage des preuves ;
+- la limite totale de pieces jointes est controlee avant appel Gmail ;
+- `owner` peut creer un brouillon Gmail pour tous les restaurants ;
+- `manager` peut creer un brouillon Gmail pour ses restaurants assignes ;
+- `staff` ne peut pas creer de brouillon Gmail.
+
+Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit une protection isolee et remplacable ; une version production plus avancee pourra brancher un KMS ou un gestionnaire de secrets sans changer les routes.
+
 ## Roles
 
 ### owner
@@ -65,6 +95,7 @@ Regles appliquees :
 - creation et modification des commandes ;
 - validation des dossiers ;
 - generation des brouillons internes ;
+- creation de brouillons Gmail ;
 - dashboard global.
 
 ### manager
@@ -74,6 +105,7 @@ Regles appliquees :
 - ajout de preuves ;
 - validation des dossiers ;
 - generation des brouillons internes ;
+- creation de brouillons Gmail pour ses restaurants ;
 - dashboard filtre sur ses restaurants.
 
 ### staff
@@ -85,7 +117,8 @@ Regles appliquees :
 - pas de gestion utilisateurs ;
 - pas de creation restaurant ;
 - pas de validation dossier ;
-- pas de generation de brouillon.
+- pas de generation de brouillon ;
+- pas de creation de brouillon Gmail.
 
 ## Audit
 
@@ -100,9 +133,9 @@ Un `AuditLog` est cree pour :
 
 ## Limites V1
 
-- pas de refresh token ;
+- pas de refresh token applicatif pour les sessions JWT ;
 - pas de rotation de cle automatisee ;
 - pas d'auth multi-facteur ;
 - pas de stockage cloud ;
 - pas d'envoi reel d'email ;
-- pas d'integration Gmail ou OpenAI.
+- pas d'integration OpenAI.

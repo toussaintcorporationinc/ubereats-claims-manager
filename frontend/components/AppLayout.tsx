@@ -13,6 +13,7 @@ const navigation = [
   { href: "/orders", label: "Commandes" },
   { href: "/imports", label: "Imports" },
   { href: "/drafts", label: "Brouillons" },
+  { href: "/settings/email", label: "Email", ownerOrManagerOnly: true },
   { href: "/users", label: "Utilisateurs", ownerOnly: true },
 ];
 
@@ -52,6 +53,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <nav className="nav-list">
           {navigation
             .filter((item) => !item.ownerOnly || user.role === "owner")
+            .filter((item) => !item.ownerOrManagerOnly || user.role === "owner" || user.role === "manager")
             .map((item) => (
               <Link key={item.href} href={item.href} className="nav-link">
                 {item.label}

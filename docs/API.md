@@ -21,6 +21,7 @@ Tous les endpoints `/v1/*` sont proteges par un token Bearer, sauf :
 
 - `POST /v1/auth/register`
 - `POST /v1/auth/login`
+- `GET /v1/email/gmail/oauth/callback`, protege par `state` OAuth signe
 
 `GET /health` reste public.
 
@@ -418,6 +419,9 @@ Reponse :
   "subject": "Demande de paiement - commande annulee apres preparation - UBER-123",
   "body": "...",
   "status": "created",
+  "provider": null,
+  "provider_status": null,
+  "provider_draft_id": null,
   "created_at": "2026-06-07T10:00:00Z",
   "updated_at": "2026-06-07T10:00:00Z"
 }
@@ -452,10 +456,108 @@ Retourne tous les brouillons internes avec les informations minimales utiles a l
     "status": "created",
     "created_at": "2026-06-07T10:00:00Z",
     "restaurant_name": "Restaurant Exemple",
-    "uber_order_number": "UBER-123"
+    "uber_order_number": "UBER-123",
+    "provider": "gmail",
+    "provider_status": "provider_draft_created",
+    "provider_draft_id": "r123..."
   }
 ]
 ```
+
+## Gmail drafts
+
+L'integration Gmail est limitee a la creation de brouillons dans Gmail. Elle n'envoie jamais l'email.
+
+Variables attendues :
+
+- `EMAIL_PROVIDER_ENABLED`
+- `GMAIL_OAUTH_CLIENT_ID`
+- `GMAIL_OAUTH_CLIENT_SECRET`
+- `GMAIL_OAUTH_REDIRECT_URI`
+- `GMAIL_SCOPES`
+- `DEFAULT_UBER_EATS_SUPPORT_EMAIL`
+- `EMAIL_MAX_ATTACHMENT_TOTAL_MB`
+
+### Status Gmail
+
+- `GET /v1/email/gmail/status`
+
+Retour :
+
+```json
+{
+  "connected": false,
+  "email_address": null,
+  "provider": "gmail",
+  "enabled": false
+}
+```
+
+### Demarrer OAuth Gmail
+
+- `GET /v1/email/gmail/oauth/start`
+
+Retourne une URL d'autorisation Google si le provider est active et configure.
+
+```json
+{
+  "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?..."
+}
+```
+
+### Callback OAuth Gmail
+
+- `GET /v1/email/gmail/oauth/callback?code=...&state=...`
+
+Le callback verifie le `state` signe, echange le code OAuth, stocke les tokens sous forme protegee et retourne une page HTML simple.
+
+### Deconnexion Gmail
+
+- `POST /v1/email/gmail/disconnect`
+
+Deconnecte le compte Gmail de l'utilisateur courant sans supprimer l'historique des brouillons provider.
+
+### Creer un brouillon Gmail
+
+- `POST /v1/drafts/{draft_id}/gmail-draft`
+
+Body :
+
+```json
+{
+  "to_email": "merchants@uber.com",
+  "include_evidence": true
+}
+```
+
+Reponse :
+
+```json
+{
+  "id": 12,
+  "email_draft_id": 123,
+  "provider": "gmail",
+  "provider_draft_id": "r123...",
+  "provider_thread_id": "thread-123",
+  "to_email": "merchants@uber.com",
+  "subject": "Demande de paiement - commande annulee apres preparation - UBER-123",
+  "status": "provider_draft_created",
+  "created_by_user_id": 1,
+  "error_message": null,
+  "created_at": "2026-06-08T10:00:00Z",
+  "updated_at": "2026-06-08T10:00:00Z"
+}
+```
+
+Regles :
+
+- `owner` peut creer un brouillon Gmail pour tous les restaurants ;
+- `manager` peut creer un brouillon Gmail pour ses restaurants assignes ;
+- `staff` ne peut pas creer de brouillon Gmail ;
+- un compte Gmail connecte est obligatoire ;
+- les preuves sont jointes si `include_evidence=true` ;
+- la limite totale de pieces jointes est controlee par `EMAIL_MAX_ATTACHMENT_TOTAL_MB` ;
+- chaque creation ajoute un `AuditLog`.
 
 ## Dashboard
 
@@ -475,8 +577,8 @@ Retourne :
 
 ## Hors perimetre V1 actuelle
 
-- pas d'integration Gmail ;
 - pas d'integration OpenAI API ;
 - pas d'envoi reel d'email ;
+- pas d'envoi automatique Gmail ;
 - pas de generation d'email par la validation ;
 - pas de relance automatique.
