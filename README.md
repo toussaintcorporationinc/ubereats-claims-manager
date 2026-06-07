@@ -65,49 +65,64 @@ docker compose up --build
 
 ## Commandes utiles
 
-Lancer les tests backend :
+### Backend local
+
+Depuis la racine :
 
 ```bash
-docker compose exec backend pytest
+cd backend
+python -m venv .venv
 ```
 
-Lancer les tests backend localement depuis `backend/` :
+Activation Windows :
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Activation Linux/macOS :
 
 ```bash
+source .venv/bin/activate
+```
+
+Installation et verification :
+
+```bash
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -e ".[dev]"
 pytest -q
+python -m compileall -q app
+alembic upgrade head
+uvicorn app.main:app --reload
 ```
 
-Installer le frontend :
+### Frontend local
 
 ```bash
 cd frontend
 npm ci
-```
-
-Lancer le frontend localement :
-
-```bash
-cd frontend
+npm run typecheck
+npm run build
 npm run dev
 ```
 
-Verifier le frontend :
+### Docker
 
 ```bash
-cd frontend
-npm run typecheck
+docker compose up --build
 ```
 
-Creer une migration Alembic :
+Valider la configuration Docker Compose :
 
 ```bash
-docker compose exec backend alembic revision --autogenerate -m "describe_change"
+docker compose config
 ```
 
-Appliquer les migrations :
+Lancer les tests backend dans Docker :
 
 ```bash
-docker compose exec backend alembic upgrade head
+docker compose exec backend pytest
 ```
 
 Arreter les services :
@@ -121,6 +136,8 @@ Supprimer les volumes locaux de base de donnees :
 ```bash
 docker compose down -v
 ```
+
+Documentation CI et developpement : `docs/CI.md`.
 
 ## Perimetre actuel
 
