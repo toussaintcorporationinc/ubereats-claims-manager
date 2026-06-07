@@ -2,16 +2,20 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.auth import get_accessible_restaurant_ids, get_current_user
 from app.core.database import get_db
-from app.models import ClaimOrder, EmailDraft, Restaurant
+from app.models import ClaimOrder, EmailDraft, Restaurant, User
 from app.schemas.domain import EmailDraftSummaryRead
 
 router = APIRouter(prefix="/v1/drafts", tags=["drafts"])
 
 
 @router.get("", response_model=list[EmailDraftSummaryRead])
-def list_all_drafts(db: Session = Depends(get_db)) -> list[EmailDraftSummaryRead]:
-    rows = db.execute(
+def list_all_drafts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[EmailDraftSummaryRead]:
+    statement = (
         select(
             EmailDraft.id,
             EmailDraft.order_id,
@@ -25,7 +29,14 @@ def list_all_drafts(db: Session = Depends(get_db)) -> list[EmailDraftSummaryRead
         .join(ClaimOrder, EmailDraft.order_id == ClaimOrder.id)
         .join(Restaurant, ClaimOrder.restaurant_id == Restaurant.id)
         .order_by(EmailDraft.created_at.desc(), EmailDraft.id.desc())
-    ).all()
+    )
+    accessible_ids = get_accessible_restaurant_ids(db, current_user)
+    if accessible_ids is not None:
+        if not accessible_ids:
+            return []
+        statement = statement.where(ClaimOrder.restaurant_id.in_(accessible_ids))
+
+    rows = db.execute(statement).all()
 
     return [
         EmailDraftSummaryRead(

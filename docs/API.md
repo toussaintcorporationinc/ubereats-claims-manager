@@ -15,6 +15,78 @@ Retour attendu :
 }
 ```
 
+## Authentification
+
+Tous les endpoints `/v1/*` sont proteges par un token Bearer, sauf :
+
+- `POST /v1/auth/register`
+- `POST /v1/auth/login`
+
+`GET /health` reste public.
+
+### Bootstrap premier owner
+
+- `POST /v1/auth/register`
+
+Body :
+
+```json
+{
+  "email": "owner@example.com",
+  "password": "mot-de-passe-long",
+  "full_name": "Owner"
+}
+```
+
+Ce endpoint cree uniquement le premier utilisateur owner. Si un utilisateur existe deja, l'inscription publique est refusee.
+
+### Login
+
+- `POST /v1/auth/login`
+
+Retour :
+
+```json
+{
+  "access_token": "...",
+  "token_type": "bearer",
+  "user": {
+    "id": 1,
+    "email": "owner@example.com",
+    "full_name": "Owner",
+    "role": "owner",
+    "active": true,
+    "created_at": "2026-06-07T10:00:00Z",
+    "updated_at": "2026-06-07T10:00:00Z"
+  }
+}
+```
+
+### Utilisateur courant
+
+- `GET /v1/auth/me`
+
+## Users
+
+Endpoints reserves au role `owner` :
+
+- `GET /v1/users`
+- `POST /v1/users`
+- `GET /v1/users/{id}`
+- `PATCH /v1/users/{id}`
+- `POST /v1/users/{id}/restaurants`
+- `DELETE /v1/users/{id}/restaurants/{restaurant_id}`
+
+Roles autorises :
+
+- `owner`
+- `manager`
+- `staff`
+
+`POST /v1/users` cree un utilisateur interne avec mot de passe hash et ajoute un `AuditLog`.
+
+`POST /v1/users/{id}/restaurants` assigne un restaurant a un manager ou staff via `UserRestaurantAccess` et ajoute un `AuditLog`.
+
 ## Restaurants
 
 - `GET /v1/restaurants`
@@ -29,6 +101,12 @@ Champs principaux :
 - `active` vaut `true` par defaut.
 
 La creation d'un restaurant ajoute un `AuditLog`.
+
+Acces :
+
+- `owner` voit et gere tous les restaurants ;
+- `manager` et `staff` voient uniquement les restaurants assignes ;
+- seul `owner` peut creer ou modifier un restaurant.
 
 ## Orders
 
@@ -50,6 +128,12 @@ Regles :
 - le meme `uber_order_number` reste autorise pour deux restaurants differents.
 
 La creation d'une commande ajoute un `AuditLog`.
+
+Acces :
+
+- `owner` voit et modifie toutes les commandes ;
+- `manager` voit et modifie les commandes des restaurants assignes ;
+- `staff` voit les commandes des restaurants assignes, peut creer une commande et ajouter des preuves, mais ne peut pas modifier, valider ou generer de brouillon.
 
 ### Validation d'un dossier
 
@@ -83,6 +167,8 @@ Un dossier complet doit avoir :
 Si le dossier est incomplet, son statut devient `missing_evidence`, la reponse contient `missing_items` et `blocking_reasons`, et un `AuditLog` est cree.
 
 Si le dossier est complet, son statut devient `ready_to_send` et un `AuditLog` est cree.
+
+La validation est autorisee pour `owner` et `manager`.
 
 Statuts finaux non revalidables :
 
@@ -127,6 +213,8 @@ Types autorises :
 
 L'ajout d'une preuve ajoute un `AuditLog`.
 
+L'ajout d'une preuve est autorise aux utilisateurs ayant acces au restaurant de la commande.
+
 ## Drafts
 
 - `GET /v1/drafts`
@@ -134,6 +222,8 @@ L'ajout d'une preuve ajoute un `AuditLog`.
 - `POST /v1/orders/{id}/drafts`
 
 Les brouillons sont internes. Aucun envoi reel d'email n'est implemente.
+
+La creation de brouillon est autorisee a `owner` et `manager`. `staff` peut consulter les brouillons des restaurants assignes, mais ne peut pas en generer.
 
 Types prevus :
 
@@ -217,6 +307,8 @@ Retourne :
 - `total_refused_amount`
 - `orders_by_status`
 - `orders_by_restaurant`
+
+`owner` obtient une vue globale. `manager` et `staff` obtiennent une vue filtree sur leurs restaurants assignes.
 
 ## Hors perimetre V1 actuelle
 

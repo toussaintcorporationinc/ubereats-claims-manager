@@ -32,7 +32,7 @@ class EmailDraftBusinessError(Exception):
         self.blocking_reasons = blocking_reasons or []
 
 
-def create_email_draft(db: Session, order_id: int, draft_type: str) -> EmailDraft:
+def create_email_draft(db: Session, order_id: int, draft_type: str, user_id: int | None = None) -> EmailDraft:
     order = db.get(ClaimOrder, order_id)
     if order is None:
         raise EmailDraftNotFoundError("Order not found")
@@ -84,6 +84,7 @@ def create_email_draft(db: Session, order_id: int, draft_type: str) -> EmailDraf
         entity_type="email_draft",
         entity_id=draft.id,
         action="create_email_draft",
+        user_id=user_id,
         old_value={"order_status": previous_status},
         new_value={
             "draft_id": draft.id,

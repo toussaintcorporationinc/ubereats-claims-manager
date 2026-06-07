@@ -57,6 +57,7 @@ EMAIL_DRAFT_TYPES = (
 EMAIL_DRAFT_STATUSES = ("created", "draft", "ready", "archived")
 EMAIL_DIRECTIONS = ("inbound", "outbound")
 EMAIL_PROVIDERS = ("internal", "gmail", "microsoft_graph")
+USER_ROLES = ("owner", "manager", "staff")
 
 
 def utc_now() -> datetime:
@@ -78,6 +79,43 @@ class TimestampMixin:
     )
 
 
+class User(TimestampMixin, Base):
+    __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(check_in_constraint("role", USER_ROLES), name="ck_users_role"),
+        Index("ix_users_email", "email", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(500), nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    restaurant_access: Mapped[list["UserRestaurantAccess"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+
+class UserRestaurantAccess(Base):
+    __tablename__ = "user_restaurant_access"
+    __table_args__ = (
+        UniqueConstraint("user_id", "restaurant_id", name="uq_user_restaurant_access"),
+        Index("ix_user_restaurant_access_user_id", "user_id"),
+        Index("ix_user_restaurant_access_restaurant_id", "restaurant_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    restaurant_id: Mapped[int] = mapped_column(ForeignKey("restaurants.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    user: Mapped[User] = relationship(back_populates="restaurant_access")
+    restaurant: Mapped["Restaurant"] = relationship(back_populates="user_access")
+
+
 class Restaurant(TimestampMixin, Base):
     __tablename__ = "restaurants"
 
@@ -90,6 +128,7 @@ class Restaurant(TimestampMixin, Base):
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     orders: Mapped[list["ClaimOrder"]] = relationship(back_populates="restaurant")
+    user_access: Mapped[list[UserRestaurantAccess]] = relationship(back_populates="restaurant")
 
 
 class ClaimOrder(TimestampMixin, Base):

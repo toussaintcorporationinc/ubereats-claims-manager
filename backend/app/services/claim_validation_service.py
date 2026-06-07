@@ -39,7 +39,7 @@ def get_claim_validation_gaps(db: Session, order: ClaimOrder) -> tuple[list[str]
     return missing_items, blocking_reasons
 
 
-def validate_claim_order(db: Session, order_id: int) -> ClaimValidationResponse:
+def validate_claim_order(db: Session, order_id: int, user_id: int | None = None) -> ClaimValidationResponse:
     order = db.get(ClaimOrder, order_id)
     if order is None:
         return ClaimValidationResponse(
@@ -61,7 +61,7 @@ def validate_claim_order(db: Session, order_id: int) -> ClaimValidationResponse:
             missing_items=[],
             blocking_reasons=["final_status_cannot_be_validated"],
         )
-        add_validation_audit_log(db, order, previous_status, result)
+        add_validation_audit_log(db, order, previous_status, result, user_id=user_id)
         return result
 
     missing_items, blocking_reasons = get_claim_validation_gaps(db, order)
@@ -76,7 +76,7 @@ def validate_claim_order(db: Session, order_id: int) -> ClaimValidationResponse:
         missing_items=missing_items,
         blocking_reasons=blocking_reasons,
     )
-    add_validation_audit_log(db, order, previous_status, result)
+    add_validation_audit_log(db, order, previous_status, result, user_id=user_id)
     return result
 
 
@@ -85,12 +85,14 @@ def add_validation_audit_log(
     order: ClaimOrder,
     previous_status: str,
     result: ClaimValidationResponse,
+    user_id: int | None = None,
 ) -> None:
     add_audit_log(
         db,
         entity_type="claim_order",
         entity_id=order.id,
         action="validate_claim_order",
+        user_id=user_id,
         old_value={"status": previous_status},
         new_value={
             "status": result.new_status,

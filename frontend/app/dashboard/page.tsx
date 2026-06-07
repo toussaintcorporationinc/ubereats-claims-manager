@@ -7,9 +7,11 @@ import EmptyState from "@/components/EmptyState";
 import LoadingState from "@/components/LoadingState";
 import StatCard from "@/components/StatCard";
 import StatusBadge from "@/components/StatusBadge";
+import { useAuth } from "@/lib/auth";
 import { api, type DashboardSummary, formatCurrency } from "@/lib/api";
 
 export default function DashboardPage() {
+  const { user } = useAuth();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -37,9 +39,11 @@ export default function DashboardPage() {
           <Link href="/orders/new" className="button">
             Nouvelle commande
           </Link>
-          <Link href="/restaurants/new" className="secondary-button">
-            Nouveau restaurant
-          </Link>
+          {user?.role === "owner" ? (
+            <Link href="/restaurants/new" className="secondary-button">
+              Nouveau restaurant
+            </Link>
+          ) : null}
         </div>
       </div>
 

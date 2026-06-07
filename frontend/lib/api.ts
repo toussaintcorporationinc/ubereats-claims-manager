@@ -1,6 +1,8 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const TOKEN_STORAGE_KEY = "ubereats_claims_manager_token";
 
 export type MoneyValue = string | number | null;
+export type UserRole = "owner" | "manager" | "staff";
 
 export type ClaimOrderStatus =
   | "draft"
@@ -118,6 +120,56 @@ export type DashboardSummary = {
   orders_by_restaurant: DashboardRestaurantSummary[];
 };
 
+export type User = {
+  id: number;
+  email: string;
+  full_name: string | null;
+  role: UserRole;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TokenResponse = {
+  access_token: string;
+  token_type: "bearer";
+  user: User;
+};
+
+export type LoginPayload = {
+  email: string;
+  password: string;
+};
+
+export type RegisterOwnerPayload = {
+  email: string;
+  password: string;
+  full_name?: string | null;
+};
+
+export type UserCreatePayload = {
+  email: string;
+  password: string;
+  full_name?: string | null;
+  role: UserRole;
+  active: boolean;
+};
+
+export type UserUpdatePayload = {
+  email?: string;
+  password?: string;
+  full_name?: string | null;
+  role?: UserRole;
+  active?: boolean;
+};
+
+export type UserRestaurantAccess = {
+  id: number;
+  user_id: number;
+  restaurant_id: number;
+  created_at: string;
+};
+
 export type ClaimValidationResponse = {
   order_id: number;
   is_complete: boolean;
@@ -172,11 +224,34 @@ export class ApiError extends Error {
   }
 }
 
+export function getStoredToken(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return window.localStorage.getItem(TOKEN_STORAGE_KEY);
+}
+
+export function setStoredToken(token: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
+}
+
+export function clearStoredToken(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const token = getStoredToken();
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init.headers ?? {}),
     },
     cache: "no-store",
@@ -222,10 +297,38 @@ function postJson<TResponse, TPayload>(path: string, payload: TPayload): Promise
 }
 
 export const api = {
+  login: async (payload: LoginPayload) => {
+    const response = await postJson<TokenResponse, LoginPayload>("/v1/auth/login", payload);
+    setStoredToken(response.access_token);
+    return response;
+  },
+  registerOwner: async (payload: RegisterOwnerPayload) => {
+    const response = await postJson<TokenResponse, RegisterOwnerPayload>("/v1/auth/register", payload);
+    setStoredToken(response.access_token);
+    return response;
+  },
+  getMe: () => request<User>("/v1/auth/me"),
+  logout: () => clearStoredToken(),
   getDashboardSummary: () => request<DashboardSummary>("/v1/dashboard/summary"),
   getRestaurants: () => request<Restaurant[]>("/v1/restaurants"),
   createRestaurant: (payload: RestaurantCreatePayload) =>
     postJson<Restaurant, RestaurantCreatePayload>("/v1/restaurants", payload),
+  getUsers: () => request<User[]>("/v1/users"),
+  createUser: (payload: UserCreatePayload) => postJson<User, UserCreatePayload>("/v1/users", payload),
+  getUser: (id: number) => request<User>(`/v1/users/${id}`),
+  updateUser: (id: number, payload: UserUpdatePayload) =>
+    request<User>(`/v1/users/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  assignUserRestaurant: (id: number, restaurantId: number) =>
+    postJson<UserRestaurantAccess, { restaurant_id: number }>(`/v1/users/${id}/restaurants`, {
+      restaurant_id: restaurantId,
+    }),
+  removeUserRestaurant: (id: number, restaurantId: number) =>
+    request<void>(`/v1/users/${id}/restaurants/${restaurantId}`, {
+      method: "DELETE",
+    }),
   getOrders: () => request<ClaimOrder[]>("/v1/orders"),
   createOrder: (payload: ClaimOrderCreatePayload) =>
     postJson<ClaimOrder, ClaimOrderCreatePayload>("/v1/orders", payload),

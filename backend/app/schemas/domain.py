@@ -33,6 +33,65 @@ EvidenceType = Literal[
 
 EmailDraftType = Literal["initial_claim", "followup_1", "followup_2", "escalation", "proof_reply"]
 EmailDraftStatus = Literal["created", "draft", "ready", "archived"]
+UserRole = Literal["owner", "manager", "staff"]
+
+
+class UserRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    full_name: str | None
+    role: UserRole
+    active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class UserCreate(BaseModel):
+    email: str = Field(min_length=1)
+    password: str = Field(min_length=8)
+    full_name: str | None = None
+    role: UserRole
+    active: bool = True
+
+
+class UserUpdate(BaseModel):
+    email: str | None = Field(default=None, min_length=1)
+    password: str | None = Field(default=None, min_length=8)
+    full_name: str | None = None
+    role: UserRole | None = None
+    active: bool | None = None
+
+
+class UserRestaurantAccessCreate(BaseModel):
+    restaurant_id: int
+
+
+class UserRestaurantAccessRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    restaurant_id: int
+    created_at: datetime
+
+
+class RegisterRequest(BaseModel):
+    email: str = Field(min_length=1)
+    password: str = Field(min_length=8)
+    full_name: str | None = None
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=1)
+    password: str = Field(min_length=1)
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserRead
 
 
 class RestaurantCreate(BaseModel):

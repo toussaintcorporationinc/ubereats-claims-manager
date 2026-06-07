@@ -6,6 +6,8 @@ from app.models.domain import (
     EmailThread,
     EvidenceFile,
     Restaurant,
+    User,
+    UserRestaurantAccess,
 )
 
 __all__ = [
@@ -16,4 +18,6 @@ __all__ = [
     "EmailThread",
     "EvidenceFile",
     "Restaurant",
+    "User",
+    "UserRestaurantAccess",
 ]

@@ -22,6 +22,8 @@ Le backend expose maintenant les premiers objets metier :
 - brouillons internes d'email ;
 - fils email historisables sans integration externe ;
 - audit logs ;
+- authentification JWT simple ;
+- roles owner, manager et staff ;
 - service de validation des dossiers de reclamation ;
 - service de generation de brouillons internes d'email ;
 - dashboard de synthese.
@@ -29,6 +31,13 @@ Le backend expose maintenant les premiers objets metier :
 Les endpoints principaux sont :
 
 - `GET /health`
+- `POST /v1/auth/register`
+- `POST /v1/auth/login`
+- `GET /v1/auth/me`
+- `GET|POST /v1/users`
+- `GET|PATCH /v1/users/{id}`
+- `POST /v1/users/{id}/restaurants`
+- `DELETE /v1/users/{id}/restaurants/{restaurant_id}`
 - `GET|POST /v1/restaurants`
 - `GET|PATCH /v1/restaurants/{id}`
 - `GET|POST /v1/orders`
@@ -62,6 +71,13 @@ docker compose up --build
 - Frontend : http://localhost:3000
 - Backend health check : http://localhost:8000/health
 - PostgreSQL : `localhost:5432`
+
+4. Creer le premier owner :
+
+- ouvrir http://localhost:3000/setup-owner ;
+- ou appeler `POST /v1/auth/register`.
+
+Apres creation du premier owner, l'inscription publique est fermee. Les utilisateurs suivants sont crees par un owner depuis `/users`.
 
 ## Commandes utiles
 
@@ -138,6 +154,7 @@ docker compose down -v
 ```
 
 Documentation CI et developpement : `docs/CI.md`.
+Documentation securite et roles : `docs/SECURITY.md`.
 
 ## Perimetre actuel
 

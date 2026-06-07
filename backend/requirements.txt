@@ -4,6 +4,7 @@ sqlalchemy
 psycopg[binary]
 pydantic-settings
 alembic
+PyJWT
 pytest
 httpx
 

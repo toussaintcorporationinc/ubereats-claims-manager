@@ -5,8 +5,15 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.auth import (
+    ensure_can_access_order,
+    ensure_can_access_restaurant,
+    get_accessible_restaurant_ids,
+    get_current_user,
+    require_owner_or_manager,
+)
 from app.core.database import get_db
-from app.models import ClaimOrder, EmailDraft, EvidenceFile, Restaurant
+from app.models import ClaimOrder, EmailDraft, EvidenceFile, Restaurant, User
 from app.schemas.domain import (
     ClaimOrderCreate,
     ClaimOrderRead,
@@ -55,13 +62,27 @@ def ensure_order_not_duplicate(restaurant_id: int, uber_order_number: str, db: S
 
 
 @router.get("", response_model=list[ClaimOrderRead])
-def list_orders(db: Session = Depends(get_db)) -> list[ClaimOrder]:
-    return list(db.scalars(select(ClaimOrder).order_by(ClaimOrder.id)).all())
+def list_orders(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[ClaimOrder]:
+    statement = select(ClaimOrder).order_by(ClaimOrder.id)
+    accessible_ids = get_accessible_restaurant_ids(db, current_user)
+    if accessible_ids is not None:
+        if not accessible_ids:
+            return []
+        statement = statement.where(ClaimOrder.restaurant_id.in_(accessible_ids))
+    return list(db.scalars(statement).all())
 
 
 @router.post("", response_model=ClaimOrderRead, status_code=status.HTTP_201_CREATED)
-def create_order(payload: ClaimOrderCreate, db: Session = Depends(get_db)) -> ClaimOrder:
+def create_order(
+    payload: ClaimOrderCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ClaimOrder:
     ensure_restaurant_exists(payload.restaurant_id, db)
+    ensure_can_access_restaurant(db, current_user, payload.restaurant_id)
     ensure_order_not_duplicate(payload.restaurant_id, payload.uber_order_number, db)
 
     order = ClaimOrder(**payload.model_dump())
@@ -80,6 +101,7 @@ def create_order(payload: ClaimOrderCreate, db: Session = Depends(get_db)) -> Cl
         entity_type="claim_order",
         entity_id=order.id,
         action="claim_order.created",
+        user_id=current_user.id,
         new_value={
             "restaurant_id": order.restaurant_id,
             "uber_order_number": order.uber_order_number,
@@ -94,13 +116,25 @@ def create_order(payload: ClaimOrderCreate, db: Session = Depends(get_db)) -> Cl
 
 
 @router.get("/{order_id}", response_model=ClaimOrderRead)
-def get_order(order_id: int, db: Session = Depends(get_db)) -> ClaimOrder:
-    return get_order_or_404(order_id, db)
+def get_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ClaimOrder:
+    order = get_order_or_404(order_id, db)
+    ensure_can_access_order(db, current_user, order)
+    return order
 
 
 @router.patch("/{order_id}", response_model=ClaimOrderRead)
-def update_order(order_id: int, payload: ClaimOrderUpdate, db: Session = Depends(get_db)) -> ClaimOrder:
+def update_order(
+    order_id: int,
+    payload: ClaimOrderUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+) -> ClaimOrder:
     order = get_order_or_404(order_id, db)
+    ensure_can_access_order(db, current_user, order)
 
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(order, field, value)
@@ -111,8 +145,17 @@ def update_order(order_id: int, payload: ClaimOrderUpdate, db: Session = Depends
 
 
 @router.post("/{order_id}/validate", response_model=ClaimValidationResponse)
-def validate_order(order_id: int, db: Session = Depends(get_db)) -> ClaimValidationResponse | JSONResponse:
-    result = validate_claim_order(db, order_id)
+def validate_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+) -> ClaimValidationResponse | JSONResponse:
+    order = db.get(ClaimOrder, order_id)
+    if order is None:
+        result = validate_claim_order(db, order_id, user_id=current_user.id)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=jsonable_encoder(result))
+    ensure_can_access_order(db, current_user, order)
+    result = validate_claim_order(db, order_id, user_id=current_user.id)
 
     if "order_not_found" in result.blocking_reasons:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=jsonable_encoder(result))
@@ -126,14 +169,25 @@ def validate_order(order_id: int, db: Session = Depends(get_db)) -> ClaimValidat
 
 
 @router.get("/{order_id}/evidence", response_model=list[EvidenceFileRead])
-def list_evidence(order_id: int, db: Session = Depends(get_db)) -> list[EvidenceFile]:
-    get_order_or_404(order_id, db)
+def list_evidence(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[EvidenceFile]:
+    order = get_order_or_404(order_id, db)
+    ensure_can_access_order(db, current_user, order)
     return list(db.scalars(select(EvidenceFile).where(EvidenceFile.order_id == order_id).order_by(EvidenceFile.id)).all())
 
 
 @router.post("/{order_id}/evidence", response_model=EvidenceFileRead, status_code=status.HTTP_201_CREATED)
-def add_evidence(order_id: int, payload: EvidenceFileCreate, db: Session = Depends(get_db)) -> EvidenceFile:
-    get_order_or_404(order_id, db)
+def add_evidence(
+    order_id: int,
+    payload: EvidenceFileCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> EvidenceFile:
+    order = get_order_or_404(order_id, db)
+    ensure_can_access_order(db, current_user, order)
     evidence_file = EvidenceFile(order_id=order_id, **payload.model_dump())
     db.add(evidence_file)
     db.flush()
@@ -142,6 +196,7 @@ def add_evidence(order_id: int, payload: EvidenceFileCreate, db: Session = Depen
         entity_type="evidence_file",
         entity_id=evidence_file.id,
         action="evidence_file.created",
+        user_id=current_user.id,
         new_value={
             "order_id": evidence_file.order_id,
             "evidence_type": evidence_file.evidence_type,
@@ -154,15 +209,27 @@ def add_evidence(order_id: int, payload: EvidenceFileCreate, db: Session = Depen
 
 
 @router.get("/{order_id}/drafts", response_model=list[EmailDraftRead])
-def list_drafts(order_id: int, db: Session = Depends(get_db)) -> list[EmailDraft]:
-    get_order_or_404(order_id, db)
+def list_drafts(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[EmailDraft]:
+    order = get_order_or_404(order_id, db)
+    ensure_can_access_order(db, current_user, order)
     return list(db.scalars(select(EmailDraft).where(EmailDraft.order_id == order_id).order_by(EmailDraft.id)).all())
 
 
 @router.post("/{order_id}/drafts", response_model=EmailDraftRead, status_code=status.HTTP_201_CREATED)
-def create_draft(order_id: int, payload: EmailDraftCreate, db: Session = Depends(get_db)) -> EmailDraft:
+def create_draft(
+    order_id: int,
+    payload: EmailDraftCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+) -> EmailDraft:
+    order = get_order_or_404(order_id, db)
+    ensure_can_access_order(db, current_user, order)
     try:
-        draft = create_email_draft(db, order_id, payload.draft_type)
+        draft = create_email_draft(db, order_id, payload.draft_type, user_id=current_user.id)
     except EmailDraftNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found") from exc
     except EmailDraftBusinessError as exc:

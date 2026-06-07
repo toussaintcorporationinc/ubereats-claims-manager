@@ -31,7 +31,7 @@ def db_session() -> Generator[Session, None, None]:
 
 
 @pytest.fixture()
-def client(db_session: Session) -> Generator[TestClient, None, None]:
+def unauthenticated_client(db_session: Session) -> Generator[TestClient, None, None]:
     def override_get_db() -> Generator[Session, None, None]:
         yield db_session
 
@@ -39,4 +39,21 @@ def client(db_session: Session) -> Generator[TestClient, None, None]:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def client(unauthenticated_client: TestClient) -> Generator[TestClient, None, None]:
+    response = unauthenticated_client.post(
+        "/v1/auth/register",
+        json={
+            "email": "owner@example.com",
+            "password": "owner-password",
+            "full_name": "Owner Test",
+        },
+    )
+    assert response.status_code == 201
+    access_token = response.json()["access_token"]
+    unauthenticated_client.headers.update({"Authorization": f"Bearer {access_token}"})
+    yield unauthenticated_client
+    unauthenticated_client.headers.pop("Authorization", None)
 

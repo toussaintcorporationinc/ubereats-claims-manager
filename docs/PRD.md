@@ -27,23 +27,32 @@ La V1 pose la base applicative et les premiers objets metier :
 - ajout de preuves locales ;
 - consultation de brouillons internes d'emails ;
 - journalisation des creations importantes ;
+- authentification et roles utilisateurs ;
 - dashboard de synthese.
+
+## Roles utilisateurs V1
+
+- `owner` : acces global, gestion restaurants, gestion utilisateurs, commandes, validation, brouillons et dashboard global.
+- `manager` : acces aux restaurants assignes, commandes, preuves, validation, brouillons et dashboard filtre.
+- `staff` : acces aux restaurants assignes, creation de commandes, ajout de preuves et consultation. Pas de gestion utilisateurs, pas de creation restaurant, pas de generation de brouillon.
 
 ## Workflow utilisateur V1
 
 1. L'utilisateur ouvre le dashboard.
-2. Il cree un restaurant.
-3. Il cree une commande contestee rattachee au restaurant.
-4. Il ouvre le detail de la commande.
-5. Il ajoute les metadonnees des preuves obligatoires :
+2. Le premier owner initialise l'application via `/setup-owner`.
+3. Un owner cree les restaurants et les utilisateurs internes.
+4. Un owner assigne les restaurants aux managers et staff concernes.
+5. L'utilisateur cree une commande contestee rattachee a un restaurant autorise.
+6. Il ouvre le detail de la commande.
+7. Il ajoute les metadonnees des preuves obligatoires :
    - `cancellation_proof` ;
    - `preparation_proof` ou `waste_photo`.
-6. Il valide le dossier.
-7. Si le dossier est incomplet, l'interface affiche les elements manquants et les raisons bloquantes.
-8. Si le dossier est complet, le statut passe a `ready_to_send`.
-9. Il genere un brouillon interne initial.
-10. Le brouillon apparait dans le detail commande et dans la page globale des brouillons.
-11. Aucun email reel n'est envoye.
+8. Un owner ou manager valide le dossier.
+9. Si le dossier est incomplet, l'interface affiche les elements manquants et les raisons bloquantes.
+10. Si le dossier est complet, le statut passe a `ready_to_send`.
+11. Un owner ou manager genere un brouillon interne initial.
+12. Le brouillon apparait dans le detail commande et dans la page globale des brouillons.
+13. Aucun email reel n'est envoye.
 
 ## Modeles metier V1
 
@@ -53,6 +62,8 @@ La V1 pose la base applicative et les premiers objets metier :
 - `EmailDraft` : brouillon interne, sans envoi reel ;
 - `EmailThread` : futur historique des conversations email ;
 - `AuditLog` : trace des actions importantes.
+- `User` : utilisateur interne avec role ;
+- `UserRestaurantAccess` : association utilisateur restaurant.
 
 ## Hors perimetre de cette premiere base
 

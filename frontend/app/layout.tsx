@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import AppLayout from "@/components/AppLayout";
+import { AuthProvider } from "@/lib/auth";
 import "./globals.css";
 
 export const metadata = {
@@ -15,7 +16,9 @@ export default function RootLayout({
   return (
     <html lang="fr">
       <body>
-        <AppLayout>{children}</AppLayout>
+        <AuthProvider>
+          <AppLayout>{children}</AppLayout>
+        </AuthProvider>
       </body>
     </html>
   );

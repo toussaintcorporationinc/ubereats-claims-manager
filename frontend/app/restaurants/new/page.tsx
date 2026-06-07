@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { FormEvent, useState } from "react";
 import ApiError from "@/components/ApiError";
+import EmptyState from "@/components/EmptyState";
+import { useAuth } from "@/lib/auth";
 import { api, emptyToNull, type Restaurant } from "@/lib/api";
 
 type RestaurantForm = {
@@ -24,10 +26,15 @@ const initialForm: RestaurantForm = {
 };
 
 export default function NewRestaurantPage() {
+  const { user } = useAuth();
   const [form, setForm] = useState<RestaurantForm>(initialForm);
   const [createdRestaurant, setCreatedRestaurant] = useState<Restaurant | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  if (user?.role !== "owner") {
+    return <EmptyState title="Acces reserve owner" />;
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
