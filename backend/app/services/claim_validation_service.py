@@ -7,33 +7,9 @@ from app.services.audit import add_audit_log
 FINAL_CLAIM_STATUSES = {"accepted", "payment_confirmed", "refused", "closed"}
 
 
-def validate_claim_order(db: Session, order_id: int) -> ClaimValidationResponse:
-    order = db.get(ClaimOrder, order_id)
-    if order is None:
-        return ClaimValidationResponse(
-            order_id=order_id,
-            is_complete=False,
-            previous_status=None,
-            new_status=None,
-            missing_items=[],
-            blocking_reasons=["order_not_found"],
-        )
-
-    previous_status = order.status
+def get_claim_validation_gaps(db: Session, order: ClaimOrder) -> tuple[list[str], list[str]]:
     missing_items: list[str] = []
     blocking_reasons: list[str] = []
-
-    if previous_status in FINAL_CLAIM_STATUSES:
-        result = ClaimValidationResponse(
-            order_id=order.id,
-            is_complete=False,
-            previous_status=previous_status,
-            new_status=previous_status,
-            missing_items=[],
-            blocking_reasons=["final_status_cannot_be_validated"],
-        )
-        add_validation_audit_log(db, order, previous_status, result)
-        return result
 
     if order.restaurant_id is None or db.get(Restaurant, order.restaurant_id) is None:
         missing_items.append("restaurant")
@@ -60,6 +36,35 @@ def validate_claim_order(db: Session, order_id: int) -> ClaimValidationResponse:
         missing_items.append("preparation_or_waste_proof")
         blocking_reasons.append("missing_preparation_or_waste_proof")
 
+    return missing_items, blocking_reasons
+
+
+def validate_claim_order(db: Session, order_id: int) -> ClaimValidationResponse:
+    order = db.get(ClaimOrder, order_id)
+    if order is None:
+        return ClaimValidationResponse(
+            order_id=order_id,
+            is_complete=False,
+            previous_status=None,
+            new_status=None,
+            missing_items=[],
+            blocking_reasons=["order_not_found"],
+        )
+
+    previous_status = order.status
+    if previous_status in FINAL_CLAIM_STATUSES:
+        result = ClaimValidationResponse(
+            order_id=order.id,
+            is_complete=False,
+            previous_status=previous_status,
+            new_status=previous_status,
+            missing_items=[],
+            blocking_reasons=["final_status_cannot_be_validated"],
+        )
+        add_validation_audit_log(db, order, previous_status, result)
+        return result
+
+    missing_items, blocking_reasons = get_claim_validation_gaps(db, order)
     is_complete = not missing_items
     order.status = "ready_to_send" if is_complete else "missing_evidence"
 

@@ -32,7 +32,7 @@ EvidenceType = Literal[
 ]
 
 EmailDraftType = Literal["initial_claim", "followup_1", "followup_2", "escalation", "proof_reply"]
-EmailDraftStatus = Literal["draft", "ready", "archived"]
+EmailDraftStatus = Literal["created", "draft", "ready", "archived"]
 
 
 class RestaurantCreate(BaseModel):
@@ -158,6 +158,10 @@ class EvidenceFileRead(BaseModel):
     mime_type: str | None
     file_size: int | None
     uploaded_at: datetime
+
+
+class EmailDraftCreate(BaseModel):
+    draft_type: EmailDraftType
 
 
 class EmailDraftRead(BaseModel):

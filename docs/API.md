@@ -130,6 +130,7 @@ L'ajout d'une preuve ajoute un `AuditLog`.
 ## Drafts
 
 - `GET /v1/orders/{id}/drafts`
+- `POST /v1/orders/{id}/drafts`
 
 Les brouillons sont internes. Aucun envoi reel d'email n'est implemente.
 
@@ -140,6 +141,46 @@ Types prevus :
 - `followup_2`
 - `escalation`
 - `proof_reply`
+
+### Creation d'un brouillon
+
+`POST /v1/orders/{id}/drafts`
+
+Body :
+
+```json
+{
+  "draft_type": "initial_claim"
+}
+```
+
+Reponse :
+
+```json
+{
+  "id": 123,
+  "order_id": 456,
+  "draft_type": "initial_claim",
+  "subject": "Demande de paiement - commande annulee apres preparation - UBER-123",
+  "body": "...",
+  "status": "created",
+  "created_at": "2026-06-07T10:00:00Z",
+  "updated_at": "2026-06-07T10:00:00Z"
+}
+```
+
+Regles :
+
+- `initial_claim` exige une commande `ready_to_send`, complete selon le service de validation, avec restaurant, numero Uber, montant, devise, preuve d'annulation et preuve de preparation ou gaspillage ;
+- si `initial_claim` est cree, la commande passe a `draft_email_created` ;
+- `followup_1` exige un brouillon `initial_claim` et un statut `draft_email_created`, `sent` ou `waiting_uber_response` ;
+- `followup_2` exige des brouillons `initial_claim` et `followup_1` ;
+- `escalation` exige un brouillon `initial_claim` et un statut non final ;
+- `proof_reply` exige au moins une preuve rattachee et un statut non final ;
+- les statuts finaux `accepted`, `payment_confirmed`, `refused` et `closed` refusent toute generation de brouillon ;
+- chaque creation ajoute un `AuditLog` avec `action = create_email_draft`.
+
+Les brouillons sont generes depuis des templates locaux. Les champs optionnels absents ne sont pas inventes ni ajoutes au corps du message.
 
 ## Dashboard
 

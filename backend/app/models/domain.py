@@ -54,7 +54,7 @@ EMAIL_DRAFT_TYPES = (
     "proof_reply",
 )
 
-EMAIL_DRAFT_STATUSES = ("draft", "ready", "archived")
+EMAIL_DRAFT_STATUSES = ("created", "draft", "ready", "archived")
 EMAIL_DIRECTIONS = ("inbound", "outbound")
 EMAIL_PROVIDERS = ("internal", "gmail", "microsoft_graph")
 

@@ -23,6 +23,7 @@ Le backend expose maintenant les premiers objets metier :
 - fils email historisables sans integration externe ;
 - audit logs ;
 - service de validation des dossiers de reclamation ;
+- service de generation de brouillons internes d'email ;
 - dashboard de synthese.
 
 Les endpoints principaux sont :
@@ -34,10 +35,12 @@ Les endpoints principaux sont :
 - `GET|PATCH /v1/orders/{id}`
 - `POST /v1/orders/{id}/validate`
 - `GET|POST /v1/orders/{id}/evidence`
-- `GET /v1/orders/{id}/drafts`
+- `GET|POST /v1/orders/{id}/drafts`
 - `GET /v1/dashboard/summary`
 
 Le service de validation verifie qu'une commande contient les informations et preuves bloquantes avant de passer le dossier a `ready_to_send`. Un dossier incomplet passe a `missing_evidence`. Aucun brouillon d'email n'est genere par cette validation.
+
+Le service de brouillons cree uniquement des contenus internes a partir des donnees existantes du dossier. Un brouillon initial ne peut etre cree que pour une commande `ready_to_send` et complete. Il ne declenche aucun envoi reel.
 
 ## Demarrage rapide
 
@@ -104,7 +107,7 @@ Cette premiere base ne contient pas :
 - d'integration Gmail ;
 - d'integration OpenAI API ;
 - d'envoi reel d'email ;
-- de generation d'email par le service de validation ;
+- d'envoi Gmail, Microsoft Graph ou SMTP ;
 - de relance automatique.
 
 Les fichiers sont stockes localement en developpement dans `backend/storage`.

@@ -26,7 +26,7 @@ Ce document decrit les statuts V1 des commandes a reclamer.
 draft -> validate -> missing_evidence
 draft -> validate -> ready_to_send
 missing_evidence -> validate -> ready_to_send
-ready_to_send -> draft_email_created
+ready_to_send -> create initial_claim draft -> draft_email_created
 draft_email_created -> sent -> waiting_uber_response
 waiting_uber_response -> accepted -> payment_to_verify -> payment_confirmed -> closed
 waiting_uber_response -> refused -> manual_review -> closed
@@ -55,4 +55,21 @@ Les preuves bloquantes sont :
 - au moins une preuve `preparation_proof` ou `waste_photo`.
 
 Le ticket `receipt` est recommande mais non bloquant dans cette mission.
+
+## Brouillons email internes V1
+
+Le service `POST /v1/orders/{id}/drafts` cree des brouillons internes uniquement.
+
+Transition actuellement active :
+
+- `ready_to_send` + `initial_claim` valide -> `draft_email_created`.
+
+Les autres types de brouillons (`followup_1`, `followup_2`, `escalation`, `proof_reply`) ne changent pas le statut de commande dans cette mission. Ils ne declenchent aucun envoi reel, aucune integration Gmail et aucune relance automatique.
+
+Les statuts finaux suivants refusent la generation de brouillon et restent inchanges :
+
+- `accepted`
+- `payment_confirmed`
+- `refused`
+- `closed`
 
