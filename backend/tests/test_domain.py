@@ -1,4 +1,5 @@
 from decimal import Decimal
+from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
@@ -203,24 +204,36 @@ def test_dashboard_summary_returns_expected_totals(client: TestClient) -> None:
     assert len(data["orders_by_restaurant"]) == 2
 
 
-def test_initial_alembic_migration_creates_domain_tables(tmp_path) -> None:
-    db_path = tmp_path / "migration.db"
+def test_initial_alembic_migration_creates_domain_tables() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    work_dir = repo_root / "work"
+    work_dir.mkdir(exist_ok=True)
+    db_path = work_dir / "test_migration.db"
+    if db_path.exists():
+        db_path.unlink()
+
     config = Config("alembic.ini")
     config.attributes["database_url"] = f"sqlite+pysqlite:///{db_path.as_posix()}"
+    engine = None
 
-    command.upgrade(config, "head")
+    try:
+        command.upgrade(config, "head")
 
-    engine = create_engine(f"sqlite+pysqlite:///{db_path.as_posix()}")
-    inspector = inspect(engine)
-    tables = set(inspector.get_table_names())
+        engine = create_engine(f"sqlite+pysqlite:///{db_path.as_posix()}")
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
 
-    assert {
-        "restaurants",
-        "claim_orders",
-        "evidence_files",
-        "email_drafts",
-        "email_threads",
-        "audit_logs",
-        "alembic_version",
-    }.issubset(tables)
-
+        assert {
+            "restaurants",
+            "claim_orders",
+            "evidence_files",
+            "email_drafts",
+            "email_threads",
+            "audit_logs",
+            "alembic_version",
+        }.issubset(tables)
+    finally:
+        if engine is not None:
+            engine.dispose()
+        if db_path.exists():
+            db_path.unlink()

@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -9,11 +11,13 @@ from app.schemas.domain import (
     ClaimOrderCreate,
     ClaimOrderRead,
     ClaimOrderUpdate,
+    ClaimValidationResponse,
     EmailDraftRead,
     EvidenceFileCreate,
     EvidenceFileRead,
 )
 from app.services.audit import add_audit_log
+from app.services.claim_validation_service import validate_claim_order
 
 router = APIRouter(prefix="/v1/orders", tags=["orders"])
 
@@ -98,6 +102,21 @@ def update_order(order_id: int, payload: ClaimOrderUpdate, db: Session = Depends
     db.commit()
     db.refresh(order)
     return order
+
+
+@router.post("/{order_id}/validate", response_model=ClaimValidationResponse)
+def validate_order(order_id: int, db: Session = Depends(get_db)) -> ClaimValidationResponse | JSONResponse:
+    result = validate_claim_order(db, order_id)
+
+    if "order_not_found" in result.blocking_reasons:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=jsonable_encoder(result))
+
+    db.commit()
+
+    if "final_status_cannot_be_validated" in result.blocking_reasons:
+        return JSONResponse(status_code=status.HTTP_409_CONFLICT, content=jsonable_encoder(result))
+
+    return result
 
 
 @router.get("/{order_id}/evidence", response_model=list[EvidenceFileRead])
