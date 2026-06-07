@@ -27,6 +27,7 @@ Le backend expose maintenant les premiers objets metier :
 - service de validation des dossiers de reclamation ;
 - service de generation de brouillons internes d'email ;
 - upload local securise des fichiers de preuve ;
+- import massif CSV/XLSX des commandes annulees ;
 - dashboard de synthese.
 
 Les endpoints principaux sont :
@@ -50,12 +51,20 @@ Les endpoints principaux sont :
 - `GET|POST /v1/orders/{id}/drafts`
 - `GET /v1/drafts`
 - `GET /v1/dashboard/summary`
+- `POST /v1/imports/orders/preview`
+- `GET /v1/imports`
+- `GET /v1/imports/{id}`
+- `GET /v1/imports/{id}/rows`
+- `POST /v1/imports/{id}/confirm`
+- `POST /v1/imports/{id}/cancel`
 
 Le service de validation verifie qu'une commande contient les informations et preuves bloquantes avant de passer le dossier a `ready_to_send`. Un dossier incomplet passe a `missing_evidence`. Aucun brouillon d'email n'est genere par cette validation.
 
 Le service de brouillons cree uniquement des contenus internes a partir des donnees existantes du dossier. Un brouillon initial ne peut etre cree que pour une commande `ready_to_send` et complete. Il ne declenche aucun envoi reel.
 
 Les preuves peuvent etre ajoutees par upload local securise depuis le detail d'une commande. Les fichiers acceptes sont PDF et images courantes (`jpg`, `png`, `webp`, `heic`, `heif`) avec limite de taille configurable. Les telechargements passent toujours par l'API protegee.
+
+Les commandes peuvent aussi etre importees en masse depuis `/imports/new` avec un fichier CSV ou XLSX. Le backend analyse les lignes, detecte erreurs, doublons et restaurants non autorises, puis cree uniquement les lignes valides lors de la confirmation.
 
 ## Demarrage rapide
 
@@ -66,6 +75,7 @@ cp .env.example .env
 ```
 
 Le stockage local des preuves utilise `EVIDENCE_STORAGE_BACKEND=local`, `EVIDENCE_STORAGE_DIR` et `MAX_EVIDENCE_FILE_SIZE_MB`.
+Les imports utilisent `IMPORT_STORAGE_DIR` et `IMPORT_MAX_FILE_SIZE_MB`.
 
 2. Lancer les services :
 

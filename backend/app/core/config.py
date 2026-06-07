@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     evidence_storage_backend: str = "local"
     evidence_storage_dir: Path = Path("data/evidence")
     max_evidence_file_size_mb: int = 15
+    import_max_file_size_mb: int = 10
+    import_storage_dir: Path = Path("data/imports")
     backend_cors_origins: str | None = None
     cors_origins: str = "http://localhost:3000"
     secret_key: str | None = None

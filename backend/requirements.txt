@@ -6,6 +6,7 @@ pydantic-settings
 alembic
 PyJWT
 python-multipart
+openpyxl
 pytest
 httpx
 

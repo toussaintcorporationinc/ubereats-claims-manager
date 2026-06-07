@@ -25,6 +25,7 @@ La V1 pose la base applicative et les premiers objets metier :
 - creation et suivi des commandes a reclamer ;
 - prevention des doublons par restaurant et numero de commande Uber Eats ;
 - upload de preuves locales securisees ;
+- import massif CSV/XLSX des commandes annulees ;
 - consultation de brouillons internes d'emails ;
 - journalisation des creations importantes ;
 - authentification et roles utilisateurs ;
@@ -42,17 +43,18 @@ La V1 pose la base applicative et les premiers objets metier :
 2. Le premier owner initialise l'application via `/setup-owner`.
 3. Un owner cree les restaurants et les utilisateurs internes.
 4. Un owner assigne les restaurants aux managers et staff concernes.
-5. L'utilisateur cree une commande contestee rattachee a un restaurant autorise.
-6. Il ouvre le detail de la commande.
-7. Il upload les preuves obligatoires :
+5. L'utilisateur cree une commande contestee rattachee a un restaurant autorise ou importe un fichier CSV/XLSX.
+6. Pour un import massif, il analyse le fichier, corrige les lignes invalides si necessaire, puis confirme les lignes valides.
+7. Il ouvre le detail de la commande.
+8. Il upload les preuves obligatoires :
    - `cancellation_proof` ;
    - `preparation_proof` ou `waste_photo`.
-8. Un owner ou manager valide le dossier.
-9. Si le dossier est incomplet, l'interface affiche les elements manquants et les raisons bloquantes.
-10. Si le dossier est complet, le statut passe a `ready_to_send`.
-11. Un owner ou manager genere un brouillon interne initial.
-12. Le brouillon apparait dans le detail commande et dans la page globale des brouillons.
-13. Aucun email reel n'est envoye.
+9. Un owner ou manager valide le dossier.
+10. Si le dossier est incomplet, l'interface affiche les elements manquants et les raisons bloquantes.
+11. Si le dossier est complet, le statut passe a `ready_to_send`.
+12. Un owner ou manager genere un brouillon interne initial.
+13. Le brouillon apparait dans le detail commande et dans la page globale des brouillons.
+14. Aucun email reel n'est envoye.
 
 ## Modeles metier V1
 
@@ -64,6 +66,8 @@ La V1 pose la base applicative et les premiers objets metier :
 - `AuditLog` : trace des actions importantes.
 - `User` : utilisateur interne avec role ;
 - `UserRestaurantAccess` : association utilisateur restaurant.
+- `ImportBatch` : fichier CSV/XLSX analyse avant confirmation ;
+- `ImportRow` : ligne importee avec statut, erreurs, warnings et commande creee si applicable.
 
 ## Hors perimetre de cette premiere base
 

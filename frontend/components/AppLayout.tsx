@@ -11,6 +11,7 @@ const navigation = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/restaurants", label: "Restaurants" },
   { href: "/orders", label: "Commandes" },
+  { href: "/imports", label: "Imports" },
   { href: "/drafts", label: "Brouillons" },
   { href: "/users", label: "Utilisateurs", ownerOnly: true },
 ];

@@ -1,0 +1,2 @@
+restaurant_name,uber_order_number,customer_name,order_date,order_time,cancellation_time,order_amount,currency,accepted_by_restaurant,prepared_before_cancellation,loss_type,notes,internal_reference
+Restaurant Test,UBER-TEST-001,Client Test,2026-06-01,20:15,20:35,24.90,EUR,true,true,gaspillage alimentaire,commande preparee puis annulee,TEST-001

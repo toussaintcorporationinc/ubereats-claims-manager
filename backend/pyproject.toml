@@ -16,6 +16,7 @@ dependencies = [
   "alembic",
   "PyJWT",
   "python-multipart",
+  "openpyxl",
 ]
 
 [project.optional-dependencies]
