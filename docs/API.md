@@ -129,6 +129,7 @@ L'ajout d'une preuve ajoute un `AuditLog`.
 
 ## Drafts
 
+- `GET /v1/drafts`
 - `GET /v1/orders/{id}/drafts`
 - `POST /v1/orders/{id}/drafts`
 
@@ -181,6 +182,27 @@ Regles :
 - chaque creation ajoute un `AuditLog` avec `action = create_email_draft`.
 
 Les brouillons sont generes depuis des templates locaux. Les champs optionnels absents ne sont pas inventes ni ajoutes au corps du message.
+
+### Liste globale des brouillons
+
+`GET /v1/drafts`
+
+Retourne tous les brouillons internes avec les informations minimales utiles a l'administration.
+
+```json
+[
+  {
+    "id": 123,
+    "order_id": 456,
+    "draft_type": "initial_claim",
+    "subject": "Demande de paiement - commande annulee apres preparation - UBER-123",
+    "status": "created",
+    "created_at": "2026-06-07T10:00:00Z",
+    "restaurant_name": "Restaurant Exemple",
+    "uber_order_number": "UBER-123"
+  }
+]
+```
 
 ## Dashboard
 

@@ -177,6 +177,17 @@ class EmailDraftRead(BaseModel):
     updated_at: datetime
 
 
+class EmailDraftSummaryRead(BaseModel):
+    id: int
+    order_id: int
+    draft_type: EmailDraftType
+    subject: str
+    status: EmailDraftStatus
+    created_at: datetime
+    restaurant_name: str | None
+    uber_order_number: str | None
+
+
 class DashboardRestaurantSummary(BaseModel):
     restaurant_id: int
     restaurant_name: str

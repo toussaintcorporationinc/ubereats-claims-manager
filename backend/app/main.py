@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.routes import dashboard, health, orders, restaurants
+from app.routes import dashboard, drafts, health, orders, restaurants
 from app.services.local_storage import ensure_local_storage
 
 
@@ -34,4 +34,5 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(restaurants.router)
 app.include_router(orders.router)
+app.include_router(drafts.router)
 app.include_router(dashboard.router)

@@ -36,6 +36,7 @@ Les endpoints principaux sont :
 - `POST /v1/orders/{id}/validate`
 - `GET|POST /v1/orders/{id}/evidence`
 - `GET|POST /v1/orders/{id}/drafts`
+- `GET /v1/drafts`
 - `GET /v1/dashboard/summary`
 
 Le service de validation verifie qu'une commande contient les informations et preuves bloquantes avant de passer le dossier a `ready_to_send`. Un dossier incomplet passe a `missing_evidence`. Aucun brouillon d'email n'est genere par cette validation.
@@ -74,6 +75,27 @@ Lancer les tests backend localement depuis `backend/` :
 
 ```bash
 pytest -q
+```
+
+Installer le frontend :
+
+```bash
+cd frontend
+npm ci
+```
+
+Lancer le frontend localement :
+
+```bash
+cd frontend
+npm run dev
+```
+
+Verifier le frontend :
+
+```bash
+cd frontend
+npm run typecheck
 ```
 
 Creer une migration Alembic :

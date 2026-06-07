@@ -29,6 +29,22 @@ La V1 pose la base applicative et les premiers objets metier :
 - journalisation des creations importantes ;
 - dashboard de synthese.
 
+## Workflow utilisateur V1
+
+1. L'utilisateur ouvre le dashboard.
+2. Il cree un restaurant.
+3. Il cree une commande contestee rattachee au restaurant.
+4. Il ouvre le detail de la commande.
+5. Il ajoute les metadonnees des preuves obligatoires :
+   - `cancellation_proof` ;
+   - `preparation_proof` ou `waste_photo`.
+6. Il valide le dossier.
+7. Si le dossier est incomplet, l'interface affiche les elements manquants et les raisons bloquantes.
+8. Si le dossier est complet, le statut passe a `ready_to_send`.
+9. Il genere un brouillon interne initial.
+10. Le brouillon apparait dans le detail commande et dans la page globale des brouillons.
+11. Aucun email reel n'est envoye.
+
 ## Modeles metier V1
 
 - `Restaurant` : etablissement, email expediteur et identifiant marchand Uber ;
