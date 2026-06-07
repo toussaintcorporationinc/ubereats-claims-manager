@@ -6,9 +6,11 @@ import ApiError from "@/components/ApiError";
 import EmptyState from "@/components/EmptyState";
 import LoadingState from "@/components/LoadingState";
 import StatusBadge from "@/components/StatusBadge";
+import { useAuth } from "@/lib/auth";
 import { api, type Restaurant } from "@/lib/api";
 
 export default function RestaurantsPage() {
+  const { user } = useAuth();
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -32,9 +34,11 @@ export default function RestaurantsPage() {
           <p className="eyebrow">Restaurants</p>
           <h1>Restaurants</h1>
         </div>
-        <Link href="/restaurants/new" className="button">
-          Creer restaurant
-        </Link>
+        {user?.role === "owner" ? (
+          <Link href="/restaurants/new" className="button">
+            Creer restaurant
+          </Link>
+        ) : null}
       </div>
 
       <ApiError error={error} />

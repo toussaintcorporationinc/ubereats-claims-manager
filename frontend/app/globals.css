@@ -102,8 +102,43 @@ button {
   color: var(--accent-strong);
 }
 
+.user-card {
+  display: grid;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.user-card span,
+.user-card strong {
+  overflow-wrap: anywhere;
+}
+
+.user-card span {
+  font-weight: 800;
+}
+
+.user-card strong {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .main-content {
   padding: 32px;
+}
+
+.auth-content {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.auth-panel {
+  display: grid;
+  gap: 20px;
+  width: min(440px, 100%);
 }
 
 .page-section {

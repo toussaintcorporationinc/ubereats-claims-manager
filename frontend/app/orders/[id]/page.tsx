@@ -7,6 +7,7 @@ import ApiError from "@/components/ApiError";
 import EmptyState from "@/components/EmptyState";
 import LoadingState from "@/components/LoadingState";
 import StatusBadge from "@/components/StatusBadge";
+import { useAuth } from "@/lib/auth";
 import {
   api,
   emptyToNull,
@@ -47,6 +48,7 @@ const evidenceTypes: EvidenceType[] = [
 export default function OrderDetailPage() {
   const params = useParams<{ id: string }>();
   const orderId = Number(params.id);
+  const { user } = useAuth();
   const [order, setOrder] = useState<ClaimOrder | null>(null);
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [evidence, setEvidence] = useState<EvidenceFile[]>([]);
@@ -90,6 +92,7 @@ export default function OrderDetailPage() {
     () => restaurants.find((item) => item.id === order?.restaurant_id) ?? null,
     [order?.restaurant_id, restaurants],
   );
+  const canValidateOrDraft = user?.role === "owner" || user?.role === "manager";
 
   async function handleAddEvidence(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -169,12 +172,16 @@ export default function OrderDetailPage() {
           <Link href="/orders" className="secondary-button">
             Retour commandes
           </Link>
-          <button type="button" className="secondary-button" onClick={handleValidate} disabled={validating}>
-            {validating ? "Validation" : "Valider dossier"}
-          </button>
-          <button type="button" className="button" onClick={handleGenerateInitialDraft} disabled={generatingDraft}>
-            {generatingDraft ? "Generation" : "Generer brouillon initial"}
-          </button>
+          {canValidateOrDraft ? (
+            <>
+              <button type="button" className="secondary-button" onClick={handleValidate} disabled={validating}>
+                {validating ? "Validation" : "Valider dossier"}
+              </button>
+              <button type="button" className="button" onClick={handleGenerateInitialDraft} disabled={generatingDraft}>
+                {generatingDraft ? "Generation" : "Generer brouillon initial"}
+              </button>
+            </>
+          ) : null}
         </div>
       </div>
 

@@ -230,6 +230,8 @@ def test_initial_alembic_migration_creates_domain_tables() -> None:
             "email_drafts",
             "email_threads",
             "audit_logs",
+            "users",
+            "user_restaurant_access",
             "alembic_version",
         }.issubset(tables)
     finally:
