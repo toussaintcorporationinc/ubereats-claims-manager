@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     app_env: str = "development"
     database_url: str = "postgresql+psycopg://claims:claims@localhost:5432/claims_manager"
     local_storage_dir: Path = Path("storage")
+    evidence_storage_backend: str = "local"
+    evidence_storage_dir: Path = Path("data/evidence")
+    max_evidence_file_size_mb: int = 15
     backend_cors_origins: str | None = None
     cors_origins: str = "http://localhost:3000"
     secret_key: str | None = None

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
@@ -14,6 +14,7 @@ from app.core.auth import (
 )
 from app.core.database import get_db
 from app.models import ClaimOrder, EmailDraft, EvidenceFile, Restaurant, User
+from app.models.domain import EVIDENCE_TYPES
 from app.schemas.domain import (
     ClaimOrderCreate,
     ClaimOrderRead,
@@ -31,6 +32,7 @@ from app.services.email_draft_service import (
     EmailDraftNotFoundError,
     create_email_draft,
 )
+from app.services.file_storage_service import FileStorageError, store_evidence_upload
 
 router = APIRouter(prefix="/v1/orders", tags=["orders"])
 
@@ -176,7 +178,13 @@ def list_evidence(
 ) -> list[EvidenceFile]:
     order = get_order_or_404(order_id, db)
     ensure_can_access_order(db, current_user, order)
-    return list(db.scalars(select(EvidenceFile).where(EvidenceFile.order_id == order_id).order_by(EvidenceFile.id)).all())
+    return list(
+        db.scalars(
+            select(EvidenceFile)
+            .where(EvidenceFile.order_id == order_id, EvidenceFile.deleted_at.is_(None))
+            .order_by(EvidenceFile.id)
+        ).all()
+    )
 
 
 @router.post("/{order_id}/evidence", response_model=EvidenceFileRead, status_code=status.HTTP_201_CREATED)
@@ -188,7 +196,12 @@ def add_evidence(
 ) -> EvidenceFile:
     order = get_order_or_404(order_id, db)
     ensure_can_access_order(db, current_user, order)
-    evidence_file = EvidenceFile(order_id=order_id, **payload.model_dump())
+    evidence_file = EvidenceFile(
+        order_id=order_id,
+        uploaded_by_user_id=current_user.id,
+        storage_backend="local",
+        **payload.model_dump(),
+    )
     db.add(evidence_file)
     db.flush()
     add_audit_log(
@@ -201,6 +214,57 @@ def add_evidence(
             "order_id": evidence_file.order_id,
             "evidence_type": evidence_file.evidence_type,
             "original_filename": evidence_file.original_filename,
+        },
+    )
+    db.commit()
+    db.refresh(evidence_file)
+    return evidence_file
+
+
+@router.post("/{order_id}/evidence/upload", response_model=EvidenceFileRead, status_code=status.HTTP_201_CREATED)
+def upload_evidence(
+    order_id: int,
+    evidence_type: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> EvidenceFile:
+    order = get_order_or_404(order_id, db)
+    ensure_can_access_order(db, current_user, order)
+    if evidence_type not in EVIDENCE_TYPES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid evidence_type")
+
+    try:
+        stored_file = store_evidence_upload(order, file)
+    except FileStorageError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    evidence_file = EvidenceFile(
+        order_id=order_id,
+        evidence_type=evidence_type,
+        original_filename=stored_file.original_filename,
+        storage_path=stored_file.storage_path,
+        storage_backend=stored_file.storage_backend,
+        mime_type=stored_file.mime_type,
+        file_size=stored_file.file_size,
+        checksum_sha256=stored_file.checksum_sha256,
+        uploaded_by_user_id=current_user.id,
+    )
+    db.add(evidence_file)
+    db.flush()
+    add_audit_log(
+        db,
+        entity_type="evidence_file",
+        entity_id=evidence_file.id,
+        action="evidence_file.uploaded",
+        user_id=current_user.id,
+        new_value={
+            "order_id": evidence_file.order_id,
+            "evidence_type": evidence_file.evidence_type,
+            "original_filename": evidence_file.original_filename,
+            "mime_type": evidence_file.mime_type,
+            "file_size": evidence_file.file_size,
+            "checksum_sha256": evidence_file.checksum_sha256,
         },
     )
     db.commit()

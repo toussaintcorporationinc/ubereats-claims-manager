@@ -27,7 +27,11 @@ def get_claim_validation_gaps(db: Session, order: ClaimOrder) -> tuple[list[str]
         missing_items.append("currency")
         blocking_reasons.append("missing_currency")
 
-    evidence_types = {evidence.evidence_type for evidence in order.evidence_files}
+    evidence_types = {
+        evidence.evidence_type
+        for evidence in order.evidence_files
+        if getattr(evidence, "deleted_at", None) is None
+    }
     if "cancellation_proof" not in evidence_types:
         missing_items.append("cancellation_proof")
         blocking_reasons.append("missing_cancellation_proof")

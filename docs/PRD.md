@@ -24,7 +24,7 @@ La V1 pose la base applicative et les premiers objets metier :
 - creation et mise a jour des restaurants ;
 - creation et suivi des commandes a reclamer ;
 - prevention des doublons par restaurant et numero de commande Uber Eats ;
-- ajout de preuves locales ;
+- upload de preuves locales securisees ;
 - consultation de brouillons internes d'emails ;
 - journalisation des creations importantes ;
 - authentification et roles utilisateurs ;
@@ -44,7 +44,7 @@ La V1 pose la base applicative et les premiers objets metier :
 4. Un owner assigne les restaurants aux managers et staff concernes.
 5. L'utilisateur cree une commande contestee rattachee a un restaurant autorise.
 6. Il ouvre le detail de la commande.
-7. Il ajoute les metadonnees des preuves obligatoires :
+7. Il upload les preuves obligatoires :
    - `cancellation_proof` ;
    - `preparation_proof` ou `waste_photo`.
 8. Un owner ou manager valide le dossier.
@@ -58,7 +58,7 @@ La V1 pose la base applicative et les premiers objets metier :
 
 - `Restaurant` : etablissement, email expediteur et identifiant marchand Uber ;
 - `ClaimOrder` : commande annulee apres preparation, montant reclame, statut et resultat ;
-- `EvidenceFile` : preuve locale attachee a une commande ;
+- `EvidenceFile` : fichier de preuve local attache a une commande avec metadonnees, checksum et acces securise ;
 - `EmailDraft` : brouillon interne, sans envoi reel ;
 - `EmailThread` : futur historique des conversations email ;
 - `AuditLog` : trace des actions importantes.

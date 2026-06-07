@@ -29,6 +29,7 @@ pnpm-debug.log*
 backend/storage/*
 !backend/storage/.gitkeep
 postgres_data/
+data/
 work/
 *.sqlite
 *.db
