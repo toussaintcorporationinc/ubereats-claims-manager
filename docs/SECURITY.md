@@ -40,6 +40,21 @@ Regles appliquees :
 - le chemin disque absolu n'est pas expose par l'API ;
 - les telechargements passent par `GET /v1/evidence/{id}/download`.
 
+## Imports CSV/XLSX
+
+Les imports de commandes sont proteges par JWT et ne doivent contenir aucune donnee client reelle dans le code ou les exemples.
+
+Regles appliquees :
+
+- le preview ne cree aucune commande ;
+- la confirmation cree uniquement les lignes valides ;
+- `owner` peut importer tous les restaurants ;
+- `manager` et `staff` sont limites aux restaurants assignes ;
+- les lignes hors droits sont marquees `unauthorized` ;
+- les doublons existants et internes au fichier sont marques `duplicate` ;
+- la taille maximale est controlee par `IMPORT_MAX_FILE_SIZE_MB` ;
+- les fichiers acceptes sont limites a `.csv` et `.xlsx`.
+
 ## Roles
 
 ### owner

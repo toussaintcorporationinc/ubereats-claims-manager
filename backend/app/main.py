@@ -5,15 +5,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.routes import auth, dashboard, drafts, evidence, health, orders, restaurants, users
+from app.routes import auth, dashboard, drafts, evidence, health, imports, orders, restaurants, users
 from app.services.file_storage_service import ensure_evidence_storage
 from app.services.local_storage import ensure_local_storage
+from app.services.order_import_service import ensure_import_storage
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     ensure_local_storage()
     ensure_evidence_storage()
+    ensure_import_storage()
     yield
 
 
@@ -39,5 +41,6 @@ app.include_router(restaurants.router)
 app.include_router(orders.router)
 app.include_router(evidence.router)
 app.include_router(drafts.router)
+app.include_router(imports.router)
 app.include_router(dashboard.router)
 app.include_router(users.router)

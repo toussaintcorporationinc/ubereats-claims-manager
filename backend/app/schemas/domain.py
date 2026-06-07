@@ -1,6 +1,6 @@
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -34,6 +34,8 @@ EvidenceType = Literal[
 EmailDraftType = Literal["initial_claim", "followup_1", "followup_2", "escalation", "proof_reply"]
 EmailDraftStatus = Literal["created", "draft", "ready", "archived"]
 UserRole = Literal["owner", "manager", "staff"]
+ImportBatchStatus = Literal["uploaded", "parsed", "confirmed", "partially_imported", "failed", "cancelled"]
+ImportRowStatus = Literal["valid", "invalid", "duplicate", "unauthorized", "created", "skipped"]
 
 
 class UserRead(BaseModel):
@@ -299,4 +301,58 @@ class ClaimValidationResponse(BaseModel):
     new_status: ClaimOrderStatus | None
     missing_items: list[MissingClaimItem]
     blocking_reasons: list[ClaimValidationBlockingReason]
+
+
+class ImportRowRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    batch_id: int
+    row_number: int
+    raw_data: dict[str, Any]
+    normalized_data: dict[str, Any] | None
+    status: ImportRowStatus
+    errors: list[str]
+    warnings: list[str]
+    created_order_id: int | None
+    created_at: datetime
+
+
+class ImportBatchRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    batch_id: int
+    uploaded_by_user_id: int
+    original_filename: str
+    file_type: str
+    status: ImportBatchStatus
+    total_rows: int
+    valid_rows: int
+    invalid_rows: int
+    duplicate_rows: int
+    unauthorized_rows: int
+    created_orders_count: int
+    error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+    confirmed_at: datetime | None
+
+
+class ImportPreviewResponse(ImportBatchRead):
+    rows_preview: list[ImportRowRead]
+
+
+class ImportRowsResponse(BaseModel):
+    rows: list[ImportRowRead]
+    limit: int
+    offset: int
+
+
+class ImportConfirmResponse(BaseModel):
+    batch_id: int
+    status: ImportBatchStatus
+    created_orders_count: int
+    skipped_rows: int
+    errors: list[str]
 

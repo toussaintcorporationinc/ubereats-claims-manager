@@ -1,5 +1,6 @@
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -9,6 +10,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    JSON,
     Numeric,
     String,
     Text,
@@ -58,6 +60,8 @@ EMAIL_DRAFT_STATUSES = ("created", "draft", "ready", "archived")
 EMAIL_DIRECTIONS = ("inbound", "outbound")
 EMAIL_PROVIDERS = ("internal", "gmail", "microsoft_graph")
 USER_ROLES = ("owner", "manager", "staff")
+IMPORT_BATCH_STATUSES = ("uploaded", "parsed", "confirmed", "partially_imported", "failed", "cancelled")
+IMPORT_ROW_STATUSES = ("valid", "invalid", "duplicate", "unauthorized", "created", "skipped")
 
 
 def utc_now() -> datetime:
@@ -239,6 +243,60 @@ class EmailThread(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     order: Mapped[ClaimOrder] = relationship(back_populates="email_threads")
+
+
+class ImportBatch(TimestampMixin, Base):
+    __tablename__ = "import_batches"
+    __table_args__ = (
+        CheckConstraint(check_in_constraint("status", IMPORT_BATCH_STATUSES), name="ck_import_batches_status"),
+        Index("ix_import_batches_status", "status"),
+        Index("ix_import_batches_uploaded_by_user_id", "uploaded_by_user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    uploaded_by_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="uploaded")
+    total_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    valid_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    invalid_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    duplicate_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    unauthorized_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_orders_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    rows: Mapped[list["ImportRow"]] = relationship(
+        back_populates="batch",
+        cascade="all, delete-orphan",
+    )
+
+    @property
+    def batch_id(self) -> int:
+        return self.id
+
+
+class ImportRow(Base):
+    __tablename__ = "import_rows"
+    __table_args__ = (
+        CheckConstraint(check_in_constraint("status", IMPORT_ROW_STATUSES), name="ck_import_rows_status"),
+        Index("ix_import_rows_batch_id", "batch_id"),
+        Index("ix_import_rows_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("import_batches.id"), nullable=False)
+    row_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    raw_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    normalized_data: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    errors: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    warnings: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    created_order_id: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    batch: Mapped[ImportBatch] = relationship(back_populates="rows")
 
 
 class AuditLog(Base):

@@ -282,6 +282,102 @@ Regles :
 
 Endpoint protege. La reponse retourne le fichier si l'utilisateur a acces au restaurant de la commande.
 
+## Imports commandes
+
+- `POST /v1/imports/orders/preview`
+- `GET /v1/imports`
+- `GET /v1/imports/{id}`
+- `GET /v1/imports/{id}/rows`
+- `POST /v1/imports/{id}/confirm`
+- `POST /v1/imports/{id}/cancel`
+
+Formats acceptes :
+
+- `.csv`
+- `.xlsx`
+
+Colonnes minimales :
+
+- `restaurant_id` ou `restaurant_name`
+- `uber_order_number`
+- `order_amount`
+
+Le preview ne cree aucune commande. Il cree un batch d'import avec les lignes parsees et limite `rows_preview` a 50 lignes.
+
+### Preview import
+
+`POST /v1/imports/orders/preview`
+
+Content-Type : `multipart/form-data`
+
+Champs :
+
+- `file`
+
+Reponse :
+
+```json
+{
+  "batch_id": 123,
+  "status": "parsed",
+  "original_filename": "commandes_annulees.xlsx",
+  "total_rows": 100,
+  "valid_rows": 80,
+  "invalid_rows": 10,
+  "duplicate_rows": 5,
+  "unauthorized_rows": 5,
+  "created_orders_count": 0,
+  "rows_preview": [
+    {
+      "id": 1,
+      "batch_id": 123,
+      "row_number": 2,
+      "status": "valid",
+      "normalized_data": {},
+      "errors": [],
+      "warnings": []
+    }
+  ]
+}
+```
+
+### Lignes import
+
+`GET /v1/imports/{id}/rows`
+
+Query params :
+
+- `status`
+- `limit`
+- `offset`
+
+### Confirmation
+
+`POST /v1/imports/{id}/confirm`
+
+La confirmation cree uniquement les lignes `valid`. Les lignes `invalid`, `duplicate`, `unauthorized` et `skipped` ne creent pas de commande.
+
+```json
+{
+  "batch_id": 123,
+  "status": "confirmed",
+  "created_orders_count": 80,
+  "skipped_rows": 20,
+  "errors": []
+}
+```
+
+Regles :
+
+- un utilisateur non connecte ne peut pas importer ;
+- `owner` peut importer pour tous les restaurants ;
+- `manager` et `staff` importent uniquement pour les restaurants assignes ;
+- les doublons existants et internes au fichier sont detectes ;
+- le meme numero Uber est autorise sur deux restaurants differents ;
+- les montants francais comme `12,50` et `1 234,56` sont normalises ;
+- les dates `YYYY-MM-DD` et `DD/MM/YYYY` sont acceptees ;
+- les heures `HH:MM` sont acceptees.
+
 ## Drafts
 
 - `GET /v1/drafts`

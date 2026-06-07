@@ -30,6 +30,8 @@ export type EvidenceType =
   | "other";
 
 export type EmailDraftType = "initial_claim" | "followup_1" | "followup_2" | "escalation" | "proof_reply";
+export type ImportBatchStatus = "uploaded" | "parsed" | "confirmed" | "partially_imported" | "failed" | "cancelled";
+export type ImportRowStatus = "valid" | "invalid" | "duplicate" | "unauthorized" | "created" | "skipped";
 
 export type Restaurant = {
   id: number;
@@ -124,6 +126,56 @@ export type DashboardSummary = {
   total_refused_amount: MoneyValue;
   orders_by_status: Record<string, number>;
   orders_by_restaurant: DashboardRestaurantSummary[];
+};
+
+export type ImportRow = {
+  id: number;
+  batch_id: number;
+  row_number: number;
+  raw_data: Record<string, unknown>;
+  normalized_data: Record<string, unknown> | null;
+  status: ImportRowStatus;
+  errors: string[];
+  warnings: string[];
+  created_order_id: number | null;
+  created_at: string;
+};
+
+export type ImportBatch = {
+  id: number;
+  batch_id: number;
+  uploaded_by_user_id: number;
+  original_filename: string;
+  file_type: string;
+  status: ImportBatchStatus;
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  duplicate_rows: number;
+  unauthorized_rows: number;
+  created_orders_count: number;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  confirmed_at: string | null;
+};
+
+export type ImportPreviewResponse = ImportBatch & {
+  rows_preview: ImportRow[];
+};
+
+export type ImportRowsResponse = {
+  rows: ImportRow[];
+  limit: number;
+  offset: number;
+};
+
+export type ImportConfirmResponse = {
+  batch_id: number;
+  status: ImportBatchStatus;
+  created_orders_count: number;
+  skipped_rows: number;
+  errors: string[];
 };
 
 export type User = {
@@ -380,6 +432,32 @@ export const api = {
     }),
   getOrderDrafts: (id: number) => request<EmailDraft[]>(`/v1/orders/${id}/drafts`),
   getDrafts: () => request<EmailDraftSummary[]>("/v1/drafts"),
+  previewOrderImport: (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return request<ImportPreviewResponse>("/v1/imports/orders/preview", {
+      method: "POST",
+      body: formData,
+    });
+  },
+  getImportBatches: () => request<ImportBatch[]>("/v1/imports"),
+  getImportBatch: (id: number) => request<ImportBatch>(`/v1/imports/${id}`),
+  getImportRows: (id: number, filters: { status?: ImportRowStatus | ""; limit?: number; offset?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (filters.status) {
+      params.set("status", filters.status);
+    }
+    if (filters.limit) {
+      params.set("limit", String(filters.limit));
+    }
+    if (filters.offset) {
+      params.set("offset", String(filters.offset));
+    }
+    const query = params.toString();
+    return request<ImportRowsResponse>(`/v1/imports/${id}/rows${query ? `?${query}` : ""}`);
+  },
+  confirmImportBatch: (id: number) => postJson<ImportConfirmResponse, Record<string, never>>(`/v1/imports/${id}/confirm`, {}),
+  cancelImportBatch: (id: number) => postJson<ImportBatch, Record<string, never>>(`/v1/imports/${id}/cancel`, {}),
 };
 
 export function formatCurrency(value: MoneyValue, currency = "EUR"): string {

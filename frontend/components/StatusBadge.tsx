@@ -5,9 +5,21 @@ const positiveStatuses = new Set([
   "payment_confirmed",
   "active",
   "created",
+  "parsed",
+  "confirmed",
 ]);
-const warningStatuses = new Set(["draft", "missing_evidence", "manual_review", "payment_to_verify"]);
-const closedStatuses = new Set(["refused", "closed", "inactive"]);
+const warningStatuses = new Set([
+  "draft",
+  "missing_evidence",
+  "manual_review",
+  "payment_to_verify",
+  "uploaded",
+  "partially_imported",
+  "valid",
+  "duplicate",
+  "unauthorized",
+]);
+const closedStatuses = new Set(["refused", "closed", "inactive", "failed", "cancelled", "invalid", "skipped"]);
 
 export default function StatusBadge({ status }: { status: string }) {
   const tone = positiveStatuses.has(status)

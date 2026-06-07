@@ -26,6 +26,8 @@ services:
       EVIDENCE_STORAGE_BACKEND: ${EVIDENCE_STORAGE_BACKEND:-local}
       EVIDENCE_STORAGE_DIR: ${EVIDENCE_STORAGE_DIR:-/app/data/evidence}
       MAX_EVIDENCE_FILE_SIZE_MB: ${MAX_EVIDENCE_FILE_SIZE_MB:-15}
+      IMPORT_MAX_FILE_SIZE_MB: ${IMPORT_MAX_FILE_SIZE_MB:-10}
+      IMPORT_STORAGE_DIR: ${IMPORT_STORAGE_DIR:-/app/data/imports}
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
     ports:
@@ -35,6 +37,7 @@ services:
       - ./backend/alembic:/app/alembic
       - ./backend/storage:/app/storage
       - ./data/evidence:/app/data/evidence
+      - ./data/imports:/app/data/imports
     depends_on:
       db:
         condition: service_healthy
