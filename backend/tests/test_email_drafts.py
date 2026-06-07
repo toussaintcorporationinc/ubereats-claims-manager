@@ -286,3 +286,29 @@ def test_get_order_drafts_returns_created_drafts(client: TestClient) -> None:
     data = response.json()
     assert [draft["id"] for draft in data] == [initial_draft["id"], followup_response.json()["id"]]
     assert [draft["status"] for draft in data] == ["created", "created"]
+
+
+def test_get_global_drafts_returns_created_drafts(client: TestClient) -> None:
+    restaurant, order = create_ready_order(
+        client,
+        restaurant_name="Restaurant Global Drafts",
+        uber_order_number="UBER-GLOBAL-DRAFTS",
+    )
+    draft = create_initial_claim_draft(client, order["id"])
+
+    response = client.get("/v1/drafts")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data == [
+        {
+            "id": draft["id"],
+            "order_id": order["id"],
+            "draft_type": "initial_claim",
+            "subject": draft["subject"],
+            "status": "created",
+            "created_at": draft["created_at"],
+            "restaurant_name": restaurant["name"],
+            "uber_order_number": "UBER-GLOBAL-DRAFTS",
+        }
+    ]
