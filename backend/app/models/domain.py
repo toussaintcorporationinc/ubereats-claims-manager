@@ -109,7 +109,7 @@ class ClaimOrder(TimestampMixin, Base):
     order_date: Mapped[date | None] = mapped_column(Date)
     order_time: Mapped[time | None] = mapped_column(Time)
     cancellation_time: Mapped[time | None] = mapped_column(Time)
-    order_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    order_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
     accepted_by_restaurant: Mapped[bool | None] = mapped_column(Boolean)
     prepared_before_cancellation: Mapped[bool | None] = mapped_column(Boolean)

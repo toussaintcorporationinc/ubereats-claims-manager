@@ -36,6 +36,7 @@ La creation d'un restaurant ajoute un `AuditLog`.
 - `POST /v1/orders`
 - `GET /v1/orders/{id}`
 - `PATCH /v1/orders/{id}`
+- `POST /v1/orders/{id}/validate`
 
 Regles :
 
@@ -49,6 +50,66 @@ Regles :
 - le meme `uber_order_number` reste autorise pour deux restaurants differents.
 
 La creation d'une commande ajoute un `AuditLog`.
+
+### Validation d'un dossier
+
+`POST /v1/orders/{id}/validate`
+
+Verifie si la commande est prete pour une reclamation. La validation ne genere aucun email et ne lance aucune relance.
+
+Reponse complete :
+
+```json
+{
+  "order_id": 123,
+  "is_complete": true,
+  "previous_status": "draft",
+  "new_status": "ready_to_send",
+  "missing_items": [],
+  "blocking_reasons": []
+}
+```
+
+Un dossier complet doit avoir :
+
+- un restaurant ;
+- un numero de commande Uber Eats ;
+- un montant ;
+- une devise ;
+- au moins une preuve `cancellation_proof` ;
+- au moins une preuve `preparation_proof` ou `waste_photo` ;
+- un statut non final.
+
+Si le dossier est incomplet, son statut devient `missing_evidence`, la reponse contient `missing_items` et `blocking_reasons`, et un `AuditLog` est cree.
+
+Si le dossier est complet, son statut devient `ready_to_send` et un `AuditLog` est cree.
+
+Statuts finaux non revalidables :
+
+- `accepted`
+- `payment_confirmed`
+- `refused`
+- `closed`
+
+Elements manquants possibles :
+
+- `restaurant`
+- `uber_order_number`
+- `order_amount`
+- `currency`
+- `cancellation_proof`
+- `preparation_or_waste_proof`
+
+Raisons bloquantes possibles :
+
+- `missing_restaurant`
+- `missing_uber_order_number`
+- `missing_order_amount`
+- `missing_currency`
+- `missing_cancellation_proof`
+- `missing_preparation_or_waste_proof`
+- `final_status_cannot_be_validated`
+- `order_not_found`
 
 ## Evidence
 
@@ -99,4 +160,5 @@ Retourne :
 - pas d'integration Gmail ;
 - pas d'integration OpenAI API ;
 - pas d'envoi reel d'email ;
+- pas de generation d'email par la validation ;
 - pas de relance automatique.

@@ -122,7 +122,7 @@ class ClaimOrderRead(BaseModel):
     order_date: date | None
     order_time: time | None
     cancellation_time: time | None
-    order_amount: Decimal
+    order_amount: Decimal | None
     currency: str
     accepted_by_restaurant: bool | None
     prepared_before_cancellation: bool | None
@@ -189,4 +189,34 @@ class DashboardSummary(BaseModel):
     total_refused_amount: Decimal
     orders_by_status: dict[str, int]
     orders_by_restaurant: list[DashboardRestaurantSummary]
+
+
+MissingClaimItem = Literal[
+    "restaurant",
+    "uber_order_number",
+    "order_amount",
+    "currency",
+    "cancellation_proof",
+    "preparation_or_waste_proof",
+]
+
+ClaimValidationBlockingReason = Literal[
+    "missing_restaurant",
+    "missing_uber_order_number",
+    "missing_order_amount",
+    "missing_currency",
+    "missing_cancellation_proof",
+    "missing_preparation_or_waste_proof",
+    "final_status_cannot_be_validated",
+    "order_not_found",
+]
+
+
+class ClaimValidationResponse(BaseModel):
+    order_id: int
+    is_complete: bool
+    previous_status: ClaimOrderStatus | None
+    new_status: ClaimOrderStatus | None
+    missing_items: list[MissingClaimItem]
+    blocking_reasons: list[ClaimValidationBlockingReason]
 
