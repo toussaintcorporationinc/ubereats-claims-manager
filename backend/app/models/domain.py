@@ -62,6 +62,9 @@ EMAIL_PROVIDERS = ("internal", "gmail", "microsoft_graph")
 USER_ROLES = ("owner", "manager", "staff")
 IMPORT_BATCH_STATUSES = ("uploaded", "parsed", "confirmed", "partially_imported", "failed", "cancelled")
 IMPORT_ROW_STATUSES = ("valid", "invalid", "duplicate", "unauthorized", "created", "skipped")
+EMAIL_ACCOUNT_PROVIDERS = ("gmail",)
+EMAIL_PROVIDER_DRAFT_PROVIDERS = ("gmail",)
+EMAIL_PROVIDER_DRAFT_STATUSES = ("provider_draft_created", "failed")
 
 
 def utc_now() -> datetime:
@@ -219,6 +222,28 @@ class EmailDraft(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="draft")
 
     order: Mapped[ClaimOrder] = relationship(back_populates="email_drafts")
+    provider_drafts: Mapped[list["EmailProviderDraft"]] = relationship(back_populates="email_draft")
+
+    @property
+    def latest_provider_draft(self) -> "EmailProviderDraft | None":
+        if not self.provider_drafts:
+            return None
+        return sorted(self.provider_drafts, key=lambda item: item.id)[-1]
+
+    @property
+    def provider_draft_id(self) -> str | None:
+        latest = self.latest_provider_draft
+        return latest.provider_draft_id if latest else None
+
+    @property
+    def provider_status(self) -> str | None:
+        latest = self.latest_provider_draft
+        return latest.status if latest else None
+
+    @property
+    def provider(self) -> str | None:
+        latest = self.latest_provider_draft
+        return latest.provider if latest else None
 
 
 class EmailThread(Base):
@@ -297,6 +322,55 @@ class ImportRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     batch: Mapped[ImportBatch] = relationship(back_populates="rows")
+
+
+class EmailAccount(TimestampMixin, Base):
+    __tablename__ = "email_accounts"
+    __table_args__ = (
+        CheckConstraint(check_in_constraint("provider", EMAIL_ACCOUNT_PROVIDERS), name="ck_email_accounts_provider"),
+        Index("ix_email_accounts_user_provider", "user_id", "provider"),
+        Index("ix_email_accounts_provider_email", "provider", "email_address"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    email_address: Mapped[str | None] = mapped_column(String(255))
+    access_token_encrypted: Mapped[str | None] = mapped_column(Text)
+    refresh_token_encrypted: Mapped[str | None] = mapped_column(Text)
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scopes: Mapped[str | None] = mapped_column(Text)
+    connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    disconnected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EmailProviderDraft(TimestampMixin, Base):
+    __tablename__ = "email_provider_drafts"
+    __table_args__ = (
+        CheckConstraint(
+            check_in_constraint("provider", EMAIL_PROVIDER_DRAFT_PROVIDERS),
+            name="ck_email_provider_drafts_provider",
+        ),
+        CheckConstraint(
+            check_in_constraint("status", EMAIL_PROVIDER_DRAFT_STATUSES),
+            name="ck_email_provider_drafts_status",
+        ),
+        Index("ix_email_provider_drafts_email_draft_id", "email_draft_id"),
+        Index("ix_email_provider_drafts_created_by_user_id", "created_by_user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email_draft_id: Mapped[int] = mapped_column(ForeignKey("email_drafts.id"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    provider_draft_id: Mapped[str | None] = mapped_column(String(255))
+    provider_thread_id: Mapped[str | None] = mapped_column(String(255))
+    to_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    created_by_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    email_draft: Mapped[EmailDraft] = relationship(back_populates="provider_drafts")
 
 
 class AuditLog(Base):

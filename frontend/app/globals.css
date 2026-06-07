@@ -197,6 +197,17 @@ h3 {
   gap: 10px;
 }
 
+.inline-form {
+  display: grid;
+  gap: 8px;
+  min-width: 240px;
+}
+
+.stack-sm {
+  display: grid;
+  gap: 6px;
+}
+
 .button,
 .secondary-button,
 .danger-button {

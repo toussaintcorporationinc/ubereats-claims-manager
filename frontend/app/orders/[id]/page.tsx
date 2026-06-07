@@ -14,13 +14,21 @@ import {
   type ClaimOrder,
   type ClaimValidationResponse,
   type EmailDraft,
+  type EmailProviderDraft,
   type EvidenceFile,
   type EvidenceType,
   type Restaurant,
 } from "@/lib/api";
 
+const defaultRecipient = "merchants@uber.com";
+
 type EvidenceForm = {
   evidence_type: EvidenceType;
+};
+
+type GmailDraftForm = {
+  to_email: string;
+  include_evidence: boolean;
 };
 
 const initialEvidenceForm: EvidenceForm = {
@@ -46,7 +54,9 @@ export default function OrderDetailPage() {
   const [drafts, setDrafts] = useState<EmailDraft[]>([]);
   const [validation, setValidation] = useState<ClaimValidationResponse | null>(null);
   const [generatedDraft, setGeneratedDraft] = useState<EmailDraft | null>(null);
+  const [gmailDraftResult, setGmailDraftResult] = useState<EmailProviderDraft | null>(null);
   const [evidenceForm, setEvidenceForm] = useState<EvidenceForm>(initialEvidenceForm);
+  const [gmailForms, setGmailForms] = useState<Record<number, GmailDraftForm>>({});
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [error, setError] = useState<unknown>(null);
@@ -56,6 +66,7 @@ export default function OrderDetailPage() {
   const [downloadingEvidenceId, setDownloadingEvidenceId] = useState<number | null>(null);
   const [validating, setValidating] = useState(false);
   const [generatingDraft, setGeneratingDraft] = useState(false);
+  const [submittingGmailDraftId, setSubmittingGmailDraftId] = useState<number | null>(null);
 
   const loadOrderData = useCallback(async () => {
     const [orderData, restaurantsData, evidenceData, draftsData] = await Promise.all([
@@ -159,6 +170,40 @@ export default function OrderDetailPage() {
       setActionError(apiError);
     } finally {
       setGeneratingDraft(false);
+    }
+  }
+
+  function getGmailForm(draftId: number): GmailDraftForm {
+    return gmailForms[draftId] ?? { to_email: defaultRecipient, include_evidence: true };
+  }
+
+  function updateGmailForm(draftId: number, patch: Partial<GmailDraftForm>) {
+    setGmailForms((current) => ({
+      ...current,
+      [draftId]: {
+        ...getGmailForm(draftId),
+        ...patch,
+      },
+    }));
+  }
+
+  async function handleCreateGmailDraft(draftId: number) {
+    setSubmittingGmailDraftId(draftId);
+    setActionError(null);
+    setGmailDraftResult(null);
+
+    try {
+      const form = getGmailForm(draftId);
+      const result = await api.createGmailDraft(draftId, {
+        to_email: form.to_email,
+        include_evidence: form.include_evidence,
+      });
+      setGmailDraftResult(result);
+      await loadOrderData();
+    } catch (apiError) {
+      setActionError(apiError);
+    } finally {
+      setSubmittingGmailDraftId(null);
     }
   }
 
@@ -332,6 +377,12 @@ export default function OrderDetailPage() {
             <span>{generatedDraft.subject}</span>
           </div>
         ) : null}
+        {gmailDraftResult ? (
+          <div className="success-box">
+            <strong>Brouillon Gmail cree</strong>
+            <span>{gmailDraftResult.provider_draft_id ?? gmailDraftResult.status}</span>
+          </div>
+        ) : null}
         {drafts.length > 0 ? (
           <div className="table-wrap">
             <table>
@@ -340,6 +391,8 @@ export default function OrderDetailPage() {
                   <th>Type</th>
                   <th>Sujet</th>
                   <th>Statut</th>
+                  <th>Gmail</th>
+                  {canValidateOrDraft ? <th>Creation Gmail</th> : null}
                   <th>Corps</th>
                 </tr>
               </thead>
@@ -351,6 +404,48 @@ export default function OrderDetailPage() {
                     <td>
                       <StatusBadge status={draft.status} />
                     </td>
+                    <td>
+                      {draft.provider_status ? (
+                        <div className="stack-sm">
+                          <StatusBadge status={draft.provider_status} />
+                          <span className="muted">{draft.provider_draft_id ?? "-"}</span>
+                        </div>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                    {canValidateOrDraft ? (
+                      <td>
+                        <div className="inline-form">
+                          <input
+                            aria-label={`Destinataire Gmail brouillon ${draft.id}`}
+                            value={getGmailForm(draft.id).to_email}
+                            onChange={(event) => updateGmailForm(draft.id, { to_email: event.target.value })}
+                          />
+                          <label className="checkbox-row">
+                            <input
+                              type="checkbox"
+                              checked={getGmailForm(draft.id).include_evidence}
+                              onChange={(event) =>
+                                updateGmailForm(draft.id, { include_evidence: event.target.checked })
+                              }
+                            />
+                            Preuves
+                          </label>
+                          <button
+                            type="button"
+                            className="button"
+                            onClick={() => handleCreateGmailDraft(draft.id)}
+                            disabled={
+                              submittingGmailDraftId === draft.id ||
+                              draft.provider_status === "provider_draft_created"
+                            }
+                          >
+                            {submittingGmailDraftId === draft.id ? "Creation" : "Creer Gmail"}
+                          </button>
+                        </div>
+                      </td>
+                    ) : null}
                     <td>
                       <pre className="draft-body">{draft.body}</pre>
                     </td>

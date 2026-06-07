@@ -310,5 +310,8 @@ def test_get_global_drafts_returns_created_drafts(client: TestClient) -> None:
             "created_at": draft["created_at"],
             "restaurant_name": restaurant["name"],
             "uber_order_number": "UBER-GLOBAL-DRAFTS",
+            "provider": None,
+            "provider_status": None,
+            "provider_draft_id": None,
         }
     ]
