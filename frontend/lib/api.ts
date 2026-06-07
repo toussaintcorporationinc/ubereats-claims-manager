@@ -75,9 +75,15 @@ export type EvidenceFile = {
   evidence_type: EvidenceType;
   original_filename: string;
   storage_path: string;
+  storage_backend: string;
   mime_type: string | null;
   file_size: number | null;
+  checksum_sha256: string | null;
+  uploaded_by_user_id: number | null;
   uploaded_at: string;
+  created_at: string;
+  deleted_at: string | null;
+  download_url: string | null;
 };
 
 export type EmailDraft = {
@@ -247,10 +253,11 @@ export function clearStoredToken(): void {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getStoredToken();
+  const isFormData = init.body instanceof FormData;
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init.headers ?? {}),
     },
@@ -341,6 +348,30 @@ export const api = {
   getEvidence: (id: number) => request<EvidenceFile[]>(`/v1/orders/${id}/evidence`),
   createEvidence: (id: number, payload: EvidenceCreatePayload) =>
     postJson<EvidenceFile, EvidenceCreatePayload>(`/v1/orders/${id}/evidence`, payload),
+  uploadEvidence: (id: number, evidenceType: EvidenceType, file: File) => {
+    const formData = new FormData();
+    formData.append("evidence_type", evidenceType);
+    formData.append("file", file);
+    return request<EvidenceFile>(`/v1/orders/${id}/evidence/upload`, {
+      method: "POST",
+      body: formData,
+    });
+  },
+  downloadEvidence: async (id: number) => {
+    const token = getStoredToken();
+    const response = await fetch(`${API_BASE_URL}/v1/evidence/${id}/download`, {
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      cache: "no-store",
+    });
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!response.ok) {
+      const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+      throw new ApiError(response.status, payload);
+    }
+    return response.blob();
+  },
   validateOrder: (id: number) =>
     postJson<ClaimValidationResponse, Record<string, never>>(`/v1/orders/${id}/validate`, {}),
   createOrderDraft: (id: number, draftType: EmailDraftType) =>

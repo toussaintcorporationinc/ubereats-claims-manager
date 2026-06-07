@@ -5,6 +5,7 @@ psycopg[binary]
 pydantic-settings
 alembic
 PyJWT
+python-multipart
 pytest
 httpx
 

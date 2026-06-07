@@ -23,6 +23,9 @@ services:
       APP_NAME: ${APP_NAME:-Uber Eats Claims Manager}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://claims:claims@db:5432/claims_manager}
       LOCAL_STORAGE_DIR: /app/storage
+      EVIDENCE_STORAGE_BACKEND: ${EVIDENCE_STORAGE_BACKEND:-local}
+      EVIDENCE_STORAGE_DIR: ${EVIDENCE_STORAGE_DIR:-/app/data/evidence}
+      MAX_EVIDENCE_FILE_SIZE_MB: ${MAX_EVIDENCE_FILE_SIZE_MB:-15}
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3000}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
     ports:
@@ -31,6 +34,7 @@ services:
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
       - ./backend/storage:/app/storage
+      - ./data/evidence:/app/data/evidence
     depends_on:
       db:
         condition: service_healthy

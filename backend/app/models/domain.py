@@ -173,6 +173,7 @@ class EvidenceFile(Base):
     __table_args__ = (
         CheckConstraint(check_in_constraint("evidence_type", EVIDENCE_TYPES), name="ck_evidence_files_type"),
         Index("ix_evidence_files_order_id", "order_id"),
+        Index("ix_evidence_files_uploaded_by_user_id", "uploaded_by_user_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -180,11 +181,22 @@ class EvidenceFile(Base):
     evidence_type: Mapped[str] = mapped_column(String(50), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    storage_backend: Mapped[str] = mapped_column(String(50), nullable=False, default="local")
     mime_type: Mapped[str | None] = mapped_column(String(100))
     file_size: Mapped[int | None] = mapped_column(Integer)
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64))
+    uploaded_by_user_id: Mapped[int | None] = mapped_column(Integer)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     order: Mapped[ClaimOrder] = relationship(back_populates="evidence_files")
+
+    @property
+    def download_url(self) -> str | None:
+        if self.deleted_at is not None or not self.checksum_sha256:
+            return None
+        return f"/v1/evidence/{self.id}/download"
 
 
 class EmailDraft(TimestampMixin, Base):

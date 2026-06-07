@@ -214,9 +214,15 @@ class EvidenceFileRead(BaseModel):
     evidence_type: EvidenceType
     original_filename: str
     storage_path: str
+    storage_backend: str
     mime_type: str | None
     file_size: int | None
+    checksum_sha256: str | None
+    uploaded_by_user_id: int | None
     uploaded_at: datetime
+    created_at: datetime
+    deleted_at: datetime | None
+    download_url: str | None
 
 
 class EmailDraftCreate(BaseModel):

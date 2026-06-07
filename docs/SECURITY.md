@@ -19,6 +19,27 @@ Variables attendues :
 
 Le frontend ne recoit aucun secret. `NEXT_PUBLIC_API_BASE_URL` reste la seule variable publique attendue.
 
+## Stockage des preuves
+
+La V1 stocke les preuves en local avec une interface preparee pour un backend type S3 plus tard.
+
+Variables attendues :
+
+- `EVIDENCE_STORAGE_BACKEND=local`
+- `EVIDENCE_STORAGE_DIR`
+- `MAX_EVIDENCE_FILE_SIZE_MB`
+
+Regles appliquees :
+
+- les uploads sont proteges par JWT ;
+- l'acces est verifie sur le restaurant de la commande ;
+- les noms de fichiers internes sont generes par l'application ;
+- le nom original est conserve uniquement comme metadonnee ;
+- les fichiers vides, trop lourds, avec extension interdite ou MIME interdit sont refuses ;
+- un SHA256 est calcule et stocke ;
+- le chemin disque absolu n'est pas expose par l'API ;
+- les telechargements passent par `GET /v1/evidence/{id}/download`.
+
 ## Roles
 
 ### owner
@@ -67,6 +88,6 @@ Un `AuditLog` est cree pour :
 - pas de refresh token ;
 - pas de rotation de cle automatisee ;
 - pas d'auth multi-facteur ;
-- pas d'upload binaire ;
+- pas de stockage cloud ;
 - pas d'envoi reel d'email ;
 - pas d'integration Gmail ou OpenAI.

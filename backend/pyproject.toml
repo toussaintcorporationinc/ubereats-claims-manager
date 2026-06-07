@@ -15,6 +15,7 @@ dependencies = [
   "pydantic-settings",
   "alembic",
   "PyJWT",
+  "python-multipart",
 ]
 
 [project.optional-dependencies]

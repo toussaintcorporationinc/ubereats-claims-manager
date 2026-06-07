@@ -26,6 +26,7 @@ Le backend expose maintenant les premiers objets metier :
 - roles owner, manager et staff ;
 - service de validation des dossiers de reclamation ;
 - service de generation de brouillons internes d'email ;
+- upload local securise des fichiers de preuve ;
 - dashboard de synthese.
 
 Les endpoints principaux sont :
@@ -44,6 +45,8 @@ Les endpoints principaux sont :
 - `GET|PATCH /v1/orders/{id}`
 - `POST /v1/orders/{id}/validate`
 - `GET|POST /v1/orders/{id}/evidence`
+- `POST /v1/orders/{id}/evidence/upload`
+- `GET /v1/evidence/{id}/download`
 - `GET|POST /v1/orders/{id}/drafts`
 - `GET /v1/drafts`
 - `GET /v1/dashboard/summary`
@@ -52,6 +55,8 @@ Le service de validation verifie qu'une commande contient les informations et pr
 
 Le service de brouillons cree uniquement des contenus internes a partir des donnees existantes du dossier. Un brouillon initial ne peut etre cree que pour une commande `ready_to_send` et complete. Il ne declenche aucun envoi reel.
 
+Les preuves peuvent etre ajoutees par upload local securise depuis le detail d'une commande. Les fichiers acceptes sont PDF et images courantes (`jpg`, `png`, `webp`, `heic`, `heif`) avec limite de taille configurable. Les telechargements passent toujours par l'API protegee.
+
 ## Demarrage rapide
 
 1. Copier le fichier d'environnement :
@@ -59,6 +64,8 @@ Le service de brouillons cree uniquement des contenus internes a partir des donn
 ```bash
 cp .env.example .env
 ```
+
+Le stockage local des preuves utilise `EVIDENCE_STORAGE_BACKEND=local`, `EVIDENCE_STORAGE_DIR` et `MAX_EVIDENCE_FILE_SIZE_MB`.
 
 2. Lancer les services :
 

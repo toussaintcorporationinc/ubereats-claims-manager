@@ -10,7 +10,6 @@ import StatusBadge from "@/components/StatusBadge";
 import { useAuth } from "@/lib/auth";
 import {
   api,
-  emptyToNull,
   formatCurrency,
   type ClaimOrder,
   type ClaimValidationResponse,
@@ -22,18 +21,10 @@ import {
 
 type EvidenceForm = {
   evidence_type: EvidenceType;
-  original_filename: string;
-  storage_path: string;
-  mime_type: string;
-  file_size: string;
 };
 
 const initialEvidenceForm: EvidenceForm = {
   evidence_type: "cancellation_proof",
-  original_filename: "",
-  storage_path: "",
-  mime_type: "",
-  file_size: "",
 };
 
 const evidenceTypes: EvidenceType[] = [
@@ -56,10 +47,13 @@ export default function OrderDetailPage() {
   const [validation, setValidation] = useState<ClaimValidationResponse | null>(null);
   const [generatedDraft, setGeneratedDraft] = useState<EmailDraft | null>(null);
   const [evidenceForm, setEvidenceForm] = useState<EvidenceForm>(initialEvidenceForm);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [error, setError] = useState<unknown>(null);
   const [actionError, setActionError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [submittingEvidence, setSubmittingEvidence] = useState(false);
+  const [downloadingEvidenceId, setDownloadingEvidenceId] = useState<number | null>(null);
   const [validating, setValidating] = useState(false);
   const [generatingDraft, setGeneratingDraft] = useState(false);
 
@@ -100,19 +94,39 @@ export default function OrderDetailPage() {
     setActionError(null);
 
     try {
-      await api.createEvidence(orderId, {
-        evidence_type: evidenceForm.evidence_type,
-        original_filename: evidenceForm.original_filename.trim(),
-        storage_path: evidenceForm.storage_path.trim(),
-        mime_type: emptyToNull(evidenceForm.mime_type),
-        file_size: evidenceForm.file_size ? Number(evidenceForm.file_size) : null,
-      });
+      if (!selectedFile) {
+        throw new Error("Selectionnez un fichier de preuve.");
+      }
+      await api.uploadEvidence(orderId, evidenceForm.evidence_type, selectedFile);
       setEvidenceForm(initialEvidenceForm);
+      setSelectedFile(null);
+      setFileInputKey((current) => current + 1);
       await loadOrderData();
     } catch (apiError) {
       setActionError(apiError);
     } finally {
       setSubmittingEvidence(false);
+    }
+  }
+
+  async function handleDownloadEvidence(item: EvidenceFile) {
+    setDownloadingEvidenceId(item.id);
+    setActionError(null);
+
+    try {
+      const blob = await api.downloadEvidence(item.id);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = item.original_filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (apiError) {
+      setActionError(apiError);
+    } finally {
+      setDownloadingEvidenceId(null);
     }
   }
 
@@ -232,9 +246,11 @@ export default function OrderDetailPage() {
                   <tr>
                     <th>Type</th>
                     <th>Fichier</th>
-                    <th>Chemin</th>
                     <th>MIME</th>
                     <th>Taille</th>
+                    <th>Checksum</th>
+                    <th>Ajout</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -242,9 +258,20 @@ export default function OrderDetailPage() {
                     <tr key={item.id}>
                       <td>{item.evidence_type}</td>
                       <td>{item.original_filename}</td>
-                      <td>{item.storage_path}</td>
                       <td>{item.mime_type ?? "-"}</td>
-                      <td>{item.file_size ?? "-"}</td>
+                      <td>{formatFileSize(item.file_size)}</td>
+                      <td>{item.checksum_sha256 ? item.checksum_sha256.slice(0, 12) : "-"}</td>
+                      <td>{formatDate(item.uploaded_at)}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => handleDownloadEvidence(item)}
+                          disabled={downloadingEvidenceId === item.id}
+                        >
+                          {downloadingEvidenceId === item.id ? "Ouverture" : "Telecharger"}
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -277,44 +304,15 @@ export default function OrderDetailPage() {
                 ))}
               </select>
             </div>
-            <div className="field">
-              <label htmlFor="original_filename">Nom fichier</label>
-              <input
-                id="original_filename"
-                required
-                value={evidenceForm.original_filename}
-                onChange={(event) =>
-                  setEvidenceForm((current) => ({
-                    ...current,
-                    original_filename: event.target.value,
-                  }))
-                }
-              />
-            </div>
             <div className="field field--full">
-              <label htmlFor="storage_path">Chemin stockage</label>
+              <label htmlFor="evidence_file">Fichier</label>
               <input
-                id="storage_path"
+                key={fileInputKey}
+                id="evidence_file"
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
                 required
-                value={evidenceForm.storage_path}
-                onChange={(event) => setEvidenceForm((current) => ({ ...current, storage_path: event.target.value }))}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="mime_type">MIME</label>
-              <input
-                id="mime_type"
-                value={evidenceForm.mime_type}
-                onChange={(event) => setEvidenceForm((current) => ({ ...current, mime_type: event.target.value }))}
-              />
-            </div>
-            <div className="field">
-              <label htmlFor="file_size">Taille</label>
-              <input
-                id="file_size"
-                inputMode="numeric"
-                value={evidenceForm.file_size}
-                onChange={(event) => setEvidenceForm((current) => ({ ...current, file_size: event.target.value }))}
+                onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
               />
             </div>
           </div>
@@ -367,6 +365,29 @@ export default function OrderDetailPage() {
       </section>
     </section>
   );
+}
+
+function formatDate(value: string | null): string {
+  if (!value) {
+    return "-";
+  }
+  return new Intl.DateTimeFormat("fr-FR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function formatFileSize(value: number | null): string {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+  if (value < 1024) {
+    return `${value} o`;
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} Ko`;
+  }
+  return `${(value / (1024 * 1024)).toFixed(1)} Mo`;
 }
 
 function DetailItem({ label, value }: { label: string; value: string }) {

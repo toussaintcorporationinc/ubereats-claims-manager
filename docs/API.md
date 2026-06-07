@@ -200,7 +200,9 @@ Raisons bloquantes possibles :
 ## Evidence
 
 - `GET /v1/orders/{id}/evidence`
-- `POST /v1/orders/{id}/evidence`
+- `POST /v1/orders/{id}/evidence` pour compatibilite metadonnees
+- `POST /v1/orders/{id}/evidence/upload`
+- `GET /v1/evidence/{id}/download`
 
 Types autorises :
 
@@ -214,6 +216,71 @@ Types autorises :
 L'ajout d'une preuve ajoute un `AuditLog`.
 
 L'ajout d'une preuve est autorise aux utilisateurs ayant acces au restaurant de la commande.
+
+### Upload fichier preuve
+
+`POST /v1/orders/{id}/evidence/upload`
+
+Content-Type : `multipart/form-data`
+
+Champs :
+
+- `evidence_type`
+- `file`
+
+Formats acceptes :
+
+- `application/pdf`
+- `image/jpeg`
+- `image/png`
+- `image/webp`
+- `image/heic`
+- `image/heif`
+
+Extensions acceptees :
+
+- `.pdf`
+- `.jpg`
+- `.jpeg`
+- `.png`
+- `.webp`
+- `.heic`
+- `.heif`
+
+Reponse :
+
+```json
+{
+  "id": 123,
+  "order_id": 456,
+  "evidence_type": "cancellation_proof",
+  "original_filename": "capture-annulation.png",
+  "storage_path": "restaurant_1/order_456/...",
+  "storage_backend": "local",
+  "mime_type": "image/png",
+  "file_size": 123456,
+  "checksum_sha256": "...",
+  "uploaded_by_user_id": 1,
+  "uploaded_at": "2026-06-07T10:00:00Z",
+  "created_at": "2026-06-07T10:00:00Z",
+  "deleted_at": null,
+  "download_url": "/v1/evidence/123/download"
+}
+```
+
+Regles :
+
+- le fichier vide est refuse ;
+- les fichiers trop lourds sont refuses selon `MAX_EVIDENCE_FILE_SIZE_MB` ;
+- l'extension et le MIME sont controles ;
+- le nom utilisateur n'est jamais utilise comme chemin disque ;
+- le telechargement exige un token et les droits sur le restaurant de la commande.
+
+### Download preuve
+
+`GET /v1/evidence/{id}/download`
+
+Endpoint protege. La reponse retourne le fichier si l'utilisateur a acces au restaurant de la commande.
 
 ## Drafts
 
