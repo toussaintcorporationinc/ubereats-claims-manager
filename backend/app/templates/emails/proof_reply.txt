@@ -1,0 +1,14 @@
+Bonjour,
+
+Veuillez trouver les elements disponibles pour la commande Uber Eats {uber_order_number}.
+
+Restaurant : {restaurant_name}
+Montant reclame : {order_amount} {currency}
+
+Pieces disponibles :
+{evidence_list}
+
+Ces elements correspondent aux preuves rattachees au dossier interne.
+
+Cordialement,
+{signature}

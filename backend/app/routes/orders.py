@@ -12,12 +12,18 @@ from app.schemas.domain import (
     ClaimOrderRead,
     ClaimOrderUpdate,
     ClaimValidationResponse,
+    EmailDraftCreate,
     EmailDraftRead,
     EvidenceFileCreate,
     EvidenceFileRead,
 )
 from app.services.audit import add_audit_log
 from app.services.claim_validation_service import validate_claim_order
+from app.services.email_draft_service import (
+    EmailDraftBusinessError,
+    EmailDraftNotFoundError,
+    create_email_draft,
+)
 
 router = APIRouter(prefix="/v1/orders", tags=["orders"])
 
@@ -151,3 +157,20 @@ def add_evidence(order_id: int, payload: EvidenceFileCreate, db: Session = Depen
 def list_drafts(order_id: int, db: Session = Depends(get_db)) -> list[EmailDraft]:
     get_order_or_404(order_id, db)
     return list(db.scalars(select(EmailDraft).where(EmailDraft.order_id == order_id).order_by(EmailDraft.id)).all())
+
+
+@router.post("/{order_id}/drafts", response_model=EmailDraftRead, status_code=status.HTTP_201_CREATED)
+def create_draft(order_id: int, payload: EmailDraftCreate, db: Session = Depends(get_db)) -> EmailDraft:
+    try:
+        draft = create_email_draft(db, order_id, payload.draft_type)
+    except EmailDraftNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found") from exc
+    except EmailDraftBusinessError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": exc.message, "blocking_reasons": exc.blocking_reasons},
+        ) from exc
+
+    db.commit()
+    db.refresh(draft)
+    return draft

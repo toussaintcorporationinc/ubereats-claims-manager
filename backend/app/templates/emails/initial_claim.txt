@@ -1,0 +1,18 @@
+Bonjour,
+
+Nous demandons la regularisation de la commande Uber Eats {uber_order_number},
+annulee apres preparation par le restaurant.
+
+Restaurant : {restaurant_name}
+{customer_name_line}{order_date_line}Montant reclame : {order_amount} {currency}
+{accepted_line}{prepared_line}{loss_type_line}
+Pieces disponibles :
+{evidence_list}
+
+La commande avait ete prise en charge et les elements fournis attestent l'annulation,
+la preparation ou la perte alimentaire associee.
+Merci de proceder au paiement de cette commande annulee apres preparation,
+ou de nous indiquer les elements complementaires necessaires.
+
+Cordialement,
+{signature}
