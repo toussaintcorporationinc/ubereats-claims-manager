@@ -1,3 +1,4 @@
+import os
 from collections.abc import Generator
 
 import pytest
@@ -6,10 +7,12 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.database import Base, get_db
-from app.main import app
-
 TEST_DATABASE_URL = "sqlite+pysqlite:///:memory:"
+os.environ.setdefault("APP_ENV", "test")
+os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL)
+
+from app.core.database import Base, get_db  # noqa: E402
+from app.main import app  # noqa: E402
 
 engine = create_engine(
     TEST_DATABASE_URL,

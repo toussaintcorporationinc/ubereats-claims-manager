@@ -19,6 +19,7 @@ import {
   type EvidenceType,
   type GmailConnectionStatus,
   type GmailDraftSendResponse,
+  type OrderEmailMessagesResponse,
   type Restaurant,
 } from "@/lib/api";
 
@@ -54,6 +55,7 @@ export default function OrderDetailPage() {
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [evidence, setEvidence] = useState<EvidenceFile[]>([]);
   const [drafts, setDrafts] = useState<EmailDraft[]>([]);
+  const [emailMessages, setEmailMessages] = useState<OrderEmailMessagesResponse | null>(null);
   const [gmailStatus, setGmailStatus] = useState<GmailConnectionStatus | null>(null);
   const [validation, setValidation] = useState<ClaimValidationResponse | null>(null);
   const [generatedDraft, setGeneratedDraft] = useState<EmailDraft | null>(null);
@@ -75,16 +77,18 @@ export default function OrderDetailPage() {
   const [sendingProviderDraftId, setSendingProviderDraftId] = useState<string | null>(null);
 
   const loadOrderData = useCallback(async () => {
-    const [orderData, restaurantsData, evidenceData, draftsData] = await Promise.all([
+    const [orderData, restaurantsData, evidenceData, draftsData, emailMessagesData] = await Promise.all([
       api.getOrder(orderId),
       api.getRestaurants(),
       api.getEvidence(orderId),
       api.getOrderDrafts(orderId),
+      api.getOrderEmailMessages(orderId),
     ]);
     setOrder(orderData);
     setRestaurants(restaurantsData);
     setEvidence(evidenceData);
     setDrafts(draftsData);
+    setEmailMessages(emailMessagesData);
   }, [orderId]);
 
   useEffect(() => {
@@ -543,6 +547,79 @@ export default function OrderDetailPage() {
           </div>
         ) : (
           <EmptyState title="Aucun brouillon" />
+        )}
+      </section>
+
+      <section className="tool-panel">
+        <div className="section-heading">
+          <h2>Historique email</h2>
+          <span className="muted">Aucune reponse automatique</span>
+        </div>
+        {emailMessages && (emailMessages.threads.length > 0 || emailMessages.inbound_messages.length > 0) ? (
+          <div className="stack-sm">
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Direction</th>
+                    <th>Sujet</th>
+                    <th>Message</th>
+                    <th>Date</th>
+                    <th>Extrait</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {emailMessages.threads.map((thread) => (
+                    <tr key={`thread-${thread.id}`}>
+                      <td>
+                        <StatusBadge status={thread.direction} />
+                      </td>
+                      <td>{thread.subject ?? "-"}</td>
+                      <td>{thread.message_id ?? "-"}</td>
+                      <td>{formatDate(thread.sent_at ?? thread.received_at ?? thread.created_at)}</td>
+                      <td>{thread.body ? thread.body.slice(0, 180) : "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <h3>Messages Gmail entrants rattaches</h3>
+            {emailMessages.inbound_messages.length > 0 ? (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>De</th>
+                      <th>Sujet</th>
+                      <th>Reception</th>
+                      <th>Match</th>
+                      <th>Extrait</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {emailMessages.inbound_messages.map((message) => (
+                      <tr key={`inbound-${message.id}`}>
+                        <td>{message.from_email ?? "-"}</td>
+                        <td>{message.subject ?? "-"}</td>
+                        <td>{formatDate(message.received_at)}</td>
+                        <td>
+                          <div className="stack-sm">
+                            <StatusBadge status={message.match_status} />
+                            <span className="muted">{message.match_reason}</span>
+                          </div>
+                        </td>
+                        <td>{message.snippet ?? message.body_text?.slice(0, 180) ?? "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyState title="Aucune reponse rattachee" />
+            )}
+          </div>
+        ) : (
+          <EmptyState title="Aucun historique email" />
         )}
       </section>
     </section>

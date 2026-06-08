@@ -13,6 +13,7 @@ const navigation = [
   { href: "/orders", label: "Commandes" },
   { href: "/imports", label: "Imports" },
   { href: "/drafts", label: "Brouillons" },
+  { href: "/inbox", label: "Reponses Uber", ownerOrManagerOnly: true },
   { href: "/settings/email", label: "Email", ownerOrManagerOnly: true },
   { href: "/users", label: "Utilisateurs", ownerOnly: true },
 ];
