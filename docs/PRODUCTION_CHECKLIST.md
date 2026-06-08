@@ -51,6 +51,9 @@ Use this checklist before launching a commercial production instance.
 - [ ] Claim validation test OK.
 - [ ] Internal draft test OK.
 - [ ] Reporting/export test OK.
+- [ ] Acceptance test plan executed.
+- [ ] Go-live runbook reviewed by operator.
+- [ ] Release notes reviewed by owner.
 
 ## Gmail
 
@@ -69,6 +72,7 @@ Use this checklist before launching a commercial production instance.
 - [ ] Backend `/ready` OK.
 - [ ] Backend `/version` OK and contains no secret.
 - [ ] Frontend `/health` OK.
+- [ ] `scripts/smoke_test.sh` OK.
 - [ ] Docker logs reviewed.
 - [ ] CI green.
 - [ ] Security scans clean.

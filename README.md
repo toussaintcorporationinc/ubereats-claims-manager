@@ -103,7 +103,7 @@ Les preuves peuvent etre ajoutees par upload local securise depuis le detail d'u
 
 Les commandes peuvent aussi etre importees en masse depuis `/imports/new` avec un fichier CSV ou XLSX. Le backend analyse les lignes, detecte erreurs, doublons et restaurants non autorises, puis cree uniquement les lignes valides lors de la confirmation.
 
-Les brouillons internes peuvent etre transformes en brouillons Gmail reels lorsque `EMAIL_PROVIDER_ENABLED=true` et que l'OAuth Gmail est configure. Cette integration utilise les scopes `gmail.compose` et `gmail.readonly`, joint les preuves de la commande si demande et n'envoie jamais l'email automatiquement. L'envoi Gmail est possible uniquement apres confirmation manuelle explicite depuis l'application.
+Les brouillons internes peuvent etre transformes en brouillons Gmail reels lorsque `EMAIL_PROVIDER_ENABLED=true` et que l'OAuth Gmail est configure. Cette integration utilise les scopes `gmail.compose`, `gmail.send` et `gmail.readonly`, joint les preuves de la commande si demande et n'envoie jamais l'email automatiquement. L'envoi Gmail est possible uniquement apres confirmation manuelle explicite depuis l'application.
 
 Les reponses Gmail peuvent etre synchronisees manuellement lorsque `GMAIL_INBOUND_SYNC_ENABLED=true`. Les messages entrants sont dedupliques, rattaches par thread Gmail ou numero de commande Uber, puis affiches dans `/inbox` et dans l'historique email de la commande. Aucune reponse automatique n'est generee.
 
@@ -223,6 +223,7 @@ docker compose down -v
 Documentation CI et developpement : `docs/CI.md`.
 Documentation securite et roles : `docs/SECURITY.md`.
 Documentation production : `docs/DEPLOYMENT.md`, `docs/OPERATIONS.md`, `docs/BACKUP_RESTORE.md` et `docs/PRODUCTION_CHECKLIST.md`.
+Documentation go-live V1 : `docs/GO_LIVE_RUNBOOK.md`, `docs/ACCEPTANCE_TEST_PLAN.md`, `docs/USER_GUIDE.md`, `docs/ADMIN_GUIDE.md`, `docs/GMAIL_PRODUCTION_VALIDATION.md`, `docs/ROLLBACK_PLAN.md`, `docs/RELEASE_NOTES_V1.md` et `docs/KNOWN_LIMITATIONS_V1.md`.
 
 ## Production
 
@@ -234,7 +235,8 @@ La configuration production est fournie par :
 - `scripts/backup_postgres.sh` ;
 - `scripts/restore_postgres.sh` ;
 - `scripts/backup_evidence_files.sh` ;
-- `scripts/healthcheck.sh`.
+- `scripts/healthcheck.sh` ;
+- `scripts/smoke_test.sh`.
 
 Demarrage type :
 
@@ -245,6 +247,12 @@ docker compose --env-file .env.production -f docker-compose.prod.yml exec backen
 ```
 
 En production, le backend refuse les secrets placeholders, SQLite, CORS wildcard et `DEBUG=true`.
+
+Avant lancement, executer le plan de recette `docs/ACCEPTANCE_TEST_PLAN.md`, le runbook `docs/GO_LIVE_RUNBOOK.md` et le smoke test :
+
+```bash
+API_URL=https://api.example.com FRONTEND_URL=https://app.example.com ./scripts/smoke_test.sh
+```
 
 ## Perimetre actuel
 

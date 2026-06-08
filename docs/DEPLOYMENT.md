@@ -21,6 +21,7 @@ No production secret should be committed to Git.
 - `scripts/restore_postgres.sh`
 - `scripts/backup_evidence_files.sh`
 - `scripts/healthcheck.sh`
+- `scripts/smoke_test.sh`
 
 ## First setup
 
@@ -65,6 +66,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml exec backen
 
 ```bash
 API_URL=https://api.example.com FRONTEND_URL=https://app.example.com ./scripts/healthcheck.sh
+API_URL=https://api.example.com FRONTEND_URL=https://app.example.com ./scripts/smoke_test.sh
 ```
 
 7. Create the first owner.

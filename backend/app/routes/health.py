@@ -51,10 +51,10 @@ def readiness_check() -> ReadyResponse:
 def version() -> VersionResponse:
     settings = get_settings()
     return VersionResponse(
-        service=settings.app_name,
+        app=settings.app_name,
         version=settings.app_version,
         environment=settings.runtime_environment,
-        build_sha=settings.build_sha,
+        commit=settings.build_sha or "unknown",
     )
 
 

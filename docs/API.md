@@ -36,10 +36,10 @@ Retour attendu :
 
 ```json
 {
-  "service": "Uber Eats Claims Manager",
-  "version": "0.1.0",
+  "app": "Uber Eats Claims Manager",
+  "version": "1.0.0-v1",
   "environment": "production",
-  "build_sha": "..."
+  "commit": "unknown"
 }
 ```
 

@@ -94,7 +94,7 @@ Variables attendues :
 - `GMAIL_OAUTH_CLIENT_ID` ;
 - `GMAIL_OAUTH_CLIENT_SECRET` ;
 - `GMAIL_OAUTH_REDIRECT_URI` ;
-- `GMAIL_SCOPES=https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/gmail.readonly` ;
+- `GMAIL_SCOPES=https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly` ;
 - `DEFAULT_UBER_EATS_SUPPORT_EMAIL` ;
 - `EMAIL_MAX_ATTACHMENT_TOTAL_MB` ;
 - `GMAIL_INBOUND_SYNC_ENABLED=false` par defaut ;
