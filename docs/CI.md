@@ -6,8 +6,8 @@ La CI GitHub Actions se trouve dans `.github/workflows/ci.yml`.
 
 - `backend` : installe le backend en editable, lance les tests, compile les imports et applique Alembic sur PostgreSQL.
 - `frontend` : installe les dependances avec `npm ci`, lance le typecheck et construit Next.js.
-- `docker` : valide `docker compose config` et construit les images.
-- `quality` : lance des scans basiques contre les secrets evidents et les derives de domaine.
+- `docker` : valide `docker compose config`, valide `docker-compose.prod.yml` avec `.env.production.example` et construit les images dev.
+- `quality` : lance des scans basiques contre les secrets evidents et les derives de domaine, puis valide la syntaxe des scripts shell.
 
 ## Commandes locales
 
@@ -55,7 +55,14 @@ Docker :
 
 ```bash
 docker compose config
+PRODUCTION_ENV_FILE=.env.production.example docker compose --env-file .env.production.example -f docker-compose.prod.yml config
 docker compose up --build
+```
+
+Scripts production :
+
+```bash
+bash -n scripts/*.sh
 ```
 
 ## Variables

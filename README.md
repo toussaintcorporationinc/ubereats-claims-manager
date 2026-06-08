@@ -39,6 +39,8 @@ Le backend expose maintenant les premiers objets metier :
 Les endpoints principaux sont :
 
 - `GET /health`
+- `GET /ready`
+- `GET /version`
 - `POST /v1/auth/register`
 - `POST /v1/auth/login`
 - `GET /v1/auth/me`
@@ -220,6 +222,29 @@ docker compose down -v
 
 Documentation CI et developpement : `docs/CI.md`.
 Documentation securite et roles : `docs/SECURITY.md`.
+Documentation production : `docs/DEPLOYMENT.md`, `docs/OPERATIONS.md`, `docs/BACKUP_RESTORE.md` et `docs/PRODUCTION_CHECKLIST.md`.
+
+## Production
+
+La configuration production est fournie par :
+
+- `docker-compose.prod.yml` ;
+- `.env.production.example` ;
+- `deploy/Caddyfile` ;
+- `scripts/backup_postgres.sh` ;
+- `scripts/restore_postgres.sh` ;
+- `scripts/backup_evidence_files.sh` ;
+- `scripts/healthcheck.sh`.
+
+Demarrage type :
+
+```bash
+cp .env.production.example .env.production
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d --build
+docker compose --env-file .env.production -f docker-compose.prod.yml exec backend alembic upgrade head
+```
+
+En production, le backend refuse les secrets placeholders, SQLite, CORS wildcard et `DEBUG=true`.
 
 ## Perimetre actuel
 

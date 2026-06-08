@@ -101,6 +101,9 @@ jobs:
       - name: Validate compose file
         run: docker compose config
 
+      - name: Validate production compose file
+        run: PRODUCTION_ENV_FILE=.env.production.example docker compose --env-file .env.production.example -f docker-compose.prod.yml config
+
       - name: Build images
         run: docker compose build
 
@@ -186,3 +189,6 @@ jobs:
 
           print("Basic quality scans passed.")
           PY
+
+      - name: Validate shell scripts
+        run: bash -n scripts/*.sh
