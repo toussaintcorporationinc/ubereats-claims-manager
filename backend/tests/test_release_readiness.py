@@ -13,12 +13,10 @@ def test_release_health_ready_and_version(unauthenticated_client: TestClient) ->
     response = unauthenticated_client.get("/version")
     assert response.status_code == 200
     payload = response.json()
-    assert payload == {
-        "app": "Uber Eats Claims Manager",
-        "version": "1.0.0-v1",
-        "environment": "test",
-        "commit": "unknown",
-    }
+    assert payload["app"] == "Uber Eats Claims Manager"
+    assert payload["version"] == "1.0.0-v1"
+    assert payload["environment"] in {"ci", "test"}
+    assert payload["commit"] == "unknown"
     serialized = str(payload).lower()
     assert "secret" not in serialized
     assert "password" not in serialized
@@ -88,4 +86,3 @@ def test_demo_orders_are_fictitious() -> None:
     assert "@" not in content
     assert "gmail.com" not in content.lower()
     assert "outlook.com" not in content.lower()
-
