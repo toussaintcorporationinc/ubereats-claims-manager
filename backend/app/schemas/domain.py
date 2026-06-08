@@ -37,7 +37,7 @@ UserRole = Literal["owner", "manager", "staff"]
 ImportBatchStatus = Literal["uploaded", "parsed", "confirmed", "partially_imported", "failed", "cancelled"]
 ImportRowStatus = Literal["valid", "invalid", "duplicate", "unauthorized", "created", "skipped"]
 EmailProviderName = Literal["gmail"]
-EmailProviderDraftStatus = Literal["provider_draft_created", "failed"]
+EmailProviderDraftStatus = Literal["provider_draft_created", "send_requested", "sent", "failed"]
 
 
 class UserRead(BaseModel):
@@ -247,6 +247,9 @@ class EmailDraftRead(BaseModel):
     provider: str | None = None
     provider_status: str | None = None
     provider_draft_id: str | None = None
+    provider_message_id: str | None = None
+    provider_sent_at: datetime | None = None
+    provider_to_email: str | None = None
 
 
 class EmailDraftSummaryRead(BaseModel):
@@ -261,6 +264,9 @@ class EmailDraftSummaryRead(BaseModel):
     provider: str | None = None
     provider_status: str | None = None
     provider_draft_id: str | None = None
+    provider_message_id: str | None = None
+    provider_sent_at: datetime | None = None
+    provider_to_email: str | None = None
 
 
 class DashboardRestaurantSummary(BaseModel):
@@ -381,6 +387,18 @@ class GmailDraftCreate(BaseModel):
     include_evidence: bool = True
 
 
+class GmailDraftSendRequest(BaseModel):
+    confirm_send: bool
+
+
+class GmailDraftSendResponse(BaseModel):
+    provider_draft_id: str
+    status: EmailProviderDraftStatus
+    provider_message_id: str | None
+    provider_thread_id: str | None
+    sent_at: datetime | None
+
+
 class EmailProviderDraftRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -389,11 +407,15 @@ class EmailProviderDraftRead(BaseModel):
     provider: EmailProviderName
     provider_draft_id: str | None
     provider_thread_id: str | None
+    provider_message_id: str | None
     to_email: str
     subject: str
     status: EmailProviderDraftStatus
     created_by_user_id: int
+    sent_by_user_id: int | None
+    sent_at: datetime | None
     created_at: datetime
     updated_at: datetime
     error_message: str | None
+    last_error: str | None
 

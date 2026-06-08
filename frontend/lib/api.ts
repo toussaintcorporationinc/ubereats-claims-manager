@@ -32,6 +32,7 @@ export type EvidenceType =
 export type EmailDraftType = "initial_claim" | "followup_1" | "followup_2" | "escalation" | "proof_reply";
 export type ImportBatchStatus = "uploaded" | "parsed" | "confirmed" | "partially_imported" | "failed" | "cancelled";
 export type ImportRowStatus = "valid" | "invalid" | "duplicate" | "unauthorized" | "created" | "skipped";
+export type EmailProviderDraftStatus = "provider_draft_created" | "send_requested" | "sent" | "failed";
 
 export type Restaurant = {
   id: number;
@@ -98,6 +99,9 @@ export type EmailDraft = {
   provider: "gmail" | null;
   provider_status: string | null;
   provider_draft_id: string | null;
+  provider_message_id: string | null;
+  provider_sent_at: string | null;
+  provider_to_email: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -114,6 +118,9 @@ export type EmailDraftSummary = {
   provider: "gmail" | null;
   provider_status: string | null;
   provider_draft_id: string | null;
+  provider_message_id: string | null;
+  provider_sent_at: string | null;
+  provider_to_email: string | null;
 };
 
 export type GmailConnectionStatus = {
@@ -132,17 +139,33 @@ export type GmailDraftCreatePayload = {
   include_evidence: boolean;
 };
 
+export type GmailDraftSendPayload = {
+  confirm_send: boolean;
+};
+
+export type GmailDraftSendResponse = {
+  provider_draft_id: string;
+  status: EmailProviderDraftStatus;
+  provider_message_id: string | null;
+  provider_thread_id: string | null;
+  sent_at: string | null;
+};
+
 export type EmailProviderDraft = {
   id: number;
   email_draft_id: number;
   provider: "gmail";
   provider_draft_id: string | null;
   provider_thread_id: string | null;
+  provider_message_id: string | null;
   to_email: string;
   subject: string;
-  status: "provider_draft_created" | "failed";
+  status: EmailProviderDraftStatus;
   created_by_user_id: number;
+  sent_by_user_id: number | null;
+  sent_at: string | null;
   error_message: string | null;
+  last_error: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -477,6 +500,11 @@ export const api = {
     }),
   createGmailDraft: (draftId: number, payload: GmailDraftCreatePayload) =>
     postJson<EmailProviderDraft, GmailDraftCreatePayload>(`/v1/drafts/${draftId}/gmail-draft`, payload),
+  sendGmailProviderDraft: (providerDraftId: string, payload: GmailDraftSendPayload) =>
+    postJson<GmailDraftSendResponse, GmailDraftSendPayload>(
+      `/v1/email/gmail/provider-drafts/${encodeURIComponent(providerDraftId)}/send`,
+      payload,
+    ),
   previewOrderImport: (file: File) => {
     const formData = new FormData();
     formData.append("file", file);

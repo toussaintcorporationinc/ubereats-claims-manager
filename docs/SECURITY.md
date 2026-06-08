@@ -55,9 +55,9 @@ Regles appliquees :
 - la taille maximale est controlee par `IMPORT_MAX_FILE_SIZE_MB` ;
 - les fichiers acceptes sont limites a `.csv` et `.xlsx`.
 
-## Gmail OAuth et brouillons provider
+## Gmail OAuth, brouillons provider et envoi manuel
 
-La V1 Gmail cree uniquement des brouillons Gmail avec le scope `gmail.compose`. Aucun endpoint n'envoie automatiquement un email.
+La V1 Gmail cree des brouillons Gmail avec le scope `gmail.compose` et permet leur envoi manuel approuve. Aucun endpoint n'envoie automatiquement un email.
 
 Variables attendues :
 
@@ -82,6 +82,14 @@ Regles appliquees :
 - `owner` peut creer un brouillon Gmail pour tous les restaurants ;
 - `manager` peut creer un brouillon Gmail pour ses restaurants assignes ;
 - `staff` ne peut pas creer de brouillon Gmail.
+- l'envoi exige `confirm_send=true` ;
+- `owner` peut envoyer pour tous les restaurants ;
+- `manager` peut envoyer pour ses restaurants assignes ;
+- `staff` ne peut pas envoyer ;
+- un `EmailProviderDraft` deja `sent` ne peut pas etre renvoye ;
+- les statuts finaux de commande bloquent l'envoi ;
+- un `EmailThread` outbound est cree apres envoi ;
+- `AuditLog` trace `send_gmail_draft` et `send_gmail_draft_failed` sans tokens ni secrets.
 
 Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit une protection isolee et remplacable ; une version production plus avancee pourra brancher un KMS ou un gestionnaire de secrets sans changer les routes.
 
@@ -96,6 +104,7 @@ Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit
 - validation des dossiers ;
 - generation des brouillons internes ;
 - creation de brouillons Gmail ;
+- envoi manuel de brouillons Gmail ;
 - dashboard global.
 
 ### manager
@@ -106,6 +115,7 @@ Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit
 - validation des dossiers ;
 - generation des brouillons internes ;
 - creation de brouillons Gmail pour ses restaurants ;
+- envoi manuel de brouillons Gmail pour ses restaurants ;
 - dashboard filtre sur ses restaurants.
 
 ### staff
@@ -118,7 +128,8 @@ Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit
 - pas de creation restaurant ;
 - pas de validation dossier ;
 - pas de generation de brouillon ;
-- pas de creation de brouillon Gmail.
+- pas de creation de brouillon Gmail ;
+- pas d'envoi Gmail.
 
 ## Audit
 
@@ -137,5 +148,6 @@ Un `AuditLog` est cree pour :
 - pas de rotation de cle automatisee ;
 - pas d'auth multi-facteur ;
 - pas de stockage cloud ;
-- pas d'envoi reel d'email ;
+- pas d'envoi automatique ;
+- pas de retry automatique d'envoi Gmail ;
 - pas d'integration OpenAI.

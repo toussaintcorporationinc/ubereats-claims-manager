@@ -313,5 +313,8 @@ def test_get_global_drafts_returns_created_drafts(client: TestClient) -> None:
             "provider": None,
             "provider_status": None,
             "provider_draft_id": None,
+            "provider_message_id": None,
+            "provider_sent_at": None,
+            "provider_to_email": None,
         }
     ]

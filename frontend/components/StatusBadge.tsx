@@ -8,6 +8,7 @@ const positiveStatuses = new Set([
   "parsed",
   "confirmed",
   "provider_draft_created",
+  "sent",
 ]);
 const warningStatuses = new Set([
   "draft",
@@ -16,6 +17,7 @@ const warningStatuses = new Set([
   "payment_to_verify",
   "uploaded",
   "partially_imported",
+  "send_requested",
   "valid",
   "duplicate",
   "unauthorized",
