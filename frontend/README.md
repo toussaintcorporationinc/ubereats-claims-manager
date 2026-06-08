@@ -1,6 +1,6 @@
 # Frontend
 
-Frontend Next.js TypeScript minimal pour Uber Eats Claims Manager.
+Frontend Next.js TypeScript minimal pour TENNET.
 
 ## Commandes
 

@@ -13,7 +13,7 @@ def test_release_health_ready_and_version(unauthenticated_client: TestClient) ->
     response = unauthenticated_client.get("/version")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["app"] == "Uber Eats Claims Manager"
+    assert payload["app"] == "TENNET"
     assert payload["version"] == "1.0.0-v1"
     assert payload["environment"] in {"ci", "test"}
     assert payload["commit"] == "unknown"

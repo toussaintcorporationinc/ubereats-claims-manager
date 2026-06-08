@@ -95,7 +95,7 @@ def gmail_oauth_callback(
     )
     db.commit()
     return HTMLResponse(
-        "<html><body><h1>Gmail connected</h1><p>You can close this window and return to Claims Manager.</p></body></html>"
+        "<html><body><h1>Gmail connected</h1><p>You can close this window and return to TENNET.</p></body></html>"
     )
 
 

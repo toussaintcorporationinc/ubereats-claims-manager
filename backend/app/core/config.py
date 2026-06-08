@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "Uber Eats Claims Manager"
+    app_name: str = "TENNET"
     app_env: str = "development"
     environment: str | None = None
     debug: bool = False

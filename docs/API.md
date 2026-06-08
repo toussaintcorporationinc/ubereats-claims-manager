@@ -1,4 +1,4 @@
-# API - Uber Eats Claims Manager
+# API - TENNET
 
 Base URL locale backend : `http://localhost:8000`
 
@@ -13,7 +13,7 @@ Retour attendu :
 ```json
 {
   "status": "ok",
-  "service": "Uber Eats Claims Manager"
+  "service": "TENNET"
 }
 ```
 
@@ -36,7 +36,7 @@ Retour attendu :
 
 ```json
 {
-  "app": "Uber Eats Claims Manager",
+  "app": "TENNET",
   "version": "1.0.0-v1",
   "environment": "production",
   "commit": "unknown"

@@ -1,6 +1,6 @@
 # Production deployment
 
-This guide describes a Docker-based production deployment for Uber Eats Claims Manager.
+This guide describes a Docker-based production deployment for TENNET.
 
 ## Target architecture
 

@@ -4,7 +4,7 @@ import { AuthProvider } from "@/lib/auth";
 import "./globals.css";
 
 export const metadata = {
-  title: "Uber Eats Claims Manager",
+  title: "TENNET",
   description: "Interface de gestion des reclamations Uber Eats.",
 };
 

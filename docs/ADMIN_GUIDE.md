@@ -1,4 +1,4 @@
-# Admin guide V1
+# TENNET admin guide V1
 
 This guide is for owners and operators managing production.
 

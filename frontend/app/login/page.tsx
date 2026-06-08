@@ -33,7 +33,7 @@ export default function LoginPage() {
     <section className="auth-panel">
       <div className="heading-copy">
         <p className="eyebrow">Connexion</p>
-        <h1>Uber Eats Claims Manager</h1>
+        <h1>TENNET</h1>
       </div>
 
       <ApiError error={error} />
