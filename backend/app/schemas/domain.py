@@ -49,6 +49,18 @@ InboundEmailMatchReason = Literal[
     "no_match",
     "ignored_sender",
 ]
+InboundEmailReviewStatus = Literal["unreviewed", "reviewed", "ignored"]
+ClaimResponseReviewType = Literal[
+    "accepted",
+    "payment_to_verify",
+    "payment_confirmed",
+    "refused",
+    "evidence_requested",
+    "information_requested",
+    "followup_needed",
+    "ignored",
+    "manual_review",
+]
 
 
 class UserRead(BaseModel):
@@ -294,6 +306,12 @@ class DashboardSummary(BaseModel):
     total_recovered_amount: Decimal
     total_pending_amount: Decimal
     total_refused_amount: Decimal
+    accepted_count: int = 0
+    payment_to_verify_count: int = 0
+    payment_confirmed_count: int = 0
+    refused_count: int = 0
+    manual_review_count: int = 0
+    pending_response_count: int = 0
     orders_by_status: dict[str, int]
     orders_by_restaurant: list[DashboardRestaurantSummary]
 
@@ -451,6 +469,9 @@ class InboundEmailMessageRead(BaseModel):
     received_at: datetime | None
     match_status: InboundEmailMatchStatus
     match_reason: InboundEmailMatchReason
+    review_status: InboundEmailReviewStatus
+    reviewed_at: datetime | None
+    reviewed_by_user_id: int | None
     created_at: datetime
     updated_at: datetime
 
@@ -485,6 +506,42 @@ class OrderEmailMessagesResponse(BaseModel):
 
 class InboundManualLinkRequest(BaseModel):
     order_id: int
+
+
+class ClaimResponseReviewCreate(BaseModel):
+    inbound_message_id: int | None = None
+    review_type: ClaimResponseReviewType
+    recovered_amount: Decimal | None = None
+    expected_payment_date: date | None = None
+    refusal_reason: str | None = None
+    evidence_requested: bool | None = None
+    notes: str | None = None
+
+
+class ClaimResponseReviewRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    order_id: int
+    inbound_message_id: int | None
+    reviewed_by_user_id: int
+    review_type: ClaimResponseReviewType
+    previous_order_status: ClaimOrderStatus
+    new_order_status: ClaimOrderStatus
+    recovered_amount: Decimal | None
+    expected_payment_date: date | None
+    refusal_reason: str | None
+    evidence_requested: bool | None
+    notes: str | None
+    order_status: ClaimOrderStatus
+    created_at: datetime
+    updated_at: datetime
+
+
+class ResponseReviewsResponse(BaseModel):
+    reviews: list[ClaimResponseReviewRead]
+    limit: int
+    offset: int
 
 
 class EmailProviderDraftRead(BaseModel):

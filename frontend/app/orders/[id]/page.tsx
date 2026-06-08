@@ -12,6 +12,9 @@ import {
   api,
   formatCurrency,
   type ClaimOrder,
+  type ClaimResponseReview,
+  type ClaimResponseReviewCreatePayload,
+  type ClaimResponseReviewType,
   type ClaimValidationResponse,
   type EmailDraft,
   type EmailProviderDraft,
@@ -34,6 +37,14 @@ type GmailDraftForm = {
   include_evidence: boolean;
 };
 
+type ResponseReviewForm = {
+  review_type: ClaimResponseReviewType;
+  recovered_amount: string;
+  expected_payment_date: string;
+  refusal_reason: string;
+  notes: string;
+};
+
 const initialEvidenceForm: EvidenceForm = {
   evidence_type: "cancellation_proof",
 };
@@ -47,6 +58,26 @@ const evidenceTypes: EvidenceType[] = [
   "other",
 ];
 
+const responseReviewTypes: ClaimResponseReviewType[] = [
+  "accepted",
+  "payment_to_verify",
+  "payment_confirmed",
+  "refused",
+  "evidence_requested",
+  "information_requested",
+  "followup_needed",
+  "ignored",
+  "manual_review",
+];
+
+const initialResponseReviewForm: ResponseReviewForm = {
+  review_type: "manual_review",
+  recovered_amount: "",
+  expected_payment_date: "",
+  refusal_reason: "",
+  notes: "",
+};
+
 export default function OrderDetailPage() {
   const params = useParams<{ id: string }>();
   const orderId = Number(params.id);
@@ -56,13 +87,16 @@ export default function OrderDetailPage() {
   const [evidence, setEvidence] = useState<EvidenceFile[]>([]);
   const [drafts, setDrafts] = useState<EmailDraft[]>([]);
   const [emailMessages, setEmailMessages] = useState<OrderEmailMessagesResponse | null>(null);
+  const [responseReviews, setResponseReviews] = useState<ClaimResponseReview[]>([]);
   const [gmailStatus, setGmailStatus] = useState<GmailConnectionStatus | null>(null);
   const [validation, setValidation] = useState<ClaimValidationResponse | null>(null);
   const [generatedDraft, setGeneratedDraft] = useState<EmailDraft | null>(null);
   const [gmailDraftResult, setGmailDraftResult] = useState<EmailProviderDraft | null>(null);
   const [gmailSendResult, setGmailSendResult] = useState<GmailDraftSendResponse | null>(null);
+  const [responseReviewResult, setResponseReviewResult] = useState<ClaimResponseReview | null>(null);
   const [evidenceForm, setEvidenceForm] = useState<EvidenceForm>(initialEvidenceForm);
   const [gmailForms, setGmailForms] = useState<Record<number, GmailDraftForm>>({});
+  const [responseReviewForms, setResponseReviewForms] = useState<Record<number, ResponseReviewForm>>({});
   const [sendConfirmations, setSendConfirmations] = useState<Record<number, boolean>>({});
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
@@ -75,20 +109,24 @@ export default function OrderDetailPage() {
   const [generatingDraft, setGeneratingDraft] = useState(false);
   const [submittingGmailDraftId, setSubmittingGmailDraftId] = useState<number | null>(null);
   const [sendingProviderDraftId, setSendingProviderDraftId] = useState<string | null>(null);
+  const [reviewingInboundMessageId, setReviewingInboundMessageId] = useState<number | null>(null);
 
   const loadOrderData = useCallback(async () => {
-    const [orderData, restaurantsData, evidenceData, draftsData, emailMessagesData] = await Promise.all([
-      api.getOrder(orderId),
-      api.getRestaurants(),
-      api.getEvidence(orderId),
-      api.getOrderDrafts(orderId),
-      api.getOrderEmailMessages(orderId),
-    ]);
+    const [orderData, restaurantsData, evidenceData, draftsData, emailMessagesData, responseReviewsData] =
+      await Promise.all([
+        api.getOrder(orderId),
+        api.getRestaurants(),
+        api.getEvidence(orderId),
+        api.getOrderDrafts(orderId),
+        api.getOrderEmailMessages(orderId),
+        api.getOrderResponseReviews(orderId),
+      ]);
     setOrder(orderData);
     setRestaurants(restaurantsData);
     setEvidence(evidenceData);
     setDrafts(draftsData);
     setEmailMessages(emailMessagesData);
+    setResponseReviews(responseReviewsData);
   }, [orderId]);
 
   useEffect(() => {
@@ -241,6 +279,49 @@ export default function OrderDetailPage() {
       setActionError(apiError);
     } finally {
       setSendingProviderDraftId(null);
+    }
+  }
+
+  function getResponseReviewForm(messageId: number): ResponseReviewForm {
+    return responseReviewForms[messageId] ?? initialResponseReviewForm;
+  }
+
+  function updateResponseReviewForm(messageId: number, patch: Partial<ResponseReviewForm>) {
+    setResponseReviewForms((current) => ({
+      ...current,
+      [messageId]: {
+        ...getResponseReviewForm(messageId),
+        ...patch,
+      },
+    }));
+  }
+
+  async function handleCreateResponseReview(event: FormEvent<HTMLFormElement>, inboundMessageId: number) {
+    event.preventDefault();
+    const form = getResponseReviewForm(inboundMessageId);
+    const payload: ClaimResponseReviewCreatePayload = {
+      inbound_message_id: inboundMessageId,
+      review_type: form.review_type,
+      recovered_amount: form.recovered_amount.trim() || null,
+      expected_payment_date: form.expected_payment_date || null,
+      refusal_reason: form.refusal_reason.trim() || null,
+      evidence_requested: form.review_type === "evidence_requested" ? true : null,
+      notes: form.notes.trim() || null,
+    };
+
+    setReviewingInboundMessageId(inboundMessageId);
+    setActionError(null);
+    setResponseReviewResult(null);
+
+    try {
+      const result = await api.createResponseReview(orderId, payload);
+      setResponseReviewResult(result);
+      setResponseReviewForms((current) => ({ ...current, [inboundMessageId]: initialResponseReviewForm }));
+      await loadOrderData();
+    } catch (apiError) {
+      setActionError(apiError);
+    } finally {
+      setReviewingInboundMessageId(null);
     }
   }
 
@@ -552,6 +633,163 @@ export default function OrderDetailPage() {
 
       <section className="tool-panel">
         <div className="section-heading">
+          <h2>Traitement des reponses Uber</h2>
+          <StatusBadge status={order.status} />
+        </div>
+        <div className="detail-grid">
+          <DetailItem label="Statut actuel" value={order.status} />
+          <DetailItem label="Resultat" value={order.result ?? "-"} />
+          <DetailItem label="Montant recupere" value={formatCurrency(order.recovered_amount, order.currency)} />
+        </div>
+        {responseReviewResult ? (
+          <div className="success-box">
+            <strong>Reponse traitee</strong>
+            <span>
+              {responseReviewResult.previous_order_status} vers {responseReviewResult.new_order_status}
+            </span>
+          </div>
+        ) : null}
+
+        {emailMessages?.inbound_messages.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Message entrant</th>
+                  <th>Reception</th>
+                  <th>Revue</th>
+                  {canValidateOrDraft ? <th>Traitement manuel</th> : null}
+                </tr>
+              </thead>
+              <tbody>
+                {emailMessages.inbound_messages.map((message) => {
+                  const form = getResponseReviewForm(message.id);
+                  return (
+                    <tr key={`review-message-${message.id}`}>
+                      <td>
+                        <div className="stack-sm">
+                          <strong>{message.subject ?? "-"}</strong>
+                          <span className="muted">{message.snippet ?? message.body_text?.slice(0, 180) ?? "-"}</span>
+                        </div>
+                      </td>
+                      <td>{formatDate(message.received_at)}</td>
+                      <td>
+                        <div className="stack-sm">
+                          <StatusBadge status={message.review_status} />
+                          <span className="muted">{formatDate(message.reviewed_at)}</span>
+                        </div>
+                      </td>
+                      {canValidateOrDraft ? (
+                        <td>
+                          <form
+                            className="inline-form"
+                            onSubmit={(event) => handleCreateResponseReview(event, message.id)}
+                          >
+                            <select
+                              aria-label={`Type traitement reponse ${message.id}`}
+                              value={form.review_type}
+                              onChange={(event) =>
+                                updateResponseReviewForm(message.id, {
+                                  review_type: event.target.value as ClaimResponseReviewType,
+                                })
+                              }
+                            >
+                              {responseReviewTypes.map((type) => (
+                                <option key={type} value={type}>
+                                  {type}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              aria-label={`Montant recupere reponse ${message.id}`}
+                              inputMode="decimal"
+                              placeholder="Montant recupere"
+                              value={form.recovered_amount}
+                              onChange={(event) =>
+                                updateResponseReviewForm(message.id, { recovered_amount: event.target.value })
+                              }
+                            />
+                            <input
+                              aria-label={`Paiement attendu reponse ${message.id}`}
+                              type="date"
+                              value={form.expected_payment_date}
+                              onChange={(event) =>
+                                updateResponseReviewForm(message.id, { expected_payment_date: event.target.value })
+                              }
+                            />
+                            <input
+                              aria-label={`Motif refus reponse ${message.id}`}
+                              placeholder="Motif refus"
+                              value={form.refusal_reason}
+                              onChange={(event) =>
+                                updateResponseReviewForm(message.id, { refusal_reason: event.target.value })
+                              }
+                            />
+                            <textarea
+                              aria-label={`Notes reponse ${message.id}`}
+                              placeholder="Notes internes"
+                              value={form.notes}
+                              onChange={(event) => updateResponseReviewForm(message.id, { notes: event.target.value })}
+                            />
+                            <button
+                              type="submit"
+                              className="button"
+                              disabled={reviewingInboundMessageId === message.id}
+                            >
+                              {reviewingInboundMessageId === message.id ? "Traitement" : "Traiter la reponse"}
+                            </button>
+                          </form>
+                        </td>
+                      ) : null}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState title="Aucune reponse rattachee a traiter" />
+        )}
+
+        <h3>Historique des traitements</h3>
+        {responseReviews.length > 0 ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Transition</th>
+                  <th>Montant</th>
+                  <th>Date paiement</th>
+                  <th>Motif / notes</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {responseReviews.map((review) => (
+                  <tr key={review.id}>
+                    <td>
+                      <StatusBadge status={review.review_type} />
+                    </td>
+                    <td>
+                      {review.previous_order_status} vers {review.new_order_status}
+                    </td>
+                    <td>{formatCurrency(review.recovered_amount, order.currency)}</td>
+                    <td>{review.expected_payment_date ?? "-"}</td>
+                    <td>{review.refusal_reason ?? review.notes ?? "-"}</td>
+                    <td>{formatDate(review.created_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState title="Aucun traitement manuel encore enregistre" />
+        )}
+      </section>
+
+      <section className="tool-panel">
+        <div className="section-heading">
           <h2>Historique email</h2>
           <span className="muted">Aucune reponse automatique</span>
         </div>
@@ -593,6 +831,7 @@ export default function OrderDetailPage() {
                       <th>Sujet</th>
                       <th>Reception</th>
                       <th>Match</th>
+                      <th>Revue</th>
                       <th>Extrait</th>
                     </tr>
                   </thead>
@@ -606,6 +845,12 @@ export default function OrderDetailPage() {
                           <div className="stack-sm">
                             <StatusBadge status={message.match_status} />
                             <span className="muted">{message.match_reason}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="stack-sm">
+                            <StatusBadge status={message.review_status} />
+                            <span className="muted">{formatDate(message.reviewed_at)}</span>
                           </div>
                         </td>
                         <td>{message.snippet ?? message.body_text?.slice(0, 180) ?? "-"}</td>

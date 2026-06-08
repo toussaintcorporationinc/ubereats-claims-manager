@@ -31,6 +31,12 @@ def dashboard_summary(
             total_recovered_amount=Decimal("0"),
             total_pending_amount=Decimal("0"),
             total_refused_amount=Decimal("0"),
+            accepted_count=0,
+            payment_to_verify_count=0,
+            payment_confirmed_count=0,
+            refused_count=0,
+            manual_review_count=0,
+            pending_response_count=0,
             orders_by_status={},
             orders_by_restaurant=[],
         )
@@ -60,6 +66,12 @@ def dashboard_summary(
 
     status_rows = db.execute(status_statement).all()
     orders_by_status = {status: count for status, count in status_rows}
+    accepted_count = orders_by_status.get("accepted", 0)
+    payment_to_verify_count = orders_by_status.get("payment_to_verify", 0)
+    payment_confirmed_count = orders_by_status.get("payment_confirmed", 0)
+    refused_count = orders_by_status.get("refused", 0)
+    manual_review_count = orders_by_status.get("manual_review", 0)
+    pending_response_count = orders_by_status.get("sent", 0) + orders_by_status.get("waiting_uber_response", 0)
 
     restaurant_statement = (
         select(
@@ -94,6 +106,12 @@ def dashboard_summary(
         total_recovered_amount=total_recovered_amount,
         total_pending_amount=total_pending_amount,
         total_refused_amount=total_refused_amount,
+        accepted_count=accepted_count,
+        payment_to_verify_count=payment_to_verify_count,
+        payment_confirmed_count=payment_confirmed_count,
+        refused_count=refused_count,
+        manual_review_count=manual_review_count,
+        pending_response_count=pending_response_count,
         orders_by_status=orders_by_status,
         orders_by_restaurant=orders_by_restaurant,
     )

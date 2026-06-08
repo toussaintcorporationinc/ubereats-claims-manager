@@ -2,6 +2,7 @@ from app.core.database import Base
 from app.models.domain import (
     AuditLog,
     ClaimOrder,
+    ClaimResponseReview,
     EmailAccount,
     EmailDraft,
     EmailProviderDraft,
@@ -20,6 +21,7 @@ __all__ = [
     "AuditLog",
     "Base",
     "ClaimOrder",
+    "ClaimResponseReview",
     "EmailAccount",
     "EmailDraft",
     "EmailProviderDraft",

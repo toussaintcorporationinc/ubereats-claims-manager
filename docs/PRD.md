@@ -30,6 +30,7 @@ La V1 pose la base applicative et les premiers objets metier :
 - creation de brouillons Gmail avec pieces jointes, sans envoi automatique ;
 - envoi manuel approuve de brouillons Gmail ;
 - lecture et rattachement des reponses Gmail entrantes ;
+- traitement manuel des reponses Uber pour accepter, refuser, demander des preuves ou confirmer un paiement ;
 - journalisation des creations importantes ;
 - authentification et roles utilisateurs ;
 - dashboard de synthese.
@@ -66,6 +67,9 @@ La V1 pose la base applicative et les premiers objets metier :
 20. Les reponses Uber sont rattachees automatiquement par thread Gmail ou numero de commande Uber si le match est fiable.
 21. Les messages non rattaches restent visibles comme `unlinked` et peuvent etre rattaches manuellement par un utilisateur autorise.
 22. L'historique email apparait dans le detail de la commande, sans reponse automatique.
+23. Un owner ou manager traite manuellement la reponse Uber avec un type de decision : `accepted`, `payment_to_verify`, `payment_confirmed`, `refused`, `evidence_requested`, `information_requested`, `followup_needed`, `ignored` ou `manual_review`.
+24. L'application met a jour le statut et le resultat de la commande selon la decision, marque le message comme revu si applicable et cree un `AuditLog`.
+25. Le dashboard affiche les compteurs de suivi : acceptes, paiements a verifier, paiements confirmes, refuses, revue manuelle et attente de reponse.
 
 ## Modeles metier V1
 
@@ -77,6 +81,7 @@ La V1 pose la base applicative et les premiers objets metier :
 - `EmailProviderDraft` : historique des brouillons Gmail crees et envoyes manuellement depuis un brouillon interne ;
 - `GmailSyncState` : etat de la derniere synchronisation inbound Gmail par compte email ;
 - `InboundEmailMessage` : reponse Gmail recue, rattachement automatique ou manuel et extrait stocke ;
+- `ClaimResponseReview` : decision humaine prise sur une reponse Uber, avec transition de statut, montant recupere eventuel et notes internes ;
 - `EmailThread` : historique des conversations email outbound et inbound ;
 - `AuditLog` : trace des actions importantes.
 - `User` : utilisateur interne avec role ;

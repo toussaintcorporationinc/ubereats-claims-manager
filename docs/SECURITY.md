@@ -102,6 +102,12 @@ Regles appliquees :
 - `staff` peut consulter uniquement les messages rattaches aux restaurants assignes ;
 - un `EmailThread` inbound est cree pour chaque message rattache ;
 - aucun endpoint inbound ne supprime, modifie ou repond a un email Gmail.
+- le traitement manuel d'une reponse cree un `ClaimResponseReview` et ne modifie jamais Gmail ;
+- `owner` peut traiter les reponses de tous les restaurants ;
+- `manager` peut traiter les reponses de ses restaurants assignes ;
+- `staff` ne peut pas traiter une reponse Uber ;
+- les statuts `payment_confirmed` et `closed` protegent la commande contre une nouvelle decision non ignoree ;
+- les audits de traitement ne stockent aucun token, secret ou mot de passe.
 
 Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit une protection isolee et remplacable ; une version production plus avancee pourra brancher un KMS ou un gestionnaire de secrets sans changer les routes.
 
@@ -117,6 +123,7 @@ Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit
 - generation des brouillons internes ;
 - creation de brouillons Gmail ;
 - envoi manuel de brouillons Gmail ;
+- traitement manuel des reponses Uber ;
 - dashboard global.
 
 ### manager
@@ -128,6 +135,7 @@ Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit
 - generation des brouillons internes ;
 - creation de brouillons Gmail pour ses restaurants ;
 - envoi manuel de brouillons Gmail pour ses restaurants ;
+- traitement manuel des reponses Uber pour ses restaurants ;
 - dashboard filtre sur ses restaurants.
 
 ### staff
@@ -141,7 +149,8 @@ Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit
 - pas de validation dossier ;
 - pas de generation de brouillon ;
 - pas de creation de brouillon Gmail ;
-- pas d'envoi Gmail.
+- pas d'envoi Gmail ;
+- pas de traitement manuel des reponses Uber.
 
 ## Audit
 
@@ -152,7 +161,10 @@ Un `AuditLog` est cree pour :
 - assignation restaurant a un utilisateur ;
 - suppression d'acces restaurant ;
 - login reussi ;
-- tentative de login echouee sans stocker le mot de passe.
+- tentative de login echouee sans stocker le mot de passe ;
+- creation de revue de reponse Uber ;
+- changement de statut issu d'une revue de reponse Uber ;
+- message inbound marque revu ou ignore.
 
 ## Limites V1
 
