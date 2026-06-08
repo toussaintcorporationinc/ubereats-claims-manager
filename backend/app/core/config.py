@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     manual_review_after_days: int = 15
     max_followups_per_order: int = 3
     followup_automatic_send_enabled: bool = False
+    export_max_rows: int = 10000
+    report_default_lookback_days: int = 90
     backend_cors_origins: str | None = None
     cors_origins: str = "http://localhost:3000"
     secret_key: str | None = None

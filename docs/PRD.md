@@ -32,6 +32,7 @@ La V1 pose la base applicative et les premiers objets metier :
 - lecture et rattachement des reponses Gmail entrantes ;
 - traitement manuel des reponses Uber pour accepter, refuser, demander des preuves ou confirmer un paiement ;
 - workflow de relances controlees pour dossiers non resolus ;
+- reporting commercial et exports CSV/XLSX ;
 - journalisation des creations importantes ;
 - authentification et roles utilisateurs ;
 - dashboard de synthese.
@@ -75,6 +76,9 @@ La V1 pose la base applicative et les premiers objets metier :
 27. L'application cree au maximum une tache par type : `followup_1` a J+2, `followup_2` a J+5, `escalation` a J+10, puis `manual_review` a J+15.
 28. L'utilisateur cree un brouillon interne, puis eventuellement un brouillon Gmail, sans envoi automatique.
 29. L'envoi Gmail d'une relance reste manuel, avec confirmation explicite, et la tache peut etre marquee terminee ou ignoree.
+30. Un owner ou manager ouvre `/reports` pour analyser les montants reclames, recuperes, en attente et refuses.
+31. Il filtre par restaurant, periode, statut, resultat ou montant pour isoler les dossiers prioritaires.
+32. Il exporte les commandes, relances, reponses traitees ou le resume commercial en CSV/XLSX selon ses droits.
 
 ## Modeles metier V1
 
@@ -88,6 +92,7 @@ La V1 pose la base applicative et les premiers objets metier :
 - `InboundEmailMessage` : reponse Gmail recue, rattachement automatique ou manuel et extrait stocke ;
 - `ClaimResponseReview` : decision humaine prise sur une reponse Uber, avec transition de statut, montant recupere eventuel et notes internes ;
 - `FollowUpTask` : tache de relance limitee et auditee, avec echeance, statut et liens vers brouillons internes/provider ;
+- `ReportingService` : service applicatif de calcul des indicateurs commerciaux, filtres, permissions et exports ;
 - `EmailThread` : historique des conversations email outbound et inbound ;
 - `AuditLog` : trace des actions importantes.
 - `User` : utilisateur interne avec role ;

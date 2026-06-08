@@ -57,6 +57,7 @@ export default function DashboardPage() {
             <StatCard label="Recupere" value={formatCurrency(summary.total_recovered_amount)} />
             <StatCard label="En attente" value={formatCurrency(summary.total_pending_amount)} />
             <StatCard label="Refuse" value={formatCurrency(summary.total_refused_amount)} />
+            <StatCard label="Taux de reussite" value={formatPercent(summary.success_rate)} />
             <StatCard label="Acceptes" value={summary.accepted_count} />
             <StatCard label="Paiement a verifier" value={summary.payment_to_verify_count} />
             <StatCard label="Paiements confirmes" value={summary.payment_confirmed_count} />
@@ -126,8 +127,67 @@ export default function DashboardPage() {
               )}
             </section>
           </div>
+
+          <div className="grid-two">
+            <section className="tool-panel">
+              <h2>Top restaurants par montant reclame</h2>
+              {summary.top_restaurants_by_claimed_amount.length > 0 ? (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Restaurant</th>
+                        <th>Montant</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summary.top_restaurants_by_claimed_amount.map((restaurant) => (
+                        <tr key={restaurant.restaurant_id}>
+                          <td>{restaurant.restaurant_name}</td>
+                          <td>{formatCurrency(restaurant.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <EmptyState title="Aucun montant" />
+              )}
+            </section>
+
+            <section className="tool-panel">
+              <h2>Top restaurants par montant en attente</h2>
+              {summary.top_restaurants_by_pending_amount.length > 0 ? (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Restaurant</th>
+                        <th>Montant</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {summary.top_restaurants_by_pending_amount.map((restaurant) => (
+                        <tr key={restaurant.restaurant_id}>
+                          <td>{restaurant.restaurant_name}</td>
+                          <td>{formatCurrency(restaurant.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <EmptyState title="Aucun montant en attente" />
+              )}
+            </section>
+          </div>
         </>
       ) : null}
     </section>
   );
+}
+
+function formatPercent(value: string | number | null): string {
+  const numericValue = typeof value === "number" ? value : Number(value ?? 0);
+  return `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(numericValue * 100)} %`;
 }

@@ -33,6 +33,7 @@ Le backend expose maintenant les premiers objets metier :
 - lecture et rattachement manuel des reponses Gmail entrantes ;
 - traitement manuel des reponses Uber et mise a jour des statuts de reclamation ;
 - relances controlees J+2/J+5/J+10/J+15 sous forme de taches et brouillons, sans envoi automatique ;
+- reporting commercial avec exports CSV/XLSX ;
 - dashboard de synthese.
 
 Les endpoints principaux sont :
@@ -75,6 +76,15 @@ Les endpoints principaux sont :
 - `POST /v1/followups/{id}/create-gmail-draft`
 - `POST /v1/followups/{id}/skip`
 - `POST /v1/followups/{id}/complete`
+- `GET /v1/reports/commercial-summary`
+- `GET /v1/reports/orders`
+- `GET /v1/reports/followups`
+- `GET /v1/reports/responses`
+- `GET /v1/reports/export/orders.csv`
+- `GET /v1/reports/export/orders.xlsx`
+- `GET /v1/reports/export/followups.csv`
+- `GET /v1/reports/export/responses.csv`
+- `GET /v1/reports/export/commercial-summary.xlsx`
 - `GET /v1/dashboard/summary`
 - `POST /v1/imports/orders/preview`
 - `GET /v1/imports`
@@ -99,6 +109,8 @@ Un owner ou manager peut ensuite traiter manuellement une reponse Uber rattachee
 
 Les relances controlees se recalculent depuis `/followups`. La politique V1 propose `followup_1` a J+2, `followup_2` a J+5, `escalation` a J+10 et `manual_review` a J+15 ou quand la limite de relances est atteinte. Les taches creent des brouillons internes puis, si Gmail est configure, des brouillons Gmail. Aucun envoi automatique n'est implemente ; l'envoi reste manuel et confirme via le workflow Gmail existant.
 
+Les rapports commerciaux sont disponibles depuis `/reports`. Ils permettent de suivre les montants reclames, recuperes, en attente ou refuses, les taux de reussite, les performances par restaurant, les relances et les reponses Uber traitees. Les exports CSV/XLSX sont reserves aux roles `owner` et `manager`, respectent les restaurants autorises et n'incluent pas les noms clients par defaut.
+
 ## Demarrage rapide
 
 1. Copier le fichier d'environnement :
@@ -111,6 +123,7 @@ Le stockage local des preuves utilise `EVIDENCE_STORAGE_BACKEND=local`, `EVIDENC
 Les imports utilisent `IMPORT_STORAGE_DIR` et `IMPORT_MAX_FILE_SIZE_MB`.
 Gmail reste desactive par defaut avec `EMAIL_PROVIDER_ENABLED=false`. Pour tester la creation, l'envoi manuel et la lecture des reponses Gmail, renseigner `GMAIL_OAUTH_CLIENT_ID`, `GMAIL_OAUTH_CLIENT_SECRET`, `GMAIL_OAUTH_REDIRECT_URI`, `GMAIL_SCOPES`, `DEFAULT_UBER_EATS_SUPPORT_EMAIL`, `EMAIL_MAX_ATTACHMENT_TOTAL_MB`, puis activer `GMAIL_INBOUND_SYNC_ENABLED=true` pour la sync entrante.
 Les delais de relance sont configurables via `FOLLOWUP_1_DELAY_DAYS`, `FOLLOWUP_2_DELAY_DAYS`, `ESCALATION_DELAY_DAYS`, `MANUAL_REVIEW_AFTER_DAYS` et `MAX_FOLLOWUPS_PER_ORDER`. `FOLLOWUP_AUTOMATIC_SEND_ENABLED` reste `false` par defaut et ne declenche aucun envoi dans cette V1.
+Les exports utilisent `EXPORT_MAX_ROWS` pour limiter le volume et `REPORT_DEFAULT_LOOKBACK_DAYS` comme fenetre indicative de reporting.
 
 2. Lancer les services :
 

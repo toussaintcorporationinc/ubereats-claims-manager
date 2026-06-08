@@ -125,6 +125,23 @@ Regles appliquees :
 - `FOLLOWUP_AUTOMATIC_SEND_ENABLED` ne declenche aucun envoi automatique ;
 - chaque recalcul, creation de brouillon, skip et completion est audite.
 
+## Reporting et exports commerciaux
+
+Les rapports et exports commerciaux sont proteges par JWT et reserves a `owner` et `manager`.
+
+Regles appliquees :
+
+- `owner` peut consulter et exporter tous les restaurants ;
+- `manager` peut consulter et exporter uniquement ses restaurants assignes ;
+- `staff` ne peut pas acceder aux rapports commerciaux ni exporter ;
+- toute requete avec un `restaurant_id` non autorise est refusee ;
+- les exports appliquent les memes filtres et permissions que les rapports JSON ;
+- `EXPORT_MAX_ROWS` limite le volume exportable ;
+- `customer_name` est exclu par defaut des rapports et exports ;
+- `include_customer_names=true` est reserve a `owner` et `manager` ;
+- aucun export ne contient tokens Gmail, secrets, mots de passe, `access_token`, `refresh_token` ou chemin disque brut de preuve ;
+- les fichiers exportes sont generes en memoire pour la V1 et ne sont pas stockes dans le depot.
+
 Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit une protection isolee et remplacable ; une version production plus avancee pourra brancher un KMS ou un gestionnaire de secrets sans changer les routes.
 
 ## Roles
@@ -141,6 +158,7 @@ Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit
 - envoi manuel de brouillons Gmail ;
 - traitement manuel des reponses Uber ;
 - gestion des relances controlees ;
+- acces aux rapports et exports commerciaux ;
 - dashboard global.
 
 ### manager
@@ -154,6 +172,7 @@ Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit
 - envoi manuel de brouillons Gmail pour ses restaurants ;
 - traitement manuel des reponses Uber pour ses restaurants ;
 - gestion des relances controlees pour ses restaurants ;
+- acces aux rapports et exports commerciaux de ses restaurants ;
 - dashboard filtre sur ses restaurants.
 
 ### staff
@@ -170,6 +189,7 @@ Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit
 - pas d'envoi Gmail ;
 - pas de traitement manuel des reponses Uber ;
 - pas de gestion des relances.
+- pas d'acces aux rapports commerciaux ni aux exports.
 
 ## Audit
 
