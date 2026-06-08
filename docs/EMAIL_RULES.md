@@ -1,6 +1,6 @@
 # Email Rules
 
-Ce document cadre les regles de brouillons email internes et de brouillons Gmail. Aucun envoi reel d'email n'est implemente dans la base actuelle.
+Ce document cadre les regles de brouillons email internes, de brouillons Gmail et d'envoi Gmail manuel approuve.
 
 ## Principes cible
 
@@ -9,6 +9,7 @@ Ce document cadre les regles de brouillons email internes et de brouillons Gmail
 - conserver une trace du contenu envoye quand l'envoi reel sera ajoute ;
 - separer la generation de contenu, la validation et l'envoi.
 - creer un brouillon Gmail uniquement apres action explicite d'un utilisateur autorise.
+- envoyer un brouillon Gmail uniquement apres confirmation manuelle explicite.
 
 ## Brouillons disponibles V1
 
@@ -36,6 +37,24 @@ Regles :
 - seules les preuves existantes et accessibles via le service de stockage sont jointes ;
 - la taille totale des pieces jointes est limitee par `EMAIL_MAX_ATTACHMENT_TOTAL_MB` ;
 - chaque creation cree un `EmailProviderDraft` et un `AuditLog`.
+
+## Envoi Gmail manuel V1
+
+Un brouillon Gmail deja cree peut etre envoye uniquement depuis l'application, par un owner ou manager autorise, avec `confirm_send=true`.
+
+Regles :
+
+- aucun email n'est envoye automatiquement ;
+- aucune relance automatique n'est creee ;
+- aucun retry automatique n'est lance ;
+- `staff` ne peut pas envoyer ;
+- un brouillon deja `sent` ne peut pas etre renvoye ;
+- un brouillon `failed` ne peut pas etre renvoye dans cette mission ;
+- les commandes finales `accepted`, `payment_confirmed`, `refused` et `closed` bloquent l'envoi ;
+- apres envoi, la commande passe a `sent` ;
+- un `EmailThread` outbound conserve le sujet, le corps, le message id et le thread id disponibles ;
+- un `AuditLog` trace le succes ou l'echec controle ;
+- les tokens Gmail, secrets et mots de passe ne sont jamais stockes dans l'audit.
 
 ## Regles de generation
 
@@ -71,5 +90,5 @@ Regles :
 - pieces jointes ;
 - reclamation associee ;
 - date de creation du brouillon ;
-- date d'envoi, uniquement quand un vrai service d'envoi sera implemente.
+- date d'envoi manuel.
 

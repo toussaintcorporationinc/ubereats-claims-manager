@@ -7,7 +7,7 @@ import EmptyState from "@/components/EmptyState";
 import LoadingState from "@/components/LoadingState";
 import StatusBadge from "@/components/StatusBadge";
 import { useAuth } from "@/lib/auth";
-import { api, formatDate, type EmailDraftSummary } from "@/lib/api";
+import { api, formatDate, type EmailDraftSummary, type GmailConnectionStatus } from "@/lib/api";
 
 const defaultRecipient = "merchants@uber.com";
 
@@ -19,11 +19,14 @@ type GmailDraftForm = {
 export default function DraftsPage() {
   const { user } = useAuth();
   const [drafts, setDrafts] = useState<EmailDraftSummary[]>([]);
+  const [gmailStatus, setGmailStatus] = useState<GmailConnectionStatus | null>(null);
   const [gmailForms, setGmailForms] = useState<Record<number, GmailDraftForm>>({});
+  const [sendConfirmations, setSendConfirmations] = useState<Record<number, boolean>>({});
   const [error, setError] = useState<unknown>(null);
   const [actionError, setActionError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [submittingDraftId, setSubmittingDraftId] = useState<number | null>(null);
+  const [sendingProviderDraftId, setSendingProviderDraftId] = useState<string | null>(null);
 
   const canCreateGmailDraft = user?.role === "owner" || user?.role === "manager";
 
@@ -32,10 +35,17 @@ export default function DraftsPage() {
   }, []);
 
   useEffect(() => {
-    loadDrafts()
+    async function loadData() {
+      await loadDrafts();
+      if (canCreateGmailDraft) {
+        setGmailStatus(await api.getGmailStatus());
+      }
+    }
+
+    loadData()
       .catch(setError)
       .finally(() => setLoading(false));
-  }, [loadDrafts]);
+  }, [canCreateGmailDraft, loadDrafts]);
 
   function getGmailForm(draftId: number): GmailDraftForm {
     return gmailForms[draftId] ?? { to_email: defaultRecipient, include_evidence: true };
@@ -69,6 +79,23 @@ export default function DraftsPage() {
     }
   }
 
+  async function handleSendGmailDraft(draft: EmailDraftSummary) {
+    if (!draft.provider_draft_id) {
+      return;
+    }
+    setSendingProviderDraftId(draft.provider_draft_id);
+    setActionError(null);
+
+    try {
+      await api.sendGmailProviderDraft(draft.provider_draft_id, { confirm_send: true });
+      await loadDrafts();
+    } catch (apiError) {
+      setActionError(apiError);
+    } finally {
+      setSendingProviderDraftId(null);
+    }
+  }
+
   if (loading) {
     return <LoadingState label="Chargement des brouillons" />;
   }
@@ -97,7 +124,7 @@ export default function DraftsPage() {
                 <th>Sujet</th>
                 <th>Statut</th>
                 <th>Gmail</th>
-                {canCreateGmailDraft ? <th>Creation Gmail</th> : null}
+                {canCreateGmailDraft ? <th>Actions Gmail</th> : null}
                 <th>Creation</th>
                 <th>Detail</th>
               </tr>
@@ -117,7 +144,14 @@ export default function DraftsPage() {
                     {draft.provider_status ? (
                       <div className="stack-sm">
                         <StatusBadge status={draft.provider_status} />
-                        <span className="muted">{draft.provider_draft_id ?? "-"}</span>
+                        <span className="muted">Brouillon: {draft.provider_draft_id ?? "-"}</span>
+                        <span className="muted">A: {draft.provider_to_email ?? "-"}</span>
+                        {draft.provider_message_id ? (
+                          <span className="muted">Message: {draft.provider_message_id}</span>
+                        ) : null}
+                        {draft.provider_sent_at ? (
+                          <span className="muted">Envoye: {formatDate(draft.provider_sent_at)}</span>
+                        ) : null}
                       </div>
                     ) : (
                       "-"
@@ -125,33 +159,75 @@ export default function DraftsPage() {
                   </td>
                   {canCreateGmailDraft ? (
                     <td>
-                      <div className="inline-form">
-                        <input
-                          aria-label={`Destinataire Gmail brouillon ${draft.id}`}
-                          value={getGmailForm(draft.id).to_email}
-                          onChange={(event) => updateGmailForm(draft.id, { to_email: event.target.value })}
-                        />
-                        <label className="checkbox-row">
+                      {!draft.provider_status ? (
+                        <div className="inline-form">
                           <input
-                            type="checkbox"
-                            checked={getGmailForm(draft.id).include_evidence}
-                            onChange={(event) =>
-                              updateGmailForm(draft.id, { include_evidence: event.target.checked })
-                            }
+                            aria-label={`Destinataire Gmail brouillon ${draft.id}`}
+                            value={getGmailForm(draft.id).to_email}
+                            onChange={(event) => updateGmailForm(draft.id, { to_email: event.target.value })}
                           />
-                          Preuves
-                        </label>
-                        <button
-                          type="button"
-                          className="button"
-                          onClick={() => handleCreateGmailDraft(draft.id)}
-                          disabled={
-                            submittingDraftId === draft.id || draft.provider_status === "provider_draft_created"
-                          }
-                        >
-                          {submittingDraftId === draft.id ? "Creation" : "Creer Gmail"}
-                        </button>
-                      </div>
+                          <label className="checkbox-row">
+                            <input
+                              type="checkbox"
+                              checked={getGmailForm(draft.id).include_evidence}
+                              onChange={(event) =>
+                                updateGmailForm(draft.id, { include_evidence: event.target.checked })
+                              }
+                            />
+                            Preuves
+                          </label>
+                          <button
+                            type="button"
+                            className="button"
+                            onClick={() => handleCreateGmailDraft(draft.id)}
+                            disabled={submittingDraftId === draft.id}
+                          >
+                            {submittingDraftId === draft.id ? "Creation" : "Creer Gmail"}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="inline-form">
+                          <span className="muted">Aucun email n'est envoye automatiquement.</span>
+                          <span className="muted">
+                            Cette action va envoyer reellement l'email depuis Gmail. Elle ne peut pas etre annulee.
+                          </span>
+                          <label className="checkbox-row">
+                            <input
+                              type="checkbox"
+                              checked={sendConfirmations[draft.id] ?? false}
+                              onChange={(event) =>
+                                setSendConfirmations((current) => ({
+                                  ...current,
+                                  [draft.id]: event.target.checked,
+                                }))
+                              }
+                              disabled={draft.provider_status !== "provider_draft_created"}
+                            />
+                            Je confirme vouloir envoyer cet email
+                          </label>
+                          <button
+                            type="button"
+                            className="danger-button"
+                            onClick={() => handleSendGmailDraft(draft)}
+                            disabled={
+                              draft.provider_status !== "provider_draft_created" ||
+                              !sendConfirmations[draft.id] ||
+                              !gmailStatus?.enabled ||
+                              !gmailStatus.connected ||
+                              sendingProviderDraftId === draft.provider_draft_id
+                            }
+                          >
+                            {sendingProviderDraftId === draft.provider_draft_id
+                              ? "Envoi"
+                              : draft.provider_status === "sent"
+                                ? "Envoye"
+                                : "Envoyer le brouillon Gmail"}
+                          </button>
+                          {!gmailStatus?.enabled || !gmailStatus.connected ? (
+                            <span className="muted">Connexion Gmail requise.</span>
+                          ) : null}
+                        </div>
+                      )}
                     </td>
                   ) : null}
                   <td>{formatDate(draft.created_at)}</td>

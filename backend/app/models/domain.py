@@ -64,7 +64,7 @@ IMPORT_BATCH_STATUSES = ("uploaded", "parsed", "confirmed", "partially_imported"
 IMPORT_ROW_STATUSES = ("valid", "invalid", "duplicate", "unauthorized", "created", "skipped")
 EMAIL_ACCOUNT_PROVIDERS = ("gmail",)
 EMAIL_PROVIDER_DRAFT_PROVIDERS = ("gmail",)
-EMAIL_PROVIDER_DRAFT_STATUSES = ("provider_draft_created", "failed")
+EMAIL_PROVIDER_DRAFT_STATUSES = ("provider_draft_created", "send_requested", "sent", "failed")
 
 
 def utc_now() -> datetime:
@@ -236,6 +236,21 @@ class EmailDraft(TimestampMixin, Base):
         return latest.provider_draft_id if latest else None
 
     @property
+    def provider_message_id(self) -> str | None:
+        latest = self.latest_provider_draft
+        return latest.provider_message_id if latest else None
+
+    @property
+    def provider_sent_at(self) -> datetime | None:
+        latest = self.latest_provider_draft
+        return latest.sent_at if latest else None
+
+    @property
+    def provider_to_email(self) -> str | None:
+        latest = self.latest_provider_draft
+        return latest.to_email if latest else None
+
+    @property
     def provider_status(self) -> str | None:
         latest = self.latest_provider_draft
         return latest.status if latest else None
@@ -364,11 +379,15 @@ class EmailProviderDraft(TimestampMixin, Base):
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     provider_draft_id: Mapped[str | None] = mapped_column(String(255))
     provider_thread_id: Mapped[str | None] = mapped_column(String(255))
+    provider_message_id: Mapped[str | None] = mapped_column(String(255))
     to_email: Mapped[str] = mapped_column(String(255), nullable=False)
     subject: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False)
     created_by_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    sent_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[str | None] = mapped_column(Text)
+    last_error: Mapped[str | None] = mapped_column(Text)
 
     email_draft: Mapped[EmailDraft] = relationship(back_populates="provider_drafts")
 

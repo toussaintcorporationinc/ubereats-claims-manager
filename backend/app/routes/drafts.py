@@ -59,4 +59,7 @@ def build_draft_summary(db: Session, row: object) -> EmailDraftSummaryRead:
         provider=provider_draft.provider if provider_draft else None,
         provider_status=provider_draft.status if provider_draft else None,
         provider_draft_id=provider_draft.provider_draft_id if provider_draft else None,
+        provider_message_id=provider_draft.provider_message_id if provider_draft else None,
+        provider_sent_at=provider_draft.sent_at if provider_draft else None,
+        provider_to_email=provider_draft.to_email if provider_draft else None,
     )

@@ -15,7 +15,7 @@ from app.core.config import get_settings
 from app.core.security import create_access_token, decode_access_token
 from app.models import EmailAccount, EmailDraft, EmailProviderDraft, User
 from app.models.domain import utc_now
-from app.services.email_provider import EmailConnectionStatus, EmailProviderError
+from app.services.email_provider import EmailConnectionStatus, EmailProviderError, EmailSendResult
 from app.services.file_storage_service import FileStorageError, resolve_evidence_path
 from app.services.token_cipher_service import TokenCipherService
 
@@ -23,6 +23,7 @@ GMAIL_AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GMAIL_DRAFTS_URL = "https://gmail.googleapis.com/gmail/v1/users/me/drafts"
+GMAIL_DRAFTS_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send"
 
 
 @dataclass(frozen=True)
@@ -157,6 +158,27 @@ class GmailEmailProvider:
         db.flush()
         return provider_draft
 
+    def send_draft(
+        self,
+        db: Session,
+        user: User,
+        provider_draft: EmailProviderDraft,
+    ) -> EmailSendResult:
+        self.ensure_enabled_and_configured(require_secret=True)
+        account = self.get_active_account(db, user.id)
+        if account is None:
+            raise EmailProviderError("Gmail account is not connected", 409)
+        if not provider_draft.provider_draft_id:
+            raise EmailProviderError("Gmail draft id is missing", 409)
+
+        access_token = self.ensure_access_token(db, account)
+        response_payload = self.send_gmail_draft(access_token, provider_draft.provider_draft_id)
+        return EmailSendResult(
+            provider_message_id=response_payload.get("id"),
+            provider_thread_id=response_payload.get("threadId") or provider_draft.provider_thread_id,
+            sent_at=utc_now(),
+        )
+
     def build_evidence_attachments(self, email_draft: EmailDraft, include_evidence: bool) -> list[EvidenceAttachment]:
         if not include_evidence:
             return []
@@ -214,6 +236,13 @@ class GmailEmailProvider:
         return self.post_json(
             GMAIL_DRAFTS_URL,
             payload,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    def send_gmail_draft(self, access_token: str, draft_id: str) -> dict:
+        return self.post_json(
+            GMAIL_DRAFTS_SEND_URL,
+            {"id": draft_id},
             headers={"Authorization": f"Bearer {access_token}"},
         )
 

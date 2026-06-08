@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 from sqlalchemy.orm import Session
@@ -21,6 +22,13 @@ class EmailConnectionStatus:
     enabled: bool
 
 
+@dataclass(frozen=True)
+class EmailSendResult:
+    provider_message_id: str | None
+    provider_thread_id: str | None
+    sent_at: datetime
+
+
 class EmailProvider(Protocol):
     def get_connection_status(self, db: Session, user: User) -> EmailConnectionStatus:
         ...
@@ -36,4 +44,12 @@ class EmailProvider(Protocol):
         to_email: str,
         include_evidence: bool,
     ) -> EmailProviderDraft:
+        ...
+
+    def send_draft(
+        self,
+        db: Session,
+        user: User,
+        provider_draft: EmailProviderDraft,
+    ) -> EmailSendResult:
         ...

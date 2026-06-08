@@ -7,10 +7,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.main import app
-from app.models import AuditLog, EmailAccount, EmailDraft, EmailProviderDraft, User
+from app.models import AuditLog, ClaimOrder, EmailAccount, EmailDraft, EmailProviderDraft, EmailThread, User
 from app.models.domain import utc_now
 from app.routes.email import get_gmail_provider
-from app.services.email_provider import EmailConnectionStatus, EmailProviderError
+from app.services.email_provider import EmailConnectionStatus, EmailProviderError, EmailSendResult
 
 
 def get_active_account(db: Session, user_id: int) -> EmailAccount | None:
@@ -29,6 +29,7 @@ class FakeGmailEmailProvider:
     def __init__(self) -> None:
         self.last_include_evidence = False
         self.last_evidence_count = 0
+        self.fail_send = False
 
     def get_connection_status(self, db: Session, user: User) -> EmailConnectionStatus:
         if not get_settings().email_provider_enabled:
@@ -73,6 +74,19 @@ class FakeGmailEmailProvider:
         db.add(provider_draft)
         db.flush()
         return provider_draft
+
+    def send_draft(self, db: Session, user: User, provider_draft: EmailProviderDraft) -> EmailSendResult:
+        if not get_settings().email_provider_enabled:
+            raise EmailProviderError("Email provider is disabled", 503)
+        if get_active_account(db, user.id) is None:
+            raise EmailProviderError("Gmail account is not connected", 409)
+        if self.fail_send:
+            raise EmailProviderError("Fake Gmail send failed", 502)
+        return EmailSendResult(
+            provider_message_id=f"fake-message-{provider_draft.id}",
+            provider_thread_id=f"fake-sent-thread-{provider_draft.id}",
+            sent_at=utc_now(),
+        )
 
 
 @pytest.fixture()
@@ -186,6 +200,52 @@ def connect_gmail_account(db_session: Session, user_id: int, email_address: str 
         )
     )
     db_session.commit()
+
+
+def create_provider_draft_record(
+    db_session: Session,
+    draft_id: int,
+    status: str = "provider_draft_created",
+    created_by_user_id: int = 1,
+) -> EmailProviderDraft:
+    draft = db_session.get(EmailDraft, draft_id)
+    assert draft is not None
+    provider_draft = EmailProviderDraft(
+        email_draft_id=draft_id,
+        provider="gmail",
+        provider_draft_id=f"manual-gmail-draft-{draft_id}",
+        provider_thread_id=f"manual-thread-{draft_id}",
+        to_email="merchants@uber.com",
+        subject=draft.subject,
+        status=status,
+        created_by_user_id=created_by_user_id,
+    )
+    db_session.add(provider_draft)
+    db_session.commit()
+    db_session.refresh(provider_draft)
+    return provider_draft
+
+
+def create_gmail_provider_draft_via_api(
+    client: TestClient,
+    draft_id: int,
+    token: str | None = None,
+) -> dict:
+    response = client.post(
+        f"/v1/drafts/{draft_id}/gmail-draft",
+        json={"to_email": "merchants@uber.com", "include_evidence": True},
+        headers=auth_headers(token) if token else None,
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def send_provider_draft(client: TestClient, provider_draft_id: str, token: str | None = None, confirm: bool = True):
+    return client.post(
+        f"/v1/email/gmail/provider-drafts/{provider_draft_id}/send",
+        json={"confirm_send": confirm},
+        headers=auth_headers(token) if token else None,
+    )
 
 
 def test_health_public_works(unauthenticated_client: TestClient) -> None:
@@ -414,3 +474,258 @@ def test_tokens_are_never_exposed_in_responses(
     assert "refresh_token" not in payload
     assert "access_token_encrypted" not in payload
     assert "refresh_token_encrypted" not in payload
+
+
+def test_staff_cannot_send_gmail_draft(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-SEND-STAFF")
+    provider_draft = create_gmail_provider_draft_via_api(client, draft["id"])
+    staff = create_user(client, "staff-send@example.com", "staff")
+    assign_restaurant(client, staff["id"], restaurant["id"])
+    connect_gmail_account(db_session, staff["id"])
+    staff_token = login(client, staff["email"])
+
+    response = send_provider_draft(client, provider_draft["provider_draft_id"], staff_token)
+
+    assert response.status_code == 403
+
+
+def test_manager_assigned_can_send_gmail_draft(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-SEND-MANAGER")
+    manager = create_user(client, "manager-send@example.com", "manager")
+    assign_restaurant(client, manager["id"], restaurant["id"])
+    connect_gmail_account(db_session, manager["id"])
+    manager_token = login(client, manager["email"])
+    provider_draft = create_gmail_provider_draft_via_api(client, draft["id"], manager_token)
+
+    response = send_provider_draft(client, provider_draft["provider_draft_id"], manager_token)
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "sent"
+
+
+def test_manager_non_assigned_cannot_send_gmail_draft(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-SEND-BLOCKED")
+    provider_draft = create_gmail_provider_draft_via_api(client, draft["id"])
+    manager = create_user(client, "manager-send-blocked@example.com", "manager")
+    connect_gmail_account(db_session, manager["id"])
+    manager_token = login(client, manager["email"])
+
+    response = send_provider_draft(client, provider_draft["provider_draft_id"], manager_token)
+
+    assert response.status_code == 403
+
+
+def test_owner_can_send_gmail_draft(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-SEND-OWNER")
+    provider_draft = create_gmail_provider_draft_via_api(client, draft["id"])
+
+    response = send_provider_draft(client, provider_draft["provider_draft_id"])
+
+    assert response.status_code == 200
+    assert response.json()["provider_message_id"] is not None
+
+
+def test_send_gmail_draft_requires_confirmation(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-SEND-CONFIRM")
+    provider_draft = create_provider_draft_record(db_session, draft["id"])
+
+    response = send_provider_draft(client, provider_draft.provider_draft_id or "", confirm=False)
+
+    assert response.status_code == 400
+
+
+def test_send_gmail_draft_refused_if_provider_disabled(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-SEND-DISABLED")
+    provider_draft = create_provider_draft_record(db_session, draft["id"])
+
+    response = send_provider_draft(client, provider_draft.provider_draft_id or "")
+
+    assert response.status_code == 503
+
+
+def test_send_gmail_draft_refused_without_connected_account(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-SEND-NOACCOUNT")
+    provider_draft = create_provider_draft_record(db_session, draft["id"])
+
+    response = send_provider_draft(client, provider_draft.provider_draft_id or "")
+
+    assert response.status_code == 409
+
+
+def test_send_gmail_draft_refuses_unknown_provider_draft(
+    client: TestClient,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    response = send_provider_draft(client, "unknown-provider-draft")
+
+    assert response.status_code == 404
+
+
+def test_send_gmail_draft_refuses_already_sent_provider_draft(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-SEND-ALREADY")
+    provider_draft = create_provider_draft_record(db_session, draft["id"], status="sent")
+
+    response = send_provider_draft(client, provider_draft.provider_draft_id or "")
+
+    assert response.status_code == 409
+
+
+@pytest.mark.parametrize("final_status", ["accepted", "payment_confirmed"])
+def test_send_gmail_draft_refuses_final_order_status(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+    final_status: str,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], f"UBER-SEND-{final_status}")
+    provider_draft = create_provider_draft_record(db_session, draft["id"])
+    order = db_session.get(ClaimOrder, draft["order_id"])
+    assert order is not None
+    order.status = final_status
+    db_session.commit()
+
+    response = send_provider_draft(client, provider_draft.provider_draft_id or "")
+
+    assert response.status_code == 409
+    db_session.refresh(order)
+    assert order.status == final_status
+
+
+def test_send_gmail_draft_updates_tracking_order_thread_and_audit(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-SEND-TRACK")
+    provider_draft = create_provider_draft_record(db_session, draft["id"])
+
+    response = send_provider_draft(client, provider_draft.provider_draft_id or "")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "sent"
+    assert data["sent_at"] is not None
+    assert data["provider_message_id"] == f"fake-message-{provider_draft.id}"
+
+    db_session.refresh(provider_draft)
+    assert provider_draft.status == "sent"
+    assert provider_draft.sent_at is not None
+    assert provider_draft.sent_by_user_id == owner.id
+    assert provider_draft.provider_message_id == f"fake-message-{provider_draft.id}"
+
+    order = db_session.get(ClaimOrder, draft["order_id"])
+    assert order is not None
+    assert order.status == "sent"
+
+    email_thread = db_session.scalar(
+        select(EmailThread).where(
+            EmailThread.order_id == order.id,
+            EmailThread.provider == "gmail",
+            EmailThread.direction == "outbound",
+        )
+    )
+    assert email_thread is not None
+    assert email_thread.message_id == provider_draft.provider_message_id
+    assert email_thread.sent_at is not None
+
+    audit_log = db_session.scalar(
+        select(AuditLog).where(
+            AuditLog.entity_type == "email_provider_draft",
+            AuditLog.entity_id == provider_draft.id,
+            AuditLog.action == "send_gmail_draft",
+        )
+    )
+    assert audit_log is not None
+
+
+def test_send_gmail_draft_provider_failure_sets_failed_status_and_audit(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-SEND-FAIL")
+    provider_draft = create_provider_draft_record(db_session, draft["id"])
+    fake_gmail_provider.fail_send = True
+
+    response = send_provider_draft(client, provider_draft.provider_draft_id or "")
+
+    assert response.status_code == 502
+    db_session.refresh(provider_draft)
+    assert provider_draft.status == "failed"
+    assert provider_draft.last_error == "Fake Gmail send failed"
+    audit_log = db_session.scalar(
+        select(AuditLog).where(
+            AuditLog.entity_type == "email_provider_draft",
+            AuditLog.entity_id == provider_draft.id,
+            AuditLog.action == "send_gmail_draft_failed",
+        )
+    )
+    assert audit_log is not None

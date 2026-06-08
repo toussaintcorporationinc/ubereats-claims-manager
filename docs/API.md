@@ -422,6 +422,9 @@ Reponse :
   "provider": null,
   "provider_status": null,
   "provider_draft_id": null,
+  "provider_message_id": null,
+  "provider_sent_at": null,
+  "provider_to_email": null,
   "created_at": "2026-06-07T10:00:00Z",
   "updated_at": "2026-06-07T10:00:00Z"
 }
@@ -459,14 +462,17 @@ Retourne tous les brouillons internes avec les informations minimales utiles a l
     "uber_order_number": "UBER-123",
     "provider": "gmail",
     "provider_status": "provider_draft_created",
-    "provider_draft_id": "r123..."
+    "provider_draft_id": "r123...",
+    "provider_message_id": null,
+    "provider_sent_at": null,
+    "provider_to_email": "merchants@uber.com"
   }
 ]
 ```
 
 ## Gmail drafts
 
-L'integration Gmail est limitee a la creation de brouillons dans Gmail. Elle n'envoie jamais l'email.
+L'integration Gmail cree des brouillons dans Gmail et peut envoyer un brouillon uniquement apres confirmation manuelle explicite.
 
 Variables attendues :
 
@@ -539,11 +545,15 @@ Reponse :
   "provider": "gmail",
   "provider_draft_id": "r123...",
   "provider_thread_id": "thread-123",
+  "provider_message_id": null,
   "to_email": "merchants@uber.com",
   "subject": "Demande de paiement - commande annulee apres preparation - UBER-123",
   "status": "provider_draft_created",
   "created_by_user_id": 1,
+  "sent_by_user_id": null,
+  "sent_at": null,
   "error_message": null,
+  "last_error": null,
   "created_at": "2026-06-08T10:00:00Z",
   "updated_at": "2026-06-08T10:00:00Z"
 }
@@ -558,6 +568,46 @@ Regles :
 - les preuves sont jointes si `include_evidence=true` ;
 - la limite totale de pieces jointes est controlee par `EMAIL_MAX_ATTACHMENT_TOTAL_MB` ;
 - chaque creation ajoute un `AuditLog`.
+
+### Envoyer manuellement un brouillon Gmail
+
+- `POST /v1/email/gmail/provider-drafts/{provider_draft_id}/send`
+
+Body :
+
+```json
+{
+  "confirm_send": true
+}
+```
+
+Reponse :
+
+```json
+{
+  "provider_draft_id": "r123...",
+  "status": "sent",
+  "provider_message_id": "msg-123",
+  "provider_thread_id": "thread-123",
+  "sent_at": "2026-06-08T10:30:00Z"
+}
+```
+
+Regles :
+
+- aucun envoi n'est automatique ;
+- `confirm_send` doit valoir `true` ;
+- `EMAIL_PROVIDER_ENABLED` doit etre actif ;
+- le brouillon Gmail doit exister en base comme `EmailProviderDraft` connu ;
+- un compte Gmail connecte est obligatoire ;
+- `owner` peut envoyer pour tous les restaurants accessibles globalement ;
+- `manager` peut envoyer uniquement pour ses restaurants assignes ;
+- `staff` ne peut pas envoyer ;
+- un brouillon deja `sent` est refuse ;
+- un brouillon `failed` est refuse, aucun retry automatique n'est lance ;
+- les commandes finales `accepted`, `payment_confirmed`, `refused` et `closed` sont refusees ;
+- un envoi reussi met `EmailProviderDraft.status` a `sent`, renseigne `sent_at`, `sent_by_user_id`, `provider_message_id` si disponible, passe la commande a `sent`, cree un `EmailThread` outbound et ajoute un `AuditLog` ;
+- un echec provider controle met le brouillon a `failed`, renseigne `last_error` et ajoute un `AuditLog` `send_gmail_draft_failed`.
 
 ## Dashboard
 
@@ -578,7 +628,6 @@ Retourne :
 ## Hors perimetre V1 actuelle
 
 - pas d'integration OpenAI API ;
-- pas d'envoi reel d'email ;
 - pas d'envoi automatique Gmail ;
 - pas de generation d'email par la validation ;
 - pas de relance automatique.

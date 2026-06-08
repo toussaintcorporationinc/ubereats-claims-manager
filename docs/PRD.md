@@ -28,6 +28,7 @@ La V1 pose la base applicative et les premiers objets metier :
 - import massif CSV/XLSX des commandes annulees ;
 - consultation de brouillons internes d'emails ;
 - creation de brouillons Gmail avec pieces jointes, sans envoi automatique ;
+- envoi manuel approuve de brouillons Gmail ;
 - journalisation des creations importantes ;
 - authentification et roles utilisateurs ;
 - dashboard de synthese.
@@ -58,6 +59,8 @@ La V1 pose la base applicative et les premiers objets metier :
 14. Si Gmail est configure, un owner ou manager connecte son compte dans `/settings/email`.
 15. Il cree un brouillon Gmail depuis le brouillon interne et choisit d'inclure ou non les preuves.
 16. Le brouillon Gmail apparait dans le compte Gmail de l'utilisateur, sans envoi automatique.
+17. Il coche la confirmation d'envoi manuel dans l'application.
+18. Il clique sur l'envoi Gmail ; la commande passe a `sent`, un `EmailThread` outbound et un `AuditLog` sont crees.
 
 ## Modeles metier V1
 
@@ -66,7 +69,7 @@ La V1 pose la base applicative et les premiers objets metier :
 - `EvidenceFile` : fichier de preuve local attache a une commande avec metadonnees, checksum et acces securise ;
 - `EmailDraft` : brouillon interne, sans envoi reel ;
 - `EmailAccount` : connexion OAuth Gmail utilisateur, tokens proteges et jamais exposes ;
-- `EmailProviderDraft` : historique des brouillons Gmail crees depuis un brouillon interne ;
+- `EmailProviderDraft` : historique des brouillons Gmail crees et envoyes manuellement depuis un brouillon interne ;
 - `EmailThread` : futur historique des conversations email ;
 - `AuditLog` : trace des actions importantes.
 - `User` : utilisateur interne avec role ;
@@ -77,7 +80,6 @@ La V1 pose la base applicative et les premiers objets metier :
 ## Hors perimetre de cette premiere base
 
 - integration OpenAI API ;
-- envoi reel d'email ;
 - envoi automatique Gmail ;
 - relances automatiques ;
 - automatisation metier des decisions.
