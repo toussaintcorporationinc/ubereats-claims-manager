@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     rate_limit_requests_per_minute: int = 120
     login_rate_limit_per_minute: int = 10
     build_sha: str | None = None
-    app_version: str = "1.0.0-v1"
+    app_version: str = "1.0.1-tennet"
 
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env"),
