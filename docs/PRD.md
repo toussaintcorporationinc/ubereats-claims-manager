@@ -1,8 +1,8 @@
-# PRD - Uber Eats Claims Manager
+# PRD - TENNET
 
 ## Objectif
 
-Uber Eats Claims Manager aide a centraliser le suivi des reclamations liees aux commandes Uber Eats d'un ou plusieurs restaurants.
+TENNET aide a centraliser le suivi des reclamations liees aux commandes Uber Eats d'un ou plusieurs restaurants.
 
 La V1 pose la base applicative et les premiers objets metier :
 

@@ -29,7 +29,7 @@ def test_version_does_not_return_secrets(unauthenticated_client: TestClient) -> 
     assert response.status_code == 200
     payload = response.json()
     serialized = json.dumps(payload).lower()
-    assert payload["app"] == "Uber Eats Claims Manager"
+    assert payload["app"] == "TENNET"
     assert payload["version"]
     assert payload["commit"]
     assert "secret" not in serialized

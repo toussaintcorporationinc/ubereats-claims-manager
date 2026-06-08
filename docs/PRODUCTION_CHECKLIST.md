@@ -1,6 +1,6 @@
 # Production checklist
 
-Use this checklist before launching a commercial production instance.
+Use this checklist before launching a TENNET commercial production instance.
 
 ## Infrastructure
 

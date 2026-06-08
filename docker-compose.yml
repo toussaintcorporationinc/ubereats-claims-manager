@@ -20,7 +20,7 @@ services:
       context: ./backend
     environment:
       APP_ENV: ${APP_ENV:-development}
-      APP_NAME: ${APP_NAME:-Uber Eats Claims Manager}
+      APP_NAME: ${APP_NAME:-TENNET}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://claims:claims@db:5432/claims_manager}
       LOCAL_STORAGE_DIR: /app/storage
       EVIDENCE_STORAGE_BACKEND: ${EVIDENCE_STORAGE_BACKEND:-local}

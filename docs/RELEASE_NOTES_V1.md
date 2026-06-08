@@ -1,4 +1,4 @@
-# Release notes V1
+# TENNET release notes V1
 
 Version: `1.0.0-v1`
 

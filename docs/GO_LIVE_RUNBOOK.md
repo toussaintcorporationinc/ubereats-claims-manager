@@ -1,6 +1,6 @@
-# Go-live runbook V1
+# TENNET go-live runbook V1
 
-This runbook prepares a controlled commercial launch of Uber Eats Claims Manager V1.
+This runbook prepares a controlled commercial launch of TENNET V1.
 
 Core rule: no email, reply or follow-up is sent automatically. Gmail sends require an explicit manual confirmation in the application.
 

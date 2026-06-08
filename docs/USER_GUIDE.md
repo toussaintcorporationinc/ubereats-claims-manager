@@ -1,6 +1,6 @@
-# User guide V1
+# TENNET user guide V1
 
-Uber Eats Claims Manager helps restaurants prepare, track and document claims for orders cancelled after preparation.
+TENNET helps restaurants prepare, track and document Uber Eats claims for orders cancelled after preparation.
 
 Important: no email, reply or follow-up is sent automatically. Every Gmail send requires manual confirmation.
 

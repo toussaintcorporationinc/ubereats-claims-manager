@@ -1,6 +1,6 @@
 # Backend
 
-Backend FastAPI minimal pour Uber Eats Claims Manager.
+Backend FastAPI minimal pour TENNET.
 
 ## Commandes
 
