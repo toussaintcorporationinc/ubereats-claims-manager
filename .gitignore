@@ -22,6 +22,7 @@ pnpm-debug.log*
 .env
 .env.*
 !.env.example
+!.env.production.example
 .env.local
 .env.*.local
 
@@ -30,6 +31,7 @@ backend/storage/*
 !backend/storage/.gitkeep
 postgres_data/
 data/
+backups/
 work/
 *.sqlite
 *.db

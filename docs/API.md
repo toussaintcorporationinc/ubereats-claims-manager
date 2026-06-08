@@ -5,6 +5,8 @@ Base URL locale backend : `http://localhost:8000`
 ## Health
 
 - `GET /health`
+- `GET /ready`
+- `GET /version`
 
 Retour attendu :
 
@@ -12,6 +14,32 @@ Retour attendu :
 {
   "status": "ok",
   "service": "Uber Eats Claims Manager"
+}
+```
+
+`GET /ready` verifie que le backend peut joindre la base de donnees et ecrire dans les dossiers de stockage evidence/import.
+
+Retour attendu :
+
+```json
+{
+  "status": "ready",
+  "checks": {
+    "database": "ok",
+    "evidence_storage": "ok",
+    "import_storage": "ok"
+  }
+}
+```
+
+`GET /version` retourne uniquement des informations non sensibles :
+
+```json
+{
+  "service": "Uber Eats Claims Manager",
+  "version": "0.1.0",
+  "environment": "production",
+  "build_sha": "..."
 }
 ```
 

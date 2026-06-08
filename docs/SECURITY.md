@@ -16,8 +16,37 @@ Variables attendues :
 
 - `SECRET_KEY` : obligatoire hors environnements `development`, `local`, `test` et `ci`.
 - `ACCESS_TOKEN_EXPIRE_MINUTES` : duree de vie du token.
+- `ENVIRONMENT=production` active les validations production.
+- `DEBUG=false` est obligatoire en production.
+- `BACKEND_CORS_ORIGINS` ne doit jamais contenir `*` en production.
+- `DATABASE_URL` doit utiliser PostgreSQL en production.
 
 Le frontend ne recoit aucun secret. `NEXT_PUBLIC_API_BASE_URL` reste la seule variable publique attendue.
+
+## Production deployment security
+
+Regles minimales :
+
+- secrets jamais dans GitHub ;
+- `.env.production` non commite ;
+- `.env.production.example` contient uniquement des placeholders ;
+- `SECRET_KEY` doit etre long, aleatoire et different du template ;
+- HTTPS obligatoire devant frontend et backend ;
+- Caddy ajoute des headers de securite basiques ;
+- l'API ajoute `X-Request-ID`, `X-Content-Type-Options`, `X-Frame-Options` et `Referrer-Policy` ;
+- `Strict-Transport-Security` est ajoute en environnement production ;
+- rate limit activable via `RATE_LIMIT_ENABLED`, avec limite specifique login ;
+- `/version` ne retourne aucun secret ;
+- `/ready` verifie DB et stockage persistant sans exposer de donnees sensibles.
+
+Rotation `SECRET_KEY` :
+
+- planifier une fenetre courte ;
+- remplacer `SECRET_KEY` dans `.env.production` ;
+- redemarrer backend ;
+- demander aux utilisateurs de se reconnecter.
+
+La suppression complete restaurant/utilisateur n'est pas encore implementee comme workflow RGPD. En attendant, reduire les donnees stockees au strict necessaire et documenter toute demande de suppression manuelle.
 
 ## Stockage des preuves
 
@@ -141,6 +170,15 @@ Regles appliquees :
 - `include_customer_names=true` est reserve a `owner` et `manager` ;
 - aucun export ne contient tokens Gmail, secrets, mots de passe, `access_token`, `refresh_token` ou chemin disque brut de preuve ;
 - les fichiers exportes sont generes en memoire pour la V1 et ne sont pas stockes dans le depot.
+
+## Backups
+
+- sauvegardes PostgreSQL quotidiennes recommandees ;
+- sauvegardes preuves/imports quotidiennes recommandees ;
+- retention minimale 30 jours ;
+- sauvegardes chiffrees recommandees hors host applicatif ;
+- restauration testee regulierement ;
+- les archives de backup ne doivent pas etre commitees.
 
 Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit une protection isolee et remplacable ; une version production plus avancee pourra brancher un KMS ou un gestionnaire de secrets sans changer les routes.
 
