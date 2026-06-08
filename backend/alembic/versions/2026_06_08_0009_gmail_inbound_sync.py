@@ -30,9 +30,7 @@ OLD_CLAIM_STATUS_CHECK = (
 
 
 def upgrade() -> None:
-    with op.batch_alter_table("claim_orders", recreate="always") as batch_op:
-        batch_op.drop_constraint("ck_claim_orders_status", type_="check")
-        batch_op.create_check_constraint("ck_claim_orders_status", NEW_CLAIM_STATUS_CHECK)
+    replace_claim_order_status_check(NEW_CLAIM_STATUS_CHECK)
 
     op.create_table(
         "gmail_sync_states",
@@ -119,6 +117,15 @@ def downgrade() -> None:
     op.drop_table("gmail_sync_states")
 
     op.execute("UPDATE claim_orders SET status = 'waiting_uber_response' WHERE status = 'response_received'")
-    with op.batch_alter_table("claim_orders", recreate="always") as batch_op:
-        batch_op.drop_constraint("ck_claim_orders_status", type_="check")
-        batch_op.create_check_constraint("ck_claim_orders_status", OLD_CLAIM_STATUS_CHECK)
+    replace_claim_order_status_check(OLD_CLAIM_STATUS_CHECK)
+
+
+def replace_claim_order_status_check(check_sql: str) -> None:
+    if op.get_bind().dialect.name == "sqlite":
+        with op.batch_alter_table("claim_orders", recreate="always") as batch_op:
+            batch_op.drop_constraint("ck_claim_orders_status", type_="check")
+            batch_op.create_check_constraint("ck_claim_orders_status", check_sql)
+        return
+
+    op.drop_constraint("ck_claim_orders_status", "claim_orders", type_="check")
+    op.create_check_constraint("ck_claim_orders_status", "claim_orders", check_sql)
