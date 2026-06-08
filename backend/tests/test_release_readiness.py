@@ -14,7 +14,7 @@ def test_release_health_ready_and_version(unauthenticated_client: TestClient) ->
     assert response.status_code == 200
     payload = response.json()
     assert payload["app"] == "TENNET"
-    assert payload["version"] == "1.0.0-v1"
+    assert payload["version"] == "1.0.1-tennet"
     assert payload["environment"] in {"ci", "test"}
     assert payload["commit"] == "unknown"
     serialized = str(payload).lower()
@@ -54,7 +54,7 @@ def test_production_release_files_exist() -> None:
 
     missing = [path for path in files if not (REPO_ROOT / path).is_file()]
     assert missing == []
-    assert (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip() == "1.0.0-v1"
+    assert (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip() == "1.0.1-tennet"
 
 
 def test_env_production_example_contains_critical_variables() -> None:
