@@ -8,7 +8,8 @@ from app.core.auth import get_accessible_restaurant_ids, get_current_user
 from app.core.database import get_db
 from app.models import ClaimOrder, FollowUpTask, Restaurant, User
 from app.models.domain import utc_now
-from app.schemas.domain import DashboardRestaurantSummary, DashboardSummary
+from app.schemas.domain import DashboardRestaurantSummary, DashboardSummary, DashboardTopRestaurantSummary
+from app.services.reporting_service import ReportingFilters, ReportingService
 
 router = APIRouter(prefix="/v1/dashboard", tags=["dashboard"])
 
@@ -105,6 +106,23 @@ def dashboard_summary(
         )
         for restaurant_id, restaurant_name, order_count, claimed_amount, recovered_amount in restaurant_rows
     ]
+    report_summary = ReportingService(db, current_user, ReportingFilters()).commercial_summary()
+    top_restaurants_by_claimed_amount = [
+        DashboardTopRestaurantSummary(
+            restaurant_id=row.restaurant_id,
+            restaurant_name=row.restaurant_name,
+            amount=row.claimed_amount,
+        )
+        for row in sorted(report_summary.by_restaurant, key=lambda item: item.claimed_amount, reverse=True)[:5]
+    ]
+    top_restaurants_by_pending_amount = [
+        DashboardTopRestaurantSummary(
+            restaurant_id=row.restaurant_id,
+            restaurant_name=row.restaurant_name,
+            amount=row.pending_amount,
+        )
+        for row in sorted(report_summary.by_restaurant, key=lambda item: item.pending_amount, reverse=True)[:5]
+    ]
 
     return DashboardSummary(
         total_orders=total_orders,
@@ -122,6 +140,9 @@ def dashboard_summary(
         followups_pending_count=followup_counts["followups_pending_count"],
         escalations_due_count=followup_counts["escalations_due_count"],
         manual_review_due_count=followup_counts["manual_review_due_count"],
+        success_rate=report_summary.totals.success_rate,
+        top_restaurants_by_claimed_amount=top_restaurants_by_claimed_amount,
+        top_restaurants_by_pending_amount=top_restaurants_by_pending_amount,
         orders_by_status=orders_by_status,
         orders_by_restaurant=orders_by_restaurant,
     )

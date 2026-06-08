@@ -964,6 +964,128 @@ Si le provider draft lie est deja `sent`, la commande est mise a jour :
 
 Chaque action cree un `AuditLog`.
 
+## Reports commerciaux et exports
+
+Les rapports commerciaux sont reserves aux roles `owner` et `manager`. `owner` voit tous les restaurants. `manager` voit uniquement ses restaurants assignes. `staff` ne peut pas acceder aux rapports commerciaux ni aux exports.
+
+Filtres communs :
+
+- `restaurant_id`
+- `date_from`
+- `date_to`
+- `status`
+- `result`
+- `min_amount`
+- `max_amount`
+- `include_customer_names=false`
+
+Une requete avec un `restaurant_id` non autorise retourne `403`.
+
+### Resume commercial
+
+- `GET /v1/reports/commercial-summary`
+
+Retour :
+
+```json
+{
+  "filters": {},
+  "totals": {
+    "orders_count": 0,
+    "total_claimed_amount": "0.00",
+    "total_recovered_amount": "0.00",
+    "total_pending_amount": "0.00",
+    "total_refused_amount": "0.00",
+    "average_claim_amount": "0.00",
+    "success_rate": "0.00"
+  },
+  "by_status": [],
+  "by_result": [],
+  "by_restaurant": [],
+  "followups": {
+    "due_count": 0,
+    "pending_count": 0,
+    "escalation_due_count": 0,
+    "manual_review_count": 0
+  },
+  "responses": {
+    "accepted_count": 0,
+    "refused_count": 0,
+    "payment_to_verify_count": 0,
+    "payment_confirmed_count": 0,
+    "manual_review_count": 0
+  }
+}
+```
+
+Definitions :
+
+- `total_claimed_amount` : somme `ClaimOrder.order_amount` ;
+- `total_recovered_amount` : somme `ClaimOrder.recovered_amount` ;
+- `total_pending_amount` : montant des dossiers non finaux et non confirmes payes ;
+- `total_refused_amount` : montant des dossiers `refused` ;
+- `success_rate` : dossiers `accepted` ou `payment_confirmed` divises par dossiers traites `accepted`, `payment_confirmed` ou `refused`.
+
+`by_restaurant` contient `restaurant_id`, `restaurant_name`, `orders_count`, `claimed_amount`, `recovered_amount`, `pending_amount`, `refused_amount`, `accepted_count`, `refused_count` et `manual_review_count`.
+
+### Commandes reportees
+
+- `GET /v1/reports/orders`
+
+Retour pagine :
+
+- `order_id`
+- `restaurant_name`
+- `uber_order_number`
+- `order_date`
+- `order_amount`
+- `currency`
+- `status`
+- `result`
+- `recovered_amount`
+- `retry_count`
+- `last_followup_sent_at`
+- `next_action_at`
+- `evidence_count`
+- `drafts_count`
+- `inbound_messages_count`
+- `response_reviews_count`
+
+`customer_name` est absent par defaut. Il est retourne uniquement avec `include_customer_names=true` pour un `owner` ou `manager`.
+
+### Relances reportees
+
+- `GET /v1/reports/followups`
+
+Retourne les taches de relance visibles avec `task_id`, `restaurant_name`, `order_id`, `uber_order_number`, `task_type`, `task_status`, `due_at`, `claim_status`, `order_amount`, `currency` et `retry_count`.
+
+### Reponses traitees reportees
+
+- `GET /v1/reports/responses`
+
+Retourne les revues de reponses visibles avec `review_id`, `restaurant_name`, `order_id`, `uber_order_number`, `review_type`, anciens/nouveaux statuts, `recovered_amount`, `refusal_reason`, `evidence_requested`, `created_at` et `reviewed_by_user_id`.
+
+### Exports
+
+- `GET /v1/reports/export/orders.csv`
+- `GET /v1/reports/export/orders.xlsx`
+- `GET /v1/reports/export/followups.csv`
+- `GET /v1/reports/export/responses.csv`
+- `GET /v1/reports/export/commercial-summary.xlsx`
+
+Les exports appliquent les memes filtres et permissions que les endpoints JSON. `EXPORT_MAX_ROWS` limite le nombre de lignes exportables. Si la limite est depassee, l'API retourne une erreur claire et demande des filtres plus precis.
+
+L'export `commercial-summary.xlsx` contient plusieurs feuilles :
+
+- `Summary`
+- `By Restaurant`
+- `By Status`
+- `By Result`
+- `Followups`
+- `Responses`
+
+Les exports n'incluent jamais les tokens Gmail, secrets, chemins disque bruts de preuves ou champs `access_token` / `refresh_token`.
+
 ## Dashboard
 
 - `GET /v1/dashboard/summary`
@@ -985,6 +1107,9 @@ Retourne :
 - `followups_pending_count`
 - `escalations_due_count`
 - `manual_review_due_count`
+- `success_rate`
+- `top_restaurants_by_claimed_amount`
+- `top_restaurants_by_pending_amount`
 - `orders_by_status`
 - `orders_by_restaurant`
 

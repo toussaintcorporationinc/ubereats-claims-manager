@@ -309,6 +309,12 @@ class DashboardRestaurantSummary(BaseModel):
     total_recovered_amount: Decimal
 
 
+class DashboardTopRestaurantSummary(BaseModel):
+    restaurant_id: int
+    restaurant_name: str
+    amount: Decimal
+
+
 class DashboardSummary(BaseModel):
     total_orders: int
     total_claimed_amount: Decimal
@@ -325,6 +331,9 @@ class DashboardSummary(BaseModel):
     followups_pending_count: int = 0
     escalations_due_count: int = 0
     manual_review_due_count: int = 0
+    success_rate: Decimal = Decimal("0")
+    top_restaurants_by_claimed_amount: list[DashboardTopRestaurantSummary] = Field(default_factory=list)
+    top_restaurants_by_pending_amount: list[DashboardTopRestaurantSummary] = Field(default_factory=list)
     orders_by_status: dict[str, int]
     orders_by_restaurant: list[DashboardRestaurantSummary]
 
@@ -553,6 +562,140 @@ class ClaimResponseReviewRead(BaseModel):
 
 class ResponseReviewsResponse(BaseModel):
     reviews: list[ClaimResponseReviewRead]
+    limit: int
+    offset: int
+
+
+class ReportFilterEcho(BaseModel):
+    restaurant_id: int | None = None
+    date_from: date | None = None
+    date_to: date | None = None
+    status: str | None = None
+    result: str | None = None
+    min_amount: Decimal | None = None
+    max_amount: Decimal | None = None
+    include_customer_names: bool = False
+
+
+class CommercialTotals(BaseModel):
+    orders_count: int
+    total_claimed_amount: Decimal
+    total_recovered_amount: Decimal
+    total_pending_amount: Decimal
+    total_refused_amount: Decimal
+    average_claim_amount: Decimal
+    success_rate: Decimal
+
+
+class ReportBreakdownItem(BaseModel):
+    key: str
+    count: int
+    claimed_amount: Decimal
+    recovered_amount: Decimal
+
+
+class CommercialRestaurantSummary(BaseModel):
+    restaurant_id: int
+    restaurant_name: str
+    orders_count: int
+    claimed_amount: Decimal
+    recovered_amount: Decimal
+    pending_amount: Decimal
+    refused_amount: Decimal
+    accepted_count: int
+    refused_count: int
+    manual_review_count: int
+
+
+class CommercialFollowupSummary(BaseModel):
+    due_count: int
+    pending_count: int
+    escalation_due_count: int
+    manual_review_count: int
+
+
+class CommercialResponseSummary(BaseModel):
+    accepted_count: int
+    refused_count: int
+    payment_to_verify_count: int
+    payment_confirmed_count: int
+    manual_review_count: int
+
+
+class CommercialSummary(BaseModel):
+    filters: ReportFilterEcho
+    totals: CommercialTotals
+    by_status: list[ReportBreakdownItem]
+    by_result: list[ReportBreakdownItem]
+    by_restaurant: list[CommercialRestaurantSummary]
+    followups: CommercialFollowupSummary
+    responses: CommercialResponseSummary
+
+
+class ReportOrderRow(BaseModel):
+    order_id: int
+    restaurant_id: int
+    restaurant_name: str
+    uber_order_number: str
+    customer_name: str | None = None
+    order_date: date | None
+    order_amount: Decimal | None
+    currency: str
+    status: ClaimOrderStatus
+    result: str | None
+    recovered_amount: Decimal | None
+    retry_count: int
+    last_followup_sent_at: datetime | None
+    next_action_at: datetime | None
+    evidence_count: int
+    drafts_count: int
+    inbound_messages_count: int
+    response_reviews_count: int
+
+
+class ReportOrdersResponse(BaseModel):
+    orders: list[ReportOrderRow]
+    limit: int
+    offset: int
+
+
+class ReportFollowupRow(BaseModel):
+    task_id: int
+    restaurant_name: str
+    order_id: int
+    uber_order_number: str
+    task_type: FollowUpTaskType
+    task_status: FollowUpTaskStatus
+    due_at: datetime
+    claim_status: ClaimOrderStatus
+    order_amount: Decimal | None
+    currency: str
+    retry_count: int
+
+
+class ReportFollowupsResponse(BaseModel):
+    followups: list[ReportFollowupRow]
+    limit: int
+    offset: int
+
+
+class ReportResponseRow(BaseModel):
+    review_id: int
+    restaurant_name: str
+    order_id: int
+    uber_order_number: str
+    review_type: ClaimResponseReviewType
+    previous_order_status: ClaimOrderStatus
+    new_order_status: ClaimOrderStatus
+    recovered_amount: Decimal | None
+    refusal_reason: str | None
+    evidence_requested: bool | None
+    created_at: datetime
+    reviewed_by_user_id: int
+
+
+class ReportResponsesResponse(BaseModel):
+    responses: list[ReportResponseRow]
     limit: int
     offset: int
 

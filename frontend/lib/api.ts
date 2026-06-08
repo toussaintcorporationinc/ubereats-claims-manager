@@ -279,6 +279,12 @@ export type DashboardRestaurantSummary = {
   total_recovered_amount: MoneyValue;
 };
 
+export type DashboardTopRestaurantSummary = {
+  restaurant_id: number;
+  restaurant_name: string;
+  amount: MoneyValue;
+};
+
 export type DashboardSummary = {
   total_orders: number;
   total_claimed_amount: MoneyValue;
@@ -295,8 +301,154 @@ export type DashboardSummary = {
   followups_pending_count: number;
   escalations_due_count: number;
   manual_review_due_count: number;
+  success_rate: MoneyValue;
+  top_restaurants_by_claimed_amount: DashboardTopRestaurantSummary[];
+  top_restaurants_by_pending_amount: DashboardTopRestaurantSummary[];
   orders_by_status: Record<string, number>;
   orders_by_restaurant: DashboardRestaurantSummary[];
+};
+
+export type ReportFilters = {
+  restaurant_id?: number | "";
+  date_from?: string;
+  date_to?: string;
+  status?: string;
+  result?: string;
+  min_amount?: string;
+  max_amount?: string;
+  include_customer_names?: boolean;
+  limit?: number;
+  offset?: number;
+};
+
+export type ReportFilterEcho = {
+  restaurant_id: number | null;
+  date_from: string | null;
+  date_to: string | null;
+  status: string | null;
+  result: string | null;
+  min_amount: MoneyValue;
+  max_amount: MoneyValue;
+  include_customer_names: boolean;
+};
+
+export type CommercialTotals = {
+  orders_count: number;
+  total_claimed_amount: MoneyValue;
+  total_recovered_amount: MoneyValue;
+  total_pending_amount: MoneyValue;
+  total_refused_amount: MoneyValue;
+  average_claim_amount: MoneyValue;
+  success_rate: MoneyValue;
+};
+
+export type ReportBreakdownItem = {
+  key: string;
+  count: number;
+  claimed_amount: MoneyValue;
+  recovered_amount: MoneyValue;
+};
+
+export type CommercialRestaurantSummary = {
+  restaurant_id: number;
+  restaurant_name: string;
+  orders_count: number;
+  claimed_amount: MoneyValue;
+  recovered_amount: MoneyValue;
+  pending_amount: MoneyValue;
+  refused_amount: MoneyValue;
+  accepted_count: number;
+  refused_count: number;
+  manual_review_count: number;
+};
+
+export type CommercialSummary = {
+  filters: ReportFilterEcho;
+  totals: CommercialTotals;
+  by_status: ReportBreakdownItem[];
+  by_result: ReportBreakdownItem[];
+  by_restaurant: CommercialRestaurantSummary[];
+  followups: {
+    due_count: number;
+    pending_count: number;
+    escalation_due_count: number;
+    manual_review_count: number;
+  };
+  responses: {
+    accepted_count: number;
+    refused_count: number;
+    payment_to_verify_count: number;
+    payment_confirmed_count: number;
+    manual_review_count: number;
+  };
+};
+
+export type ReportOrderRow = {
+  order_id: number;
+  restaurant_id: number;
+  restaurant_name: string;
+  uber_order_number: string;
+  customer_name?: string | null;
+  order_date: string | null;
+  order_amount: MoneyValue;
+  currency: string;
+  status: ClaimOrderStatus;
+  result: string | null;
+  recovered_amount: MoneyValue;
+  retry_count: number;
+  last_followup_sent_at: string | null;
+  next_action_at: string | null;
+  evidence_count: number;
+  drafts_count: number;
+  inbound_messages_count: number;
+  response_reviews_count: number;
+};
+
+export type ReportOrdersResponse = {
+  orders: ReportOrderRow[];
+  limit: number;
+  offset: number;
+};
+
+export type ReportFollowupRow = {
+  task_id: number;
+  restaurant_name: string;
+  order_id: number;
+  uber_order_number: string;
+  task_type: FollowUpTaskType;
+  task_status: FollowUpTaskStatus;
+  due_at: string;
+  claim_status: ClaimOrderStatus;
+  order_amount: MoneyValue;
+  currency: string;
+  retry_count: number;
+};
+
+export type ReportFollowupsResponse = {
+  followups: ReportFollowupRow[];
+  limit: number;
+  offset: number;
+};
+
+export type ReportResponseRow = {
+  review_id: number;
+  restaurant_name: string;
+  order_id: number;
+  uber_order_number: string;
+  review_type: ClaimResponseReviewType;
+  previous_order_status: ClaimOrderStatus;
+  new_order_status: ClaimOrderStatus;
+  recovered_amount: MoneyValue;
+  refusal_reason: string | null;
+  evidence_requested: boolean | null;
+  created_at: string;
+  reviewed_by_user_id: number;
+};
+
+export type ReportResponsesResponse = {
+  responses: ReportResponseRow[];
+  limit: number;
+  offset: number;
 };
 
 export type ClaimResponseReview = {
@@ -614,6 +766,33 @@ function postJson<TResponse, TPayload>(path: string, payload: TPayload): Promise
   });
 }
 
+function buildQuery(filters: Record<string, string | number | boolean | null | undefined>): string {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      params.set(key, String(value));
+    }
+  });
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+async function downloadBlob(path: string): Promise<Blob> {
+  const token = getStoredToken();
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    cache: "no-store",
+  });
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!response.ok) {
+    const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+    throw new ApiError(response.status, payload);
+  }
+  return response.blob();
+}
+
 export const api = {
   login: async (payload: LoginPayload) => {
     const response = await postJson<TokenResponse, LoginPayload>("/v1/auth/login", payload);
@@ -628,6 +807,14 @@ export const api = {
   getMe: () => request<User>("/v1/auth/me"),
   logout: () => clearStoredToken(),
   getDashboardSummary: () => request<DashboardSummary>("/v1/dashboard/summary"),
+  getCommercialSummary: (filters: ReportFilters = {}) =>
+    request<CommercialSummary>(`/v1/reports/commercial-summary${buildQuery(filters)}`),
+  getReportOrders: (filters: ReportFilters = {}) => request<ReportOrdersResponse>(`/v1/reports/orders${buildQuery(filters)}`),
+  getReportFollowups: (filters: ReportFilters = {}) =>
+    request<ReportFollowupsResponse>(`/v1/reports/followups${buildQuery(filters)}`),
+  getReportResponses: (filters: ReportFilters = {}) =>
+    request<ReportResponsesResponse>(`/v1/reports/responses${buildQuery(filters)}`),
+  downloadReport: (path: string, filters: ReportFilters = {}) => downloadBlob(`${path}${buildQuery(filters)}`),
   getRestaurants: () => request<Restaurant[]>("/v1/restaurants"),
   createRestaurant: (payload: RestaurantCreatePayload) =>
     postJson<Restaurant, RestaurantCreatePayload>("/v1/restaurants", payload),

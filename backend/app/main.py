@@ -15,6 +15,7 @@ from app.routes import (
     health,
     imports,
     orders,
+    reports,
     response_reviews,
     restaurants,
     users,
@@ -52,6 +53,7 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(restaurants.router)
 app.include_router(orders.router)
+app.include_router(reports.router)
 app.include_router(evidence.router)
 app.include_router(drafts.router)
 app.include_router(email.router)
