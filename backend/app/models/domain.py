@@ -76,6 +76,18 @@ INBOUND_EMAIL_MATCH_REASONS = (
     "no_match",
     "ignored_sender",
 )
+INBOUND_EMAIL_REVIEW_STATUSES = ("unreviewed", "reviewed", "ignored")
+CLAIM_RESPONSE_REVIEW_TYPES = (
+    "accepted",
+    "payment_to_verify",
+    "payment_confirmed",
+    "refused",
+    "evidence_requested",
+    "information_requested",
+    "followup_needed",
+    "ignored",
+    "manual_review",
+)
 
 
 def utc_now() -> datetime:
@@ -185,6 +197,7 @@ class ClaimOrder(TimestampMixin, Base):
     email_drafts: Mapped[list["EmailDraft"]] = relationship(back_populates="order")
     email_threads: Mapped[list["EmailThread"]] = relationship(back_populates="order")
     inbound_email_messages: Mapped[list["InboundEmailMessage"]] = relationship(back_populates="order")
+    response_reviews: Mapped[list["ClaimResponseReview"]] = relationship(back_populates="order")
 
 
 class EvidenceFile(Base):
@@ -412,6 +425,10 @@ class InboundEmailMessage(TimestampMixin, Base):
             check_in_constraint("match_reason", INBOUND_EMAIL_MATCH_REASONS),
             name="ck_inbound_email_match_reason",
         ),
+        CheckConstraint(
+            check_in_constraint("review_status", INBOUND_EMAIL_REVIEW_STATUSES),
+            name="ck_inbound_email_review_status",
+        ),
         Index("ix_inbound_email_messages_email_account_id", "email_account_id"),
         Index("ix_inbound_email_messages_order_id", "order_id"),
         Index("ix_inbound_email_messages_match_status", "match_status"),
@@ -434,9 +451,43 @@ class InboundEmailMessage(TimestampMixin, Base):
     raw_headers_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     match_status: Mapped[str] = mapped_column(String(50), nullable=False, default="unlinked")
     match_reason: Mapped[str] = mapped_column(String(50), nullable=False, default="no_match")
+    review_status: Mapped[str] = mapped_column(String(50), nullable=False, default="unreviewed")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(Integer)
 
     email_account: Mapped[EmailAccount] = relationship(back_populates="inbound_messages")
     order: Mapped[ClaimOrder | None] = relationship(back_populates="inbound_email_messages")
+    response_reviews: Mapped[list["ClaimResponseReview"]] = relationship(back_populates="inbound_message")
+
+
+class ClaimResponseReview(TimestampMixin, Base):
+    __tablename__ = "claim_response_reviews"
+    __table_args__ = (
+        CheckConstraint(
+            check_in_constraint("review_type", CLAIM_RESPONSE_REVIEW_TYPES),
+            name="ck_claim_response_reviews_type",
+        ),
+        Index("ix_claim_response_reviews_order_id", "order_id"),
+        Index("ix_claim_response_reviews_inbound_message_id", "inbound_message_id"),
+        Index("ix_claim_response_reviews_reviewed_by_user_id", "reviewed_by_user_id"),
+        Index("ix_claim_response_reviews_review_type", "review_type"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("claim_orders.id"), nullable=False)
+    inbound_message_id: Mapped[int | None] = mapped_column(ForeignKey("inbound_email_messages.id"))
+    reviewed_by_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    review_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    previous_order_status: Mapped[str] = mapped_column(String(50), nullable=False)
+    new_order_status: Mapped[str] = mapped_column(String(50), nullable=False)
+    recovered_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    expected_payment_date: Mapped[date | None] = mapped_column(Date)
+    refusal_reason: Mapped[str | None] = mapped_column(Text)
+    evidence_requested: Mapped[bool | None] = mapped_column(Boolean)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    order: Mapped[ClaimOrder] = relationship(back_populates="response_reviews")
+    inbound_message: Mapped[InboundEmailMessage | None] = relationship(back_populates="response_reviews")
 
 
 class EmailProviderDraft(TimestampMixin, Base):

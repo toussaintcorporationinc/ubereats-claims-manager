@@ -57,6 +57,12 @@ export default function DashboardPage() {
             <StatCard label="Recupere" value={formatCurrency(summary.total_recovered_amount)} />
             <StatCard label="En attente" value={formatCurrency(summary.total_pending_amount)} />
             <StatCard label="Refuse" value={formatCurrency(summary.total_refused_amount)} />
+            <StatCard label="Acceptes" value={summary.accepted_count} />
+            <StatCard label="Paiement a verifier" value={summary.payment_to_verify_count} />
+            <StatCard label="Paiements confirmes" value={summary.payment_confirmed_count} />
+            <StatCard label="Refus clients" value={summary.refused_count} />
+            <StatCard label="Revue manuelle" value={summary.manual_review_count} />
+            <StatCard label="Attente reponse" value={summary.pending_response_count} />
           </div>
 
           <div className="grid-two">

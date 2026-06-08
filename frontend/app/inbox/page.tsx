@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import ApiError from "@/components/ApiError";
 import EmptyState from "@/components/EmptyState";
 import LoadingState from "@/components/LoadingState";
@@ -10,6 +10,9 @@ import { useAuth } from "@/lib/auth";
 import {
   api,
   formatDate,
+  type ClaimResponseReview,
+  type ClaimResponseReviewCreatePayload,
+  type ClaimResponseReviewType,
   type ClaimOrder,
   type GmailInboundStatus,
   type GmailInboundSyncResponse,
@@ -18,6 +21,33 @@ import {
 } from "@/lib/api";
 
 type FilterValue = InboundEmailMatchStatus | "";
+type ReviewForm = {
+  review_type: ClaimResponseReviewType;
+  recovered_amount: string;
+  expected_payment_date: string;
+  refusal_reason: string;
+  notes: string;
+};
+
+const reviewTypes: ClaimResponseReviewType[] = [
+  "accepted",
+  "payment_to_verify",
+  "payment_confirmed",
+  "refused",
+  "evidence_requested",
+  "information_requested",
+  "followup_needed",
+  "ignored",
+  "manual_review",
+];
+
+const initialReviewForm: ReviewForm = {
+  review_type: "manual_review",
+  recovered_amount: "",
+  expected_payment_date: "",
+  refusal_reason: "",
+  notes: "",
+};
 
 export default function InboxPage() {
   const { user } = useAuth();
@@ -25,13 +55,16 @@ export default function InboxPage() {
   const [orders, setOrders] = useState<ClaimOrder[]>([]);
   const [status, setStatus] = useState<GmailInboundStatus | null>(null);
   const [syncResult, setSyncResult] = useState<GmailInboundSyncResponse | null>(null);
+  const [reviewResult, setReviewResult] = useState<ClaimResponseReview | null>(null);
   const [filter, setFilter] = useState<FilterValue>("");
   const [linkSelections, setLinkSelections] = useState<Record<number, string>>({});
+  const [reviewForms, setReviewForms] = useState<Record<number, ReviewForm>>({});
   const [error, setError] = useState<unknown>(null);
   const [actionError, setActionError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [linkingMessageId, setLinkingMessageId] = useState<number | null>(null);
+  const [reviewingMessageId, setReviewingMessageId] = useState<number | null>(null);
 
   const canSync = user?.role === "owner" || user?.role === "manager";
 
@@ -88,6 +121,54 @@ export default function InboxPage() {
     }
   }
 
+  function getReviewForm(messageId: number): ReviewForm {
+    return reviewForms[messageId] ?? initialReviewForm;
+  }
+
+  function updateReviewForm(messageId: number, patch: Partial<ReviewForm>) {
+    setReviewForms((current) => ({
+      ...current,
+      [messageId]: {
+        ...getReviewForm(messageId),
+        ...patch,
+      },
+    }));
+  }
+
+  async function handleReview(event: FormEvent<HTMLFormElement>, message: InboundEmailMessage) {
+    event.preventDefault();
+    if (!message.order_id) {
+      setActionError(new Error("Rattachez ce message a une commande avant de le traiter."));
+      return;
+    }
+
+    const form = getReviewForm(message.id);
+    const payload: ClaimResponseReviewCreatePayload = {
+      inbound_message_id: message.id,
+      review_type: form.review_type,
+      recovered_amount: form.recovered_amount.trim() || null,
+      expected_payment_date: form.expected_payment_date || null,
+      refusal_reason: form.refusal_reason.trim() || null,
+      evidence_requested: form.review_type === "evidence_requested" ? true : null,
+      notes: form.notes.trim() || null,
+    };
+
+    setReviewingMessageId(message.id);
+    setActionError(null);
+    setReviewResult(null);
+
+    try {
+      const result = await api.createResponseReview(message.order_id, payload);
+      setReviewResult(result);
+      setReviewForms((current) => ({ ...current, [message.id]: initialReviewForm }));
+      await loadData();
+    } catch (apiError) {
+      setActionError(apiError);
+    } finally {
+      setReviewingMessageId(null);
+    }
+  }
+
   if (loading) {
     return <LoadingState label="Chargement des reponses Uber" />;
   }
@@ -129,6 +210,15 @@ export default function InboxPage() {
             </span>
           </div>
         ) : null}
+        {reviewResult ? (
+          <div className="success-box">
+            <strong>Traitement enregistre</strong>
+            <span>
+              Commande #{reviewResult.order_id}: {reviewResult.previous_order_status} vers{" "}
+              {reviewResult.new_order_status}
+            </span>
+          </div>
+        ) : null}
       </section>
 
       <section className="tool-panel">
@@ -155,64 +245,122 @@ export default function InboxPage() {
                 <th>Extrait</th>
                 <th>Reception</th>
                 <th>Match</th>
+                <th>Revue</th>
                 <th>Commande</th>
-                <th>Rattacher</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody>
-              {messages.map((message) => (
-                <tr key={message.id}>
-                  <td>{message.from_email ?? "-"}</td>
-                  <td>{message.subject ?? "-"}</td>
-                  <td>{message.snippet ?? "-"}</td>
-                  <td>{formatDate(message.received_at)}</td>
-                  <td>
-                    <div className="stack-sm">
-                      <StatusBadge status={message.match_status} />
-                      <span className="muted">{message.match_reason}</span>
-                    </div>
-                  </td>
-                  <td>
-                    {message.order_id ? (
-                      <Link href={`/orders/${message.order_id}`} className="secondary-button">
-                        Commande #{message.order_id}
-                      </Link>
-                    ) : (
-                      "-"
-                    )}
-                  </td>
-                  <td>
-                    {message.match_status === "unlinked" && canSync ? (
-                      <div className="inline-form">
-                        <select
-                          aria-label={`Commande a rattacher message ${message.id}`}
-                          value={linkSelections[message.id] ?? ""}
-                          onChange={(event) =>
-                            setLinkSelections((current) => ({ ...current, [message.id]: event.target.value }))
-                          }
-                        >
-                          <option value="">Selection commande</option>
-                          {orders.map((order) => (
-                            <option key={order.id} value={order.id}>
-                              #{order.id} - {order.uber_order_number}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          className="button"
-                          onClick={() => handleLink(message.id)}
-                          disabled={linkingMessageId === message.id}
-                        >
-                          {linkingMessageId === message.id ? "Rattachement" : "Rattacher"}
-                        </button>
+              {messages.map((message) => {
+                const reviewForm = getReviewForm(message.id);
+                return (
+                  <tr key={message.id}>
+                    <td>{message.from_email ?? "-"}</td>
+                    <td>{message.subject ?? "-"}</td>
+                    <td>{message.snippet ?? "-"}</td>
+                    <td>{formatDate(message.received_at)}</td>
+                    <td>
+                      <div className="stack-sm">
+                        <StatusBadge status={message.match_status} />
+                        <span className="muted">{message.match_reason}</span>
                       </div>
-                    ) : (
-                      "-"
-                    )}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td>
+                      <div className="stack-sm">
+                        <StatusBadge status={message.review_status} />
+                        <span className="muted">{formatDate(message.reviewed_at)}</span>
+                      </div>
+                    </td>
+                    <td>
+                      {message.order_id ? (
+                        <Link href={`/orders/${message.order_id}`} className="secondary-button">
+                          Commande #{message.order_id}
+                        </Link>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                    <td>
+                      {message.match_status === "unlinked" && canSync ? (
+                        <div className="inline-form">
+                          <select
+                            aria-label={`Commande a rattacher message ${message.id}`}
+                            value={linkSelections[message.id] ?? ""}
+                            onChange={(event) =>
+                              setLinkSelections((current) => ({ ...current, [message.id]: event.target.value }))
+                            }
+                          >
+                            <option value="">Selection commande</option>
+                            {orders.map((order) => (
+                              <option key={order.id} value={order.id}>
+                                #{order.id} - {order.uber_order_number}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            className="button"
+                            onClick={() => handleLink(message.id)}
+                            disabled={linkingMessageId === message.id}
+                          >
+                            {linkingMessageId === message.id ? "Rattachement" : "Rattacher"}
+                          </button>
+                        </div>
+                      ) : null}
+                      {message.match_status === "linked" && message.order_id && canSync ? (
+                        <form className="inline-form" onSubmit={(event) => handleReview(event, message)}>
+                          <select
+                            aria-label={`Type traitement message ${message.id}`}
+                            value={reviewForm.review_type}
+                            onChange={(event) =>
+                              updateReviewForm(message.id, {
+                                review_type: event.target.value as ClaimResponseReviewType,
+                              })
+                            }
+                          >
+                            {reviewTypes.map((type) => (
+                              <option key={type} value={type}>
+                                {type}
+                              </option>
+                            ))}
+                          </select>
+                          <input
+                            aria-label={`Montant recupere message ${message.id}`}
+                            inputMode="decimal"
+                            placeholder="Montant recupere"
+                            value={reviewForm.recovered_amount}
+                            onChange={(event) => updateReviewForm(message.id, { recovered_amount: event.target.value })}
+                          />
+                          <input
+                            aria-label={`Date paiement attendu message ${message.id}`}
+                            type="date"
+                            value={reviewForm.expected_payment_date}
+                            onChange={(event) =>
+                              updateReviewForm(message.id, { expected_payment_date: event.target.value })
+                            }
+                          />
+                          <input
+                            aria-label={`Motif refus message ${message.id}`}
+                            placeholder="Motif refus"
+                            value={reviewForm.refusal_reason}
+                            onChange={(event) => updateReviewForm(message.id, { refusal_reason: event.target.value })}
+                          />
+                          <textarea
+                            aria-label={`Notes traitement message ${message.id}`}
+                            placeholder="Notes internes"
+                            value={reviewForm.notes}
+                            onChange={(event) => updateReviewForm(message.id, { notes: event.target.value })}
+                          />
+                          <button type="submit" className="button" disabled={reviewingMessageId === message.id}>
+                            {reviewingMessageId === message.id ? "Traitement" : "Traiter la reponse"}
+                          </button>
+                        </form>
+                      ) : null}
+                      {message.match_status !== "unlinked" && !(message.match_status === "linked" && canSync) ? "-" : null}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

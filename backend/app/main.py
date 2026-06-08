@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.routes import auth, dashboard, drafts, email, evidence, health, imports, orders, restaurants, users
+from app.routes import auth, dashboard, drafts, email, evidence, health, imports, orders, response_reviews, restaurants, users
 from app.services.file_storage_service import ensure_evidence_storage
 from app.services.local_storage import ensure_local_storage
 from app.services.order_import_service import ensure_import_storage
@@ -44,4 +44,5 @@ app.include_router(drafts.router)
 app.include_router(email.router)
 app.include_router(imports.router)
 app.include_router(dashboard.router)
+app.include_router(response_reviews.router)
 app.include_router(users.router)

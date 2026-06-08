@@ -12,6 +12,7 @@ const positiveStatuses = new Set([
   "response_received",
   "linked",
   "success",
+  "reviewed",
 ]);
 const warningStatuses = new Set([
   "draft",
@@ -26,6 +27,10 @@ const warningStatuses = new Set([
   "unauthorized",
   "running",
   "unlinked",
+  "unreviewed",
+  "evidence_requested",
+  "information_requested",
+  "followup_needed",
 ]);
 const closedStatuses = new Set(["refused", "closed", "inactive", "failed", "cancelled", "invalid", "skipped", "ignored"]);
 

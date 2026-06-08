@@ -31,6 +31,7 @@ Le backend expose maintenant les premiers objets metier :
 - creation de vrais brouillons Gmail via OAuth ;
 - envoi manuel approuve de brouillons Gmail, sans automatisation ;
 - lecture et rattachement manuel des reponses Gmail entrantes ;
+- traitement manuel des reponses Uber et mise a jour des statuts de reclamation ;
 - dashboard de synthese.
 
 Les endpoints principaux sont :
@@ -64,6 +65,9 @@ Les endpoints principaux sont :
 - `GET /v1/email/inbound-messages`
 - `POST /v1/email/inbound-messages/{id}/link`
 - `GET /v1/orders/{id}/email-messages`
+- `POST /v1/orders/{id}/response-reviews`
+- `GET /v1/orders/{id}/response-reviews`
+- `GET /v1/response-reviews`
 - `GET /v1/dashboard/summary`
 - `POST /v1/imports/orders/preview`
 - `GET /v1/imports`
@@ -83,6 +87,8 @@ Les commandes peuvent aussi etre importees en masse depuis `/imports/new` avec u
 Les brouillons internes peuvent etre transformes en brouillons Gmail reels lorsque `EMAIL_PROVIDER_ENABLED=true` et que l'OAuth Gmail est configure. Cette integration utilise les scopes `gmail.compose` et `gmail.readonly`, joint les preuves de la commande si demande et n'envoie jamais l'email automatiquement. L'envoi Gmail est possible uniquement apres confirmation manuelle explicite depuis l'application.
 
 Les reponses Gmail peuvent etre synchronisees manuellement lorsque `GMAIL_INBOUND_SYNC_ENABLED=true`. Les messages entrants sont dedupliques, rattaches par thread Gmail ou numero de commande Uber, puis affiches dans `/inbox` et dans l'historique email de la commande. Aucune reponse automatique n'est generee.
+
+Un owner ou manager peut ensuite traiter manuellement une reponse Uber rattachee depuis `/inbox` ou le detail commande. Le traitement enregistre un `ClaimResponseReview`, marque le message comme revu ou ignore, met a jour le statut commercial de la commande si necessaire (`accepted`, `payment_to_verify`, `payment_confirmed`, `refused` ou `manual_review`) et cree des `AuditLog`. Aucun email ni relance n'est declenche par cette action.
 
 ## Demarrage rapide
 

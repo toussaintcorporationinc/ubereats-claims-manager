@@ -31,8 +31,13 @@ ready_to_send -> create initial_claim draft -> draft_email_created
 draft_email_created -> sent -> waiting_uber_response
 sent -> inbound Gmail linked -> response_received
 waiting_uber_response -> inbound Gmail linked -> response_received
-waiting_uber_response -> accepted -> payment_to_verify -> payment_confirmed -> closed
-waiting_uber_response -> refused -> manual_review -> closed
+response_received -> manual response review accepted -> accepted
+response_received -> manual response review payment_to_verify -> payment_to_verify -> payment_confirmed -> closed
+response_received -> manual response review refused -> refused
+response_received -> manual response review evidence_requested -> manual_review
+response_received -> manual response review information_requested -> manual_review
+response_received -> manual response review followup_needed -> manual_review
+response_received -> manual response review manual_review -> manual_review
 ```
 
 ## Regles de base
@@ -94,4 +99,28 @@ Les statuts finaux suivants ne sont jamais modifies par la sync inbound :
 - `closed`
 
 Les messages sans rattachement fiable restent `unlinked` et ne changent pas le statut de la commande.
+
+## Traitement manuel des reponses Uber V1
+
+Le traitement manuel des reponses Uber se fait via `POST /v1/orders/{order_id}/response-reviews`.
+
+Il ne genere aucune reponse automatique, aucun email et aucune relance. Un owner ou manager lit la reponse, choisit un `review_type`, puis l'application applique la transition de statut correspondante.
+
+Transitions actives :
+
+- `accepted` -> `accepted` ;
+- `payment_to_verify` -> `payment_to_verify` ;
+- `payment_confirmed` -> `payment_confirmed` ;
+- `refused` -> `refused` ;
+- `evidence_requested` -> `manual_review` ;
+- `information_requested` -> `manual_review` ;
+- `followup_needed` -> `manual_review` ;
+- `manual_review` -> `manual_review` ;
+- `ignored` -> aucun changement de statut de commande.
+
+Le champ `result` de la commande reprend le `review_type`, sauf pour `ignored` qui ne modifie pas la commande.
+
+Les statuts `payment_confirmed` et `closed` protegent la commande contre une nouvelle decision non ignoree.
+
+Chaque traitement cree un `ClaimResponseReview`, marque le message inbound comme `reviewed` ou `ignored` si un message est fourni, et ajoute des `AuditLog`.
 

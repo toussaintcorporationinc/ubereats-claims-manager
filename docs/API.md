@@ -722,6 +722,102 @@ Regles :
 - le message passe a `match_status=linked` et `match_reason=manual_link` ;
 - un `EmailThread` inbound et un `AuditLog` sont crees.
 
+## Traitement manuel des reponses Uber
+
+Le traitement manuel transforme une reponse Uber rattachee en decision commerciale sur la commande. Il ne lit pas Gmail, ne repond pas a Uber et n'envoie aucun email.
+
+### Creer une revue de reponse
+
+- `POST /v1/orders/{order_id}/response-reviews`
+
+Body :
+
+```json
+{
+  "inbound_message_id": 123,
+  "review_type": "accepted",
+  "recovered_amount": "24.90",
+  "expected_payment_date": "2026-06-15",
+  "refusal_reason": null,
+  "evidence_requested": null,
+  "notes": "Remboursement annonce par Uber"
+}
+```
+
+Reponse :
+
+```json
+{
+  "id": 1,
+  "order_id": 456,
+  "inbound_message_id": 123,
+  "reviewed_by_user_id": 2,
+  "review_type": "accepted",
+  "previous_order_status": "response_received",
+  "new_order_status": "accepted",
+  "recovered_amount": "24.90",
+  "expected_payment_date": "2026-06-15",
+  "refusal_reason": null,
+  "evidence_requested": null,
+  "notes": "Remboursement annonce par Uber",
+  "created_at": "2026-06-08T10:00:00Z",
+  "updated_at": "2026-06-08T10:00:00Z"
+}
+```
+
+Types `review_type` autorises :
+
+- `accepted`
+- `payment_to_verify`
+- `payment_confirmed`
+- `refused`
+- `evidence_requested`
+- `information_requested`
+- `followup_needed`
+- `ignored`
+- `manual_review`
+
+Transitions appliquees :
+
+- `accepted` -> commande `accepted`, `result=accepted` ;
+- `payment_to_verify` -> commande `payment_to_verify`, `result=payment_to_verify` ;
+- `payment_confirmed` -> commande `payment_confirmed`, `result=payment_confirmed` ;
+- `refused` -> commande `refused`, `result=refused` ;
+- `evidence_requested` -> commande `manual_review`, `result=evidence_requested` ;
+- `information_requested` -> commande `manual_review`, `result=information_requested` ;
+- `followup_needed` -> commande `manual_review`, `result=followup_needed` ;
+- `manual_review` -> commande `manual_review`, `result=manual_review` ;
+- `ignored` ne change pas le statut ni le resultat de la commande.
+
+Regles :
+
+- seuls `owner` et `manager` peuvent creer une revue ;
+- `manager` est limite a ses restaurants assignes ;
+- `staff` ne peut pas traiter une reponse ;
+- `payment_confirmed` et `closed` sont proteges contre une nouvelle decision non ignoree ;
+- si `inbound_message_id` est fourni, le message passe a `review_status=reviewed` ou `review_status=ignored` ;
+- chaque revue cree un `AuditLog`.
+
+### Lister les revues d'une commande
+
+- `GET /v1/orders/{order_id}/response-reviews`
+
+Retourne les `ClaimResponseReview` de la commande.
+
+### Lister les revues visibles
+
+- `GET /v1/response-reviews`
+
+Query params :
+
+- `review_type`
+- `restaurant_id`
+- `order_id`
+- `limit`
+- `offset`
+
+`owner` voit tout. `manager` voit les revues des restaurants assignes. `staff` n'a pas acces a cette liste globale.
+
 ## Dashboard
 
 - `GET /v1/dashboard/summary`
@@ -733,6 +829,12 @@ Retourne :
 - `total_recovered_amount`
 - `total_pending_amount`
 - `total_refused_amount`
+- `accepted_count`
+- `payment_to_verify_count`
+- `payment_confirmed_count`
+- `refused_count`
+- `manual_review_count`
+- `pending_response_count`
 - `orders_by_status`
 - `orders_by_restaurant`
 

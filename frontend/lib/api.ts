@@ -36,6 +36,7 @@ export type ImportRowStatus = "valid" | "invalid" | "duplicate" | "unauthorized"
 export type EmailProviderDraftStatus = "provider_draft_created" | "send_requested" | "sent" | "failed";
 export type GmailSyncStatus = "idle" | "running" | "success" | "failed";
 export type InboundEmailMatchStatus = "linked" | "unlinked" | "ignored";
+export type InboundEmailReviewStatus = "unreviewed" | "reviewed" | "ignored";
 export type InboundEmailMatchReason =
   | "thread_id_match"
   | "order_number_match"
@@ -43,6 +44,16 @@ export type InboundEmailMatchReason =
   | "manual_link"
   | "no_match"
   | "ignored_sender";
+export type ClaimResponseReviewType =
+  | "accepted"
+  | "payment_to_verify"
+  | "payment_confirmed"
+  | "refused"
+  | "evidence_requested"
+  | "information_requested"
+  | "followup_needed"
+  | "ignored"
+  | "manual_review";
 
 export type Restaurant = {
   id: number;
@@ -200,6 +211,9 @@ export type InboundEmailMessage = {
   received_at: string | null;
   match_status: InboundEmailMatchStatus;
   match_reason: InboundEmailMatchReason;
+  review_status: InboundEmailReviewStatus;
+  reviewed_at: string | null;
+  reviewed_by_user_id: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -263,8 +277,47 @@ export type DashboardSummary = {
   total_recovered_amount: MoneyValue;
   total_pending_amount: MoneyValue;
   total_refused_amount: MoneyValue;
+  accepted_count: number;
+  payment_to_verify_count: number;
+  payment_confirmed_count: number;
+  refused_count: number;
+  manual_review_count: number;
+  pending_response_count: number;
   orders_by_status: Record<string, number>;
   orders_by_restaurant: DashboardRestaurantSummary[];
+};
+
+export type ClaimResponseReview = {
+  id: number;
+  order_id: number;
+  inbound_message_id: number | null;
+  reviewed_by_user_id: number;
+  review_type: ClaimResponseReviewType;
+  previous_order_status: ClaimOrderStatus;
+  new_order_status: ClaimOrderStatus;
+  recovered_amount: MoneyValue;
+  expected_payment_date: string | null;
+  refusal_reason: string | null;
+  evidence_requested: boolean | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ClaimResponseReviewCreatePayload = {
+  inbound_message_id?: number | null;
+  review_type: ClaimResponseReviewType;
+  recovered_amount?: string | null;
+  expected_payment_date?: string | null;
+  refusal_reason?: string | null;
+  evidence_requested?: boolean | null;
+  notes?: string | null;
+};
+
+export type ResponseReviewsResponse = {
+  reviews: ClaimResponseReview[];
+  limit: number;
+  offset: number;
 };
 
 export type ImportRow = {
@@ -609,6 +662,41 @@ export const api = {
     postJson<InboundEmailMessage, { order_id: number }>(`/v1/email/inbound-messages/${messageId}/link`, {
       order_id: orderId,
     }),
+  createResponseReview: (orderId: number, payload: ClaimResponseReviewCreatePayload) =>
+    postJson<ClaimResponseReview, ClaimResponseReviewCreatePayload>(
+      `/v1/orders/${orderId}/response-reviews`,
+      payload,
+    ),
+  getOrderResponseReviews: (orderId: number) =>
+    request<ClaimResponseReview[]>(`/v1/orders/${orderId}/response-reviews`),
+  getResponseReviews: (
+    filters: {
+      review_type?: ClaimResponseReviewType | "";
+      restaurant_id?: number;
+      order_id?: number;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (filters.review_type) {
+      params.set("review_type", filters.review_type);
+    }
+    if (filters.restaurant_id) {
+      params.set("restaurant_id", String(filters.restaurant_id));
+    }
+    if (filters.order_id) {
+      params.set("order_id", String(filters.order_id));
+    }
+    if (filters.limit) {
+      params.set("limit", String(filters.limit));
+    }
+    if (filters.offset) {
+      params.set("offset", String(filters.offset));
+    }
+    const query = params.toString();
+    return request<ResponseReviewsResponse>(`/v1/response-reviews${query ? `?${query}` : ""}`);
+  },
   previewOrderImport: (file: File) => {
     const formData = new FormData();
     formData.append("file", file);

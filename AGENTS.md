@@ -2,7 +2,7 @@
 
 ## Projet
 
-Application interne pour gérer les réclamations Uber Eats de 6 restaurants.
+Application interne pour gérer les réclamations Uber Eats de plusieurs restaurants, 6 au démarrage, extensible sans limite codée.
 
 Le problème :
 Des commandes Uber Eats sont annulées après préparation. Cela crée une perte financière et du gaspillage alimentaire.

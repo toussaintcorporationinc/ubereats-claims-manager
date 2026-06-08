@@ -58,6 +58,23 @@ Regles :
 - un rattachement manuel est possible pour `owner` et pour `manager` sur ses restaurants assignes ;
 - aucun token Gmail, secret ou mot de passe n'est stocke dans l'historique ou l'audit.
 
+## Traitement manuel des reponses Uber V1
+
+Une reponse Gmail rattachee peut etre traitee manuellement depuis l'application par un owner ou manager autorise.
+
+Regles :
+
+- le traitement ne repond jamais a l'email Gmail ;
+- le traitement ne modifie jamais Gmail cote utilisateur ;
+- le traitement ne declenche aucun envoi, aucune relance et aucune classification IA ;
+- `staff` ne peut pas traiter une reponse ;
+- un traitement cree un `ClaimResponseReview` ;
+- un message inbound fourni passe a `review_status=reviewed` ou `review_status=ignored` ;
+- les decisions possibles sont `accepted`, `payment_to_verify`, `payment_confirmed`, `refused`, `evidence_requested`, `information_requested`, `followup_needed`, `ignored` et `manual_review` ;
+- `ignored` ne change pas le statut de la commande ;
+- `payment_confirmed` et `closed` protegent la commande contre une nouvelle decision non ignoree ;
+- chaque traitement ajoute un `AuditLog` sans token, secret, mot de passe ni contenu sensible inutile.
+
 ## Envoi Gmail manuel V1
 
 Un brouillon Gmail deja cree peut etre envoye uniquement depuis l'application, par un owner ou manager autorise, avec `confirm_send=true`.
