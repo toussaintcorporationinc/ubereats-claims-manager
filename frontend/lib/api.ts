@@ -54,6 +54,14 @@ export type ClaimResponseReviewType =
   | "followup_needed"
   | "ignored"
   | "manual_review";
+export type FollowUpTaskType = "followup_1" | "followup_2" | "escalation" | "manual_review" | "payment_verification";
+export type FollowUpTaskStatus =
+  | "pending"
+  | "draft_created"
+  | "provider_draft_created"
+  | "completed"
+  | "skipped"
+  | "cancelled";
 
 export type Restaurant = {
   id: number;
@@ -283,6 +291,10 @@ export type DashboardSummary = {
   refused_count: number;
   manual_review_count: number;
   pending_response_count: number;
+  followups_due_count: number;
+  followups_pending_count: number;
+  escalations_due_count: number;
+  manual_review_due_count: number;
   orders_by_status: Record<string, number>;
   orders_by_restaurant: DashboardRestaurantSummary[];
 };
@@ -318,6 +330,61 @@ export type ResponseReviewsResponse = {
   reviews: ClaimResponseReview[];
   limit: number;
   offset: number;
+};
+
+export type FollowUpTask = {
+  id: number;
+  order_id: number;
+  task_type: FollowUpTaskType;
+  status: FollowUpTaskStatus;
+  due_at: string;
+  generated_email_draft_id: number | null;
+  generated_provider_draft_id: number | null;
+  created_by_user_id: number | null;
+  completed_by_user_id: number | null;
+  skipped_by_user_id: number | null;
+  completed_at: string | null;
+  skipped_at: string | null;
+  skip_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FollowUpTaskSummary = {
+  id: number;
+  order_id: number;
+  restaurant_id: number;
+  restaurant_name: string;
+  uber_order_number: string;
+  order_amount: MoneyValue;
+  currency: string;
+  claim_status: ClaimOrderStatus;
+  retry_count: number;
+  next_action_at: string | null;
+  last_followup_sent_at: string | null;
+  task_type: FollowUpTaskType;
+  status: FollowUpTaskStatus;
+  due_at: string;
+  generated_email_draft_id: number | null;
+  generated_provider_draft_id: number | null;
+};
+
+export type FollowUpsResponse = {
+  tasks: FollowUpTaskSummary[];
+  limit: number;
+  offset: number;
+};
+
+export type FollowUpRecalculatePayload = {
+  restaurant_id?: number | null;
+  dry_run?: boolean;
+};
+
+export type FollowUpRecalculateResponse = {
+  created_tasks: number;
+  skipped_orders: number;
+  manual_review_orders: number;
+  errors: string[];
 };
 
 export type ImportRow = {
@@ -697,6 +764,44 @@ export const api = {
     const query = params.toString();
     return request<ResponseReviewsResponse>(`/v1/response-reviews${query ? `?${query}` : ""}`);
   },
+  getDueFollowups: (
+    filters: {
+      restaurant_id?: number;
+      status?: FollowUpTaskStatus | "";
+      task_type?: FollowUpTaskType | "";
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (filters.restaurant_id) {
+      params.set("restaurant_id", String(filters.restaurant_id));
+    }
+    if (filters.status) {
+      params.set("status", filters.status);
+    }
+    if (filters.task_type) {
+      params.set("task_type", filters.task_type);
+    }
+    if (filters.limit) {
+      params.set("limit", String(filters.limit));
+    }
+    if (filters.offset) {
+      params.set("offset", String(filters.offset));
+    }
+    const query = params.toString();
+    return request<FollowUpsResponse>(`/v1/followups/due${query ? `?${query}` : ""}`);
+  },
+  recalculateFollowups: (payload: FollowUpRecalculatePayload = {}) =>
+    postJson<FollowUpRecalculateResponse, FollowUpRecalculatePayload>("/v1/followups/recalculate", payload),
+  createFollowupDraft: (taskId: number) =>
+    postJson<FollowUpTask, Record<string, never>>(`/v1/followups/${taskId}/create-draft`, {}),
+  createFollowupGmailDraft: (taskId: number) =>
+    postJson<FollowUpTask, Record<string, never>>(`/v1/followups/${taskId}/create-gmail-draft`, {}),
+  skipFollowupTask: (taskId: number, payload: { skip_reason: string }) =>
+    postJson<FollowUpTask, { skip_reason: string }>(`/v1/followups/${taskId}/skip`, payload),
+  completeFollowupTask: (taskId: number) =>
+    postJson<FollowUpTask, Record<string, never>>(`/v1/followups/${taskId}/complete`, {}),
   previewOrderImport: (file: File) => {
     const formData = new FormData();
     formData.append("file", file);

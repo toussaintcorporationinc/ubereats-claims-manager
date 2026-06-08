@@ -818,6 +818,152 @@ Query params :
 
 `owner` voit tout. `manager` voit les revues des restaurants assignes. `staff` n'a pas acces a cette liste globale.
 
+## Follow-ups controles
+
+Les relances controlees creent des taches et des brouillons. Elles ne declenchent aucun envoi automatique.
+
+Politique par defaut :
+
+- `followup_1` : J+2 apres premier envoi ;
+- `followup_2` : J+5 apres premier envoi si `followup_1` existe ;
+- `escalation` : J+10 apres premier envoi si `followup_1` et `followup_2` existent ;
+- `manual_review` : J+15, limite de relances atteinte ou reponse inbound non traitee.
+
+Variables :
+
+- `FOLLOWUP_1_DELAY_DAYS=2`
+- `FOLLOWUP_2_DELAY_DAYS=5`
+- `ESCALATION_DELAY_DAYS=10`
+- `MANUAL_REVIEW_AFTER_DAYS=15`
+- `MAX_FOLLOWUPS_PER_ORDER=3`
+- `FOLLOWUP_AUTOMATIC_SEND_ENABLED=false`
+
+`FOLLOWUP_AUTOMATIC_SEND_ENABLED` ne declenche aucun envoi dans cette V1.
+
+### Lister les taches
+
+- `GET /v1/followups/due`
+
+Query params :
+
+- `restaurant_id`
+- `status`
+- `task_type`
+- `limit`
+- `offset`
+
+Retour :
+
+```json
+{
+  "tasks": [
+    {
+      "id": 1,
+      "order_id": 123,
+      "restaurant_id": 10,
+      "restaurant_name": "Restaurant Test",
+      "uber_order_number": "UBER-TEST-001",
+      "order_amount": "24.90",
+      "currency": "EUR",
+      "claim_status": "waiting_uber_response",
+      "retry_count": 0,
+      "next_action_at": "2026-06-03T10:00:00Z",
+      "last_followup_sent_at": null,
+      "task_type": "followup_1",
+      "status": "pending",
+      "due_at": "2026-06-03T10:00:00Z",
+      "generated_email_draft_id": null,
+      "generated_provider_draft_id": null
+    }
+  ],
+  "limit": 50,
+  "offset": 0
+}
+```
+
+### Recalculer les relances
+
+- `POST /v1/followups/recalculate`
+
+Body optionnel :
+
+```json
+{
+  "restaurant_id": 123,
+  "dry_run": false
+}
+```
+
+Retour :
+
+```json
+{
+  "created_tasks": 10,
+  "skipped_orders": 5,
+  "manual_review_orders": 2,
+  "errors": []
+}
+```
+
+Regles :
+
+- `owner` peut recalculer tous les restaurants ;
+- `manager` peut recalculer ses restaurants assignes ;
+- `staff` ne peut pas recalculer ;
+- aucun doublon `order_id + task_type` n'est cree ;
+- les statuts finaux `accepted`, `payment_confirmed`, `refused`, `closed` sont ignores ;
+- une reponse inbound non traitee propose `manual_review` avant relance.
+
+### Creer le brouillon interne
+
+- `POST /v1/followups/{task_id}/create-draft`
+
+Regles :
+
+- `owner` ou `manager` seulement ;
+- la tache doit etre `pending` ;
+- `followup_1`, `followup_2` et `escalation` creent un `EmailDraft` ;
+- `manual_review` ne cree pas d'email et passe la commande en `manual_review` ;
+- aucun email n'est envoye.
+
+### Creer le brouillon Gmail
+
+- `POST /v1/followups/{task_id}/create-gmail-draft`
+
+Regles :
+
+- `owner` ou `manager` seulement ;
+- un brouillon interne doit deja exister ;
+- le compte Gmail doit etre connecte et provider actif ;
+- cree un `EmailProviderDraft` ;
+- aucun email n'est envoye.
+
+### Ignorer une relance
+
+- `POST /v1/followups/{task_id}/skip`
+
+Body :
+
+```json
+{
+  "skip_reason": "Deja traite manuellement"
+}
+```
+
+### Marquer terminee
+
+- `POST /v1/followups/{task_id}/complete`
+
+Si le provider draft lie est deja `sent`, la commande est mise a jour :
+
+- `followup_1` -> `followup_1_sent` ;
+- `followup_2` -> `followup_2_sent` ;
+- `escalation` -> `escalation_sent` ;
+- `retry_count` est incremente ;
+- `last_followup_sent_at` et `next_action_at` sont mis a jour.
+
+Chaque action cree un `AuditLog`.
+
 ## Dashboard
 
 - `GET /v1/dashboard/summary`
@@ -835,6 +981,10 @@ Retourne :
 - `refused_count`
 - `manual_review_count`
 - `pending_response_count`
+- `followups_due_count`
+- `followups_pending_count`
+- `escalations_due_count`
+- `manual_review_due_count`
 - `orders_by_status`
 - `orders_by_restaurant`
 

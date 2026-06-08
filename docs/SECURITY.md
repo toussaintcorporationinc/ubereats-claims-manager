@@ -109,6 +109,22 @@ Regles appliquees :
 - les statuts `payment_confirmed` et `closed` protegent la commande contre une nouvelle decision non ignoree ;
 - les audits de traitement ne stockent aucun token, secret ou mot de passe.
 
+## Relances controlees
+
+Les relances V1 sont des taches et des brouillons, pas des envois.
+
+Regles appliquees :
+
+- `owner` peut recalculer et gerer les relances de tous les restaurants ;
+- `manager` peut recalculer et gerer les relances de ses restaurants assignes ;
+- `staff` peut consulter selon ses droits mais ne peut pas recalculer, creer, ignorer ou terminer une relance ;
+- une seule tache par `order_id + task_type` limite les doublons ;
+- `MAX_FOLLOWUPS_PER_ORDER` limite le nombre de relances ;
+- les statuts finaux ne sont jamais relances ;
+- une reponse inbound non traitee dirige vers `manual_review` ;
+- `FOLLOWUP_AUTOMATIC_SEND_ENABLED` ne declenche aucun envoi automatique ;
+- chaque recalcul, creation de brouillon, skip et completion est audite.
+
 Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit une protection isolee et remplacable ; une version production plus avancee pourra brancher un KMS ou un gestionnaire de secrets sans changer les routes.
 
 ## Roles
@@ -124,6 +140,7 @@ Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit
 - creation de brouillons Gmail ;
 - envoi manuel de brouillons Gmail ;
 - traitement manuel des reponses Uber ;
+- gestion des relances controlees ;
 - dashboard global.
 
 ### manager
@@ -136,6 +153,7 @@ Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit
 - creation de brouillons Gmail pour ses restaurants ;
 - envoi manuel de brouillons Gmail pour ses restaurants ;
 - traitement manuel des reponses Uber pour ses restaurants ;
+- gestion des relances controlees pour ses restaurants ;
 - dashboard filtre sur ses restaurants.
 
 ### staff
@@ -150,7 +168,8 @@ Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit
 - pas de generation de brouillon ;
 - pas de creation de brouillon Gmail ;
 - pas d'envoi Gmail ;
-- pas de traitement manuel des reponses Uber.
+- pas de traitement manuel des reponses Uber ;
+- pas de gestion des relances.
 
 ## Audit
 
@@ -165,6 +184,7 @@ Un `AuditLog` est cree pour :
 - creation de revue de reponse Uber ;
 - changement de statut issu d'une revue de reponse Uber ;
 - message inbound marque revu ou ignore.
+- creation, skip et completion de taches de relance.
 
 ## Limites V1
 
@@ -174,6 +194,7 @@ Un `AuditLog` est cree pour :
 - pas de stockage cloud ;
 - pas d'envoi automatique ;
 - pas de retry automatique d'envoi Gmail ;
+- pas d'envoi automatique de relance ;
 - pas de reponse automatique aux messages Gmail entrants ;
 - pas de classification IA des reponses Uber ;
 - pas d'integration OpenAI.

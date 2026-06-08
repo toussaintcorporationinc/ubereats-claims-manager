@@ -11,6 +11,7 @@ Ce document cadre les regles de brouillons email internes, de brouillons Gmail e
 - creer un brouillon Gmail uniquement apres action explicite d'un utilisateur autorise.
 - envoyer un brouillon Gmail uniquement apres confirmation manuelle explicite.
 - lire les reponses Gmail uniquement apres sync manuelle explicite, sans reponse automatique.
+- preparer les relances uniquement sous forme de taches et brouillons, jamais sous forme d'envoi automatique.
 
 ## Brouillons disponibles V1
 
@@ -92,6 +93,29 @@ Regles :
 - un `EmailThread` outbound conserve le sujet, le corps, le message id et le thread id disponibles ;
 - un `AuditLog` trace le succes ou l'echec controle ;
 - les tokens Gmail, secrets et mots de passe ne sont jamais stockes dans l'audit.
+
+## Relances controlees V1
+
+La politique de relance aide a preparer des brouillons pour les dossiers non resolus. Elle ne cree aucune boucle infinie et n'envoie jamais automatiquement.
+
+Delais par defaut :
+
+- `followup_1` : J+2 apres le premier envoi ;
+- `followup_2` : J+5 apres le premier envoi si `followup_1` existe ;
+- `escalation` : J+10 apres le premier envoi si `followup_1` et `followup_2` existent ;
+- `manual_review` : J+15, limite de relances atteinte ou reponse inbound non traitee.
+
+Regles :
+
+- les delais sont configurables par variables d'environnement ;
+- `MAX_FOLLOWUPS_PER_ORDER` limite les relances ;
+- `FOLLOWUP_AUTOMATIC_SEND_ENABLED=false` par defaut et ne declenche aucun envoi dans cette V1 ;
+- une seule tache par commande et type de relance est autorisee ;
+- les statuts finaux `accepted`, `payment_confirmed`, `refused` et `closed` ne sont jamais relances ;
+- une reponse inbound non traitee bloque la relance classique et propose `manual_review` ;
+- les relances creent d'abord des `EmailDraft`, puis eventuellement des brouillons Gmail ;
+- l'envoi Gmail reste manuel et confirme via le workflow d'envoi existant ;
+- chaque recalcul, creation, skip ou completion de tache est audite.
 
 ## Regles de generation
 

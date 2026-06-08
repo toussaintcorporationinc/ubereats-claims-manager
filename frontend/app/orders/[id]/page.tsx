@@ -20,6 +20,7 @@ import {
   type EmailProviderDraft,
   type EvidenceFile,
   type EvidenceType,
+  type FollowUpTaskSummary,
   type GmailConnectionStatus,
   type GmailDraftSendResponse,
   type OrderEmailMessagesResponse,
@@ -88,6 +89,7 @@ export default function OrderDetailPage() {
   const [drafts, setDrafts] = useState<EmailDraft[]>([]);
   const [emailMessages, setEmailMessages] = useState<OrderEmailMessagesResponse | null>(null);
   const [responseReviews, setResponseReviews] = useState<ClaimResponseReview[]>([]);
+  const [followupTasks, setFollowupTasks] = useState<FollowUpTaskSummary[]>([]);
   const [gmailStatus, setGmailStatus] = useState<GmailConnectionStatus | null>(null);
   const [validation, setValidation] = useState<ClaimValidationResponse | null>(null);
   const [generatedDraft, setGeneratedDraft] = useState<EmailDraft | null>(null);
@@ -110,9 +112,10 @@ export default function OrderDetailPage() {
   const [submittingGmailDraftId, setSubmittingGmailDraftId] = useState<number | null>(null);
   const [sendingProviderDraftId, setSendingProviderDraftId] = useState<string | null>(null);
   const [reviewingInboundMessageId, setReviewingInboundMessageId] = useState<number | null>(null);
+  const [followupActionTaskId, setFollowupActionTaskId] = useState<number | null>(null);
 
   const loadOrderData = useCallback(async () => {
-    const [orderData, restaurantsData, evidenceData, draftsData, emailMessagesData, responseReviewsData] =
+    const [orderData, restaurantsData, evidenceData, draftsData, emailMessagesData, responseReviewsData, followupsData] =
       await Promise.all([
         api.getOrder(orderId),
         api.getRestaurants(),
@@ -120,6 +123,7 @@ export default function OrderDetailPage() {
         api.getOrderDrafts(orderId),
         api.getOrderEmailMessages(orderId),
         api.getOrderResponseReviews(orderId),
+        api.getDueFollowups({ limit: 200 }),
       ]);
     setOrder(orderData);
     setRestaurants(restaurantsData);
@@ -127,6 +131,7 @@ export default function OrderDetailPage() {
     setDrafts(draftsData);
     setEmailMessages(emailMessagesData);
     setResponseReviews(responseReviewsData);
+    setFollowupTasks(followupsData.tasks.filter((task) => task.order_id === orderId));
   }, [orderId]);
 
   useEffect(() => {
@@ -325,6 +330,26 @@ export default function OrderDetailPage() {
     }
   }
 
+  async function handleFollowupAction(taskId: number, action: "draft" | "gmail" | "complete") {
+    setFollowupActionTaskId(taskId);
+    setActionError(null);
+
+    try {
+      if (action === "draft") {
+        await api.createFollowupDraft(taskId);
+      } else if (action === "gmail") {
+        await api.createFollowupGmailDraft(taskId);
+      } else {
+        await api.completeFollowupTask(taskId);
+      }
+      await loadOrderData();
+    } catch (apiError) {
+      setActionError(apiError);
+    } finally {
+      setFollowupActionTaskId(null);
+    }
+  }
+
   if (loading) {
     return <LoadingState label="Chargement de la commande" />;
   }
@@ -398,6 +423,84 @@ export default function OrderDetailPage() {
           <ResultList title="blocking_reasons" values={validation.blocking_reasons} />
         </section>
       ) : null}
+
+      <section className="tool-panel">
+        <div className="section-heading">
+          <h2>Relances</h2>
+          <span className="muted">Aucun email n'est envoye automatiquement.</span>
+        </div>
+        <div className="detail-grid">
+          <DetailItem label="Retry count" value={String(order.retry_count)} />
+          <DetailItem label="Prochaine action" value={formatDate(order.next_action_at)} />
+          <DetailItem label="Derniere relance" value={formatDate(order.last_followup_sent_at)} />
+        </div>
+        {followupTasks.length > 0 ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Echeance</th>
+                  <th>Statut</th>
+                  <th>Brouillons</th>
+                  {canValidateOrDraft ? <th>Actions</th> : null}
+                </tr>
+              </thead>
+              <tbody>
+                {followupTasks.map((task) => (
+                  <tr key={task.id}>
+                    <td>
+                      <StatusBadge status={task.task_type} />
+                    </td>
+                    <td>{formatDate(task.due_at)}</td>
+                    <td>
+                      <StatusBadge status={task.status} />
+                    </td>
+                    <td>
+                      <div className="stack-sm">
+                        <span className="muted">Interne: {task.generated_email_draft_id ?? "-"}</span>
+                        <span className="muted">Gmail: {task.generated_provider_draft_id ?? "-"}</span>
+                      </div>
+                    </td>
+                    {canValidateOrDraft ? (
+                      <td>
+                        <div className="inline-form">
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => handleFollowupAction(task.id, "draft")}
+                            disabled={task.status !== "pending" || followupActionTaskId === task.id}
+                          >
+                            Brouillon interne
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => handleFollowupAction(task.id, "gmail")}
+                            disabled={task.status !== "draft_created" || followupActionTaskId === task.id}
+                          >
+                            Brouillon Gmail
+                          </button>
+                          <button
+                            type="button"
+                            className="button"
+                            onClick={() => handleFollowupAction(task.id, "complete")}
+                            disabled={["completed", "skipped", "cancelled"].includes(task.status) || followupActionTaskId === task.id}
+                          >
+                            Terminer
+                          </button>
+                        </div>
+                      </td>
+                    ) : null}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState title="Aucune relance liee a cette commande" />
+        )}
+      </section>
 
       <section className="grid-two">
         <div className="tool-panel">

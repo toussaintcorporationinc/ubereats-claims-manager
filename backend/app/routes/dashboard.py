@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import get_accessible_restaurant_ids, get_current_user
 from app.core.database import get_db
-from app.models import ClaimOrder, Restaurant, User
+from app.models import ClaimOrder, FollowUpTask, Restaurant, User
+from app.models.domain import utc_now
 from app.schemas.domain import DashboardRestaurantSummary, DashboardSummary
 
 router = APIRouter(prefix="/v1/dashboard", tags=["dashboard"])
@@ -37,6 +38,10 @@ def dashboard_summary(
             refused_count=0,
             manual_review_count=0,
             pending_response_count=0,
+            followups_due_count=0,
+            followups_pending_count=0,
+            escalations_due_count=0,
+            manual_review_due_count=0,
             orders_by_status={},
             orders_by_restaurant=[],
         )
@@ -72,6 +77,7 @@ def dashboard_summary(
     refused_count = orders_by_status.get("refused", 0)
     manual_review_count = orders_by_status.get("manual_review", 0)
     pending_response_count = orders_by_status.get("sent", 0) + orders_by_status.get("waiting_uber_response", 0)
+    followup_counts = get_followup_counts(db, accessible_ids)
 
     restaurant_statement = (
         select(
@@ -112,7 +118,39 @@ def dashboard_summary(
         refused_count=refused_count,
         manual_review_count=manual_review_count,
         pending_response_count=pending_response_count,
+        followups_due_count=followup_counts["followups_due_count"],
+        followups_pending_count=followup_counts["followups_pending_count"],
+        escalations_due_count=followup_counts["escalations_due_count"],
+        manual_review_due_count=followup_counts["manual_review_due_count"],
         orders_by_status=orders_by_status,
         orders_by_restaurant=orders_by_restaurant,
     )
+
+
+def get_followup_counts(db: Session, accessible_ids: set[int] | None) -> dict[str, int]:
+    now = utc_now()
+    active_statuses = {"pending", "draft_created", "provider_draft_created"}
+
+    base_statement = select(func.count(FollowUpTask.id)).join(ClaimOrder, FollowUpTask.order_id == ClaimOrder.id)
+    if accessible_ids is not None:
+        base_statement = base_statement.where(ClaimOrder.restaurant_id.in_(accessible_ids))
+
+    due_statement = base_statement.where(FollowUpTask.status == "pending", FollowUpTask.due_at <= now)
+    pending_statement = base_statement.where(FollowUpTask.status.in_(active_statuses))
+    escalation_statement = base_statement.where(
+        FollowUpTask.status == "pending",
+        FollowUpTask.task_type == "escalation",
+        FollowUpTask.due_at <= now,
+    )
+    manual_review_statement = base_statement.where(
+        FollowUpTask.status == "pending",
+        FollowUpTask.task_type == "manual_review",
+        FollowUpTask.due_at <= now,
+    )
+    return {
+        "followups_due_count": db.scalar(due_statement) or 0,
+        "followups_pending_count": db.scalar(pending_statement) or 0,
+        "escalations_due_count": db.scalar(escalation_statement) or 0,
+        "manual_review_due_count": db.scalar(manual_review_statement) or 0,
+    }
 

@@ -63,6 +63,10 @@ export default function DashboardPage() {
             <StatCard label="Refus clients" value={summary.refused_count} />
             <StatCard label="Revue manuelle" value={summary.manual_review_count} />
             <StatCard label="Attente reponse" value={summary.pending_response_count} />
+            <StatCard label="Relances dues" value={summary.followups_due_count} />
+            <StatCard label="Relances en attente" value={summary.followups_pending_count} />
+            <StatCard label="Escalades dues" value={summary.escalations_due_count} />
+            <StatCard label="Revues a faire" value={summary.manual_review_due_count} />
           </div>
 
           <div className="grid-two">

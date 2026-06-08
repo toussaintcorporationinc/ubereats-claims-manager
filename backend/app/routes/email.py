@@ -41,6 +41,7 @@ from app.schemas.domain import (
 )
 from app.services.audit import add_audit_log
 from app.services.email_provider import EmailProvider, EmailProviderError
+from app.services.followup_policy_service import complete_task_for_sent_provider_draft
 from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_sync_service import GmailInboundSyncService
 
@@ -245,6 +246,8 @@ def send_gmail_provider_draft(
     provider_draft.updated_at = utc_now()
 
     order.status = "sent"
+    if order.first_email_sent_at is None:
+        order.first_email_sent_at = provider_draft.sent_at
     order.updated_at = utc_now()
     db.add(
         EmailThread(
@@ -272,6 +275,7 @@ def send_gmail_provider_draft(
             "order_id": order.id,
         },
     )
+    complete_task_for_sent_provider_draft(db, current_user, provider_draft)
     db.commit()
     db.refresh(provider_draft)
 

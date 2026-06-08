@@ -88,6 +88,15 @@ CLAIM_RESPONSE_REVIEW_TYPES = (
     "ignored",
     "manual_review",
 )
+FOLLOWUP_TASK_TYPES = ("followup_1", "followup_2", "escalation", "manual_review", "payment_verification")
+FOLLOWUP_TASK_STATUSES = (
+    "pending",
+    "draft_created",
+    "provider_draft_created",
+    "completed",
+    "skipped",
+    "cancelled",
+)
 
 
 def utc_now() -> datetime:
@@ -198,6 +207,7 @@ class ClaimOrder(TimestampMixin, Base):
     email_threads: Mapped[list["EmailThread"]] = relationship(back_populates="order")
     inbound_email_messages: Mapped[list["InboundEmailMessage"]] = relationship(back_populates="order")
     response_reviews: Mapped[list["ClaimResponseReview"]] = relationship(back_populates="order")
+    followup_tasks: Mapped[list["FollowUpTask"]] = relationship(back_populates="order")
 
 
 class EvidenceFile(Base):
@@ -488,6 +498,39 @@ class ClaimResponseReview(TimestampMixin, Base):
 
     order: Mapped[ClaimOrder] = relationship(back_populates="response_reviews")
     inbound_message: Mapped[InboundEmailMessage | None] = relationship(back_populates="response_reviews")
+
+
+class FollowUpTask(TimestampMixin, Base):
+    __tablename__ = "followup_tasks"
+    __table_args__ = (
+        UniqueConstraint("order_id", "task_type", name="uq_followup_tasks_order_task_type"),
+        CheckConstraint(check_in_constraint("task_type", FOLLOWUP_TASK_TYPES), name="ck_followup_tasks_type"),
+        CheckConstraint(check_in_constraint("status", FOLLOWUP_TASK_STATUSES), name="ck_followup_tasks_status"),
+        Index("ix_followup_tasks_order_id", "order_id"),
+        Index("ix_followup_tasks_status", "status"),
+        Index("ix_followup_tasks_task_type", "task_type"),
+        Index("ix_followup_tasks_due_at", "due_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("claim_orders.id"), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    generated_email_draft_id: Mapped[int | None] = mapped_column(ForeignKey("email_drafts.id"))
+    generated_provider_draft_id: Mapped[int | None] = mapped_column(ForeignKey("email_provider_drafts.id"))
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    completed_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    skipped_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    skipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    skip_reason: Mapped[str | None] = mapped_column(Text)
+
+    order: Mapped[ClaimOrder] = relationship(back_populates="followup_tasks")
+    generated_email_draft: Mapped[EmailDraft | None] = relationship(foreign_keys=[generated_email_draft_id])
+    generated_provider_draft: Mapped["EmailProviderDraft | None"] = relationship(
+        foreign_keys=[generated_provider_draft_id]
+    )
 
 
 class EmailProviderDraft(TimestampMixin, Base):

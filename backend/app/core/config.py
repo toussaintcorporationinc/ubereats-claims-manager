@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     gmail_inbound_sync_lookback_days: int = 30
     gmail_inbound_max_messages_per_sync: int = 100
     gmail_support_sender_filter: str = "uber.com"
+    followup_1_delay_days: int = 2
+    followup_2_delay_days: int = 5
+    escalation_delay_days: int = 10
+    manual_review_after_days: int = 15
+    max_followups_per_order: int = 3
+    followup_automatic_send_enabled: bool = False
     backend_cors_origins: str | None = None
     cors_origins: str = "http://localhost:3000"
     secret_key: str | None = None
