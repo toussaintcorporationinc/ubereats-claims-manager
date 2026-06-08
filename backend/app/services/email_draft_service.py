@@ -18,7 +18,15 @@ DRAFT_SUBJECTS = {
     "proof_reply": "Elements de preuve - commande Uber Eats - {uber_order_number}",
 }
 
-FOLLOWUP_1_ALLOWED_STATUSES = {"draft_email_created", "sent", "waiting_uber_response"}
+FOLLOWUP_ALLOWED_STATUSES = {
+    "draft_email_created",
+    "sent",
+    "waiting_uber_response",
+    "response_received",
+    "followup_1_sent",
+    "followup_2_sent",
+    "escalation_sent",
+}
 
 
 class EmailDraftNotFoundError(Exception):
@@ -113,7 +121,7 @@ def ensure_initial_claim_allowed(db: Session, order: ClaimOrder) -> None:
 
 def ensure_followup_1_allowed(db: Session, order: ClaimOrder) -> None:
     ensure_base_order_data(db, order)
-    if order.status not in FOLLOWUP_1_ALLOWED_STATUSES:
+    if order.status not in FOLLOWUP_ALLOWED_STATUSES:
         raise EmailDraftBusinessError(
             "Followup 1 draft requires an order already claimed or waiting for Uber",
             ["followup_1_status_not_allowed"],

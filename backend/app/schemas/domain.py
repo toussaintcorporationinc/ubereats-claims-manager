@@ -61,6 +61,15 @@ ClaimResponseReviewType = Literal[
     "ignored",
     "manual_review",
 ]
+FollowUpTaskType = Literal["followup_1", "followup_2", "escalation", "manual_review", "payment_verification"]
+FollowUpTaskStatus = Literal[
+    "pending",
+    "draft_created",
+    "provider_draft_created",
+    "completed",
+    "skipped",
+    "cancelled",
+]
 
 
 class UserRead(BaseModel):
@@ -312,6 +321,10 @@ class DashboardSummary(BaseModel):
     refused_count: int = 0
     manual_review_count: int = 0
     pending_response_count: int = 0
+    followups_due_count: int = 0
+    followups_pending_count: int = 0
+    escalations_due_count: int = 0
+    manual_review_due_count: int = 0
     orders_by_status: dict[str, int]
     orders_by_restaurant: list[DashboardRestaurantSummary]
 
@@ -542,6 +555,67 @@ class ResponseReviewsResponse(BaseModel):
     reviews: list[ClaimResponseReviewRead]
     limit: int
     offset: int
+
+
+class FollowUpTaskRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    order_id: int
+    task_type: FollowUpTaskType
+    status: FollowUpTaskStatus
+    due_at: datetime
+    generated_email_draft_id: int | None
+    generated_provider_draft_id: int | None
+    created_by_user_id: int | None
+    completed_by_user_id: int | None
+    skipped_by_user_id: int | None
+    completed_at: datetime | None
+    skipped_at: datetime | None
+    skip_reason: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class FollowUpTaskSummary(BaseModel):
+    id: int
+    order_id: int
+    restaurant_id: int
+    restaurant_name: str
+    uber_order_number: str
+    order_amount: Decimal | None
+    currency: str
+    claim_status: ClaimOrderStatus
+    retry_count: int
+    next_action_at: datetime | None
+    last_followup_sent_at: datetime | None
+    task_type: FollowUpTaskType
+    status: FollowUpTaskStatus
+    due_at: datetime
+    generated_email_draft_id: int | None
+    generated_provider_draft_id: int | None
+
+
+class FollowUpsResponse(BaseModel):
+    tasks: list[FollowUpTaskSummary]
+    limit: int
+    offset: int
+
+
+class FollowUpRecalculateRequest(BaseModel):
+    restaurant_id: int | None = None
+    dry_run: bool = False
+
+
+class FollowUpRecalculateResponse(BaseModel):
+    created_tasks: int
+    skipped_orders: int
+    manual_review_orders: int
+    errors: list[str]
+
+
+class FollowUpSkipRequest(BaseModel):
+    skip_reason: str = Field(min_length=1)
 
 
 class EmailProviderDraftRead(BaseModel):

@@ -38,6 +38,11 @@ response_received -> manual response review evidence_requested -> manual_review
 response_received -> manual response review information_requested -> manual_review
 response_received -> manual response review followup_needed -> manual_review
 response_received -> manual response review manual_review -> manual_review
+waiting_uber_response -> controlled followup draft -> waiting_uber_response
+waiting_uber_response -> manual Gmail send followup_1 -> followup_1_sent
+followup_1_sent -> manual Gmail send followup_2 -> followup_2_sent
+followup_2_sent -> manual Gmail send escalation -> escalation_sent
+escalation_sent -> controlled policy J+15 -> manual_review
 ```
 
 ## Regles de base
@@ -123,4 +128,26 @@ Le champ `result` de la commande reprend le `review_type`, sauf pour `ignored` q
 Les statuts `payment_confirmed` et `closed` protegent la commande contre une nouvelle decision non ignoree.
 
 Chaque traitement cree un `ClaimResponseReview`, marque le message inbound comme `reviewed` ou `ignored` si un message est fourni, et ajoute des `AuditLog`.
+
+## Relances controlees V1
+
+Les relances sont gerees par `FollowUpTask`. Elles sont limitees, datees et tracables.
+
+Delais configurables :
+
+- J+2 : `followup_1` ;
+- J+5 : `followup_2` ;
+- J+10 : `escalation` ;
+- J+15 : `manual_review`.
+
+Transitions importantes :
+
+- creer un brouillon interne de relance ne change pas le statut de la commande ;
+- creer un brouillon Gmail de relance ne change pas le statut de la commande ;
+- seul l'envoi Gmail manuel deja confirme peut faire passer la commande a `followup_1_sent`, `followup_2_sent` ou `escalation_sent` ;
+- une tache `manual_review` peut faire passer la commande a `manual_review` ;
+- les statuts finaux `accepted`, `payment_confirmed`, `refused` et `closed` ne sont jamais relances ;
+- une reponse inbound non traitee oriente vers `manual_review` avant toute nouvelle relance.
+
+`FOLLOWUP_AUTOMATIC_SEND_ENABLED` reste desactive par defaut et aucun chemin d'envoi automatique n'est implemente.
 

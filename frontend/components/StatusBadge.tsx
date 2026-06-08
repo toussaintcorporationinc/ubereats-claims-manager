@@ -13,6 +13,7 @@ const positiveStatuses = new Set([
   "linked",
   "success",
   "reviewed",
+  "completed",
 ]);
 const warningStatuses = new Set([
   "draft",
@@ -31,6 +32,10 @@ const warningStatuses = new Set([
   "evidence_requested",
   "information_requested",
   "followup_needed",
+  "pending",
+  "draft_created",
+  "provider_draft_created",
+  "payment_verification",
 ]);
 const closedStatuses = new Set(["refused", "closed", "inactive", "failed", "cancelled", "invalid", "skipped", "ignored"]);
 
