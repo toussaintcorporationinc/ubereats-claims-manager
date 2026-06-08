@@ -11,6 +11,7 @@ export type ClaimOrderStatus =
   | "draft_email_created"
   | "sent"
   | "waiting_uber_response"
+  | "response_received"
   | "followup_1_sent"
   | "followup_2_sent"
   | "escalation_sent"
@@ -33,6 +34,15 @@ export type EmailDraftType = "initial_claim" | "followup_1" | "followup_2" | "es
 export type ImportBatchStatus = "uploaded" | "parsed" | "confirmed" | "partially_imported" | "failed" | "cancelled";
 export type ImportRowStatus = "valid" | "invalid" | "duplicate" | "unauthorized" | "created" | "skipped";
 export type EmailProviderDraftStatus = "provider_draft_created" | "send_requested" | "sent" | "failed";
+export type GmailSyncStatus = "idle" | "running" | "success" | "failed";
+export type InboundEmailMatchStatus = "linked" | "unlinked" | "ignored";
+export type InboundEmailMatchReason =
+  | "thread_id_match"
+  | "order_number_match"
+  | "subject_match"
+  | "manual_link"
+  | "no_match"
+  | "ignored_sender";
 
 export type Restaurant = {
   id: number;
@@ -149,6 +159,75 @@ export type GmailDraftSendResponse = {
   provider_message_id: string | null;
   provider_thread_id: string | null;
   sent_at: string | null;
+};
+
+export type GmailInboundStatus = {
+  enabled: boolean;
+  connected: boolean;
+  last_sync_at: string | null;
+  last_success_at: string | null;
+  status: GmailSyncStatus | null;
+  last_error: string | null;
+};
+
+export type GmailInboundSyncPayload = {
+  lookback_days?: number;
+  max_messages?: number;
+};
+
+export type GmailInboundSyncResponse = {
+  status: GmailSyncStatus;
+  synced_messages: number;
+  linked_messages: number;
+  unlinked_messages: number;
+  ignored_messages: number;
+  errors: string[];
+};
+
+export type InboundEmailMessage = {
+  id: number;
+  email_account_id: number;
+  order_id: number | null;
+  provider: "gmail";
+  provider_message_id: string;
+  provider_thread_id: string | null;
+  gmail_history_id: string | null;
+  from_email: string | null;
+  to_email: string | null;
+  subject: string | null;
+  snippet: string | null;
+  body_text: string | null;
+  received_at: string | null;
+  match_status: InboundEmailMatchStatus;
+  match_reason: InboundEmailMatchReason;
+  created_at: string;
+  updated_at: string;
+};
+
+export type InboundMessagesResponse = {
+  messages: InboundEmailMessage[];
+  limit: number;
+  offset: number;
+};
+
+export type EmailThread = {
+  id: number;
+  order_id: number;
+  provider: string;
+  thread_id: string | null;
+  message_id: string | null;
+  direction: "inbound" | "outbound";
+  subject: string | null;
+  body: string | null;
+  ai_classification: string | null;
+  sent_at: string | null;
+  received_at: string | null;
+  created_at: string;
+};
+
+export type OrderEmailMessagesResponse = {
+  threads: EmailThread[];
+  inbound_messages: InboundEmailMessage[];
 };
 
 export type EmailProviderDraft = {
@@ -505,6 +584,31 @@ export const api = {
       `/v1/email/gmail/provider-drafts/${encodeURIComponent(providerDraftId)}/send`,
       payload,
     ),
+  getInboundStatus: () => request<GmailInboundStatus>("/v1/email/gmail/inbound/status"),
+  syncInboundGmail: (payload: GmailInboundSyncPayload = {}) =>
+    postJson<GmailInboundSyncResponse, GmailInboundSyncPayload>("/v1/email/gmail/inbound/sync", payload),
+  getInboundMessages: (filters: { match_status?: InboundEmailMatchStatus | ""; order_id?: number; limit?: number; offset?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (filters.match_status) {
+      params.set("match_status", filters.match_status);
+    }
+    if (filters.order_id) {
+      params.set("order_id", String(filters.order_id));
+    }
+    if (filters.limit) {
+      params.set("limit", String(filters.limit));
+    }
+    if (filters.offset) {
+      params.set("offset", String(filters.offset));
+    }
+    const query = params.toString();
+    return request<InboundMessagesResponse>(`/v1/email/inbound-messages${query ? `?${query}` : ""}`);
+  },
+  getOrderEmailMessages: (orderId: number) => request<OrderEmailMessagesResponse>(`/v1/orders/${orderId}/email-messages`),
+  linkInboundMessage: (messageId: number, orderId: number) =>
+    postJson<InboundEmailMessage, { order_id: number }>(`/v1/email/inbound-messages/${messageId}/link`, {
+      order_id: orderId,
+    }),
   previewOrderImport: (file: File) => {
     const formData = new FormData();
     formData.append("file", file);

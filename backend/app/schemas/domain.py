@@ -11,6 +11,7 @@ ClaimOrderStatus = Literal[
     "draft_email_created",
     "sent",
     "waiting_uber_response",
+    "response_received",
     "followup_1_sent",
     "followup_2_sent",
     "escalation_sent",
@@ -38,6 +39,16 @@ ImportBatchStatus = Literal["uploaded", "parsed", "confirmed", "partially_import
 ImportRowStatus = Literal["valid", "invalid", "duplicate", "unauthorized", "created", "skipped"]
 EmailProviderName = Literal["gmail"]
 EmailProviderDraftStatus = Literal["provider_draft_created", "send_requested", "sent", "failed"]
+GmailSyncStatus = Literal["idle", "running", "success", "failed"]
+InboundEmailMatchStatus = Literal["linked", "unlinked", "ignored"]
+InboundEmailMatchReason = Literal[
+    "thread_id_match",
+    "order_number_match",
+    "subject_match",
+    "manual_link",
+    "no_match",
+    "ignored_sender",
+]
 
 
 class UserRead(BaseModel):
@@ -397,6 +408,83 @@ class GmailDraftSendResponse(BaseModel):
     provider_message_id: str | None
     provider_thread_id: str | None
     sent_at: datetime | None
+
+
+class GmailInboundStatusResponse(BaseModel):
+    enabled: bool
+    connected: bool
+    last_sync_at: datetime | None
+    last_success_at: datetime | None
+    status: GmailSyncStatus | None
+    last_error: str | None
+
+
+class GmailInboundSyncRequest(BaseModel):
+    lookback_days: int | None = Field(default=None, ge=1, le=365)
+    max_messages: int | None = Field(default=None, ge=1, le=500)
+
+
+class GmailInboundSyncResponse(BaseModel):
+    status: GmailSyncStatus
+    synced_messages: int
+    linked_messages: int
+    unlinked_messages: int
+    ignored_messages: int
+    errors: list[str]
+
+
+class InboundEmailMessageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email_account_id: int
+    order_id: int | None
+    provider: EmailProviderName
+    provider_message_id: str
+    provider_thread_id: str | None
+    gmail_history_id: str | None
+    from_email: str | None
+    to_email: str | None
+    subject: str | None
+    snippet: str | None
+    body_text: str | None
+    received_at: datetime | None
+    match_status: InboundEmailMatchStatus
+    match_reason: InboundEmailMatchReason
+    created_at: datetime
+    updated_at: datetime
+
+
+class InboundMessagesResponse(BaseModel):
+    messages: list[InboundEmailMessageRead]
+    limit: int
+    offset: int
+
+
+class EmailThreadRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    order_id: int
+    provider: str
+    thread_id: str | None
+    message_id: str | None
+    direction: Literal["inbound", "outbound"]
+    subject: str | None
+    body: str | None
+    ai_classification: str | None
+    sent_at: datetime | None
+    received_at: datetime | None
+    created_at: datetime
+
+
+class OrderEmailMessagesResponse(BaseModel):
+    threads: list[EmailThreadRead]
+    inbound_messages: list[InboundEmailMessageRead]
+
+
+class InboundManualLinkRequest(BaseModel):
+    order_id: int
 
 
 class EmailProviderDraftRead(BaseModel):

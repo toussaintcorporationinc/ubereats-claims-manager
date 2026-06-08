@@ -483,6 +483,10 @@ Variables attendues :
 - `GMAIL_SCOPES`
 - `DEFAULT_UBER_EATS_SUPPORT_EMAIL`
 - `EMAIL_MAX_ATTACHMENT_TOTAL_MB`
+- `GMAIL_INBOUND_SYNC_ENABLED`
+- `GMAIL_INBOUND_SYNC_LOOKBACK_DAYS`
+- `GMAIL_INBOUND_MAX_MESSAGES_PER_SYNC`
+- `GMAIL_SUPPORT_SENDER_FILTER`
 
 ### Status Gmail
 
@@ -608,6 +612,115 @@ Regles :
 - les commandes finales `accepted`, `payment_confirmed`, `refused` et `closed` sont refusees ;
 - un envoi reussi met `EmailProviderDraft.status` a `sent`, renseigne `sent_at`, `sent_by_user_id`, `provider_message_id` si disponible, passe la commande a `sent`, cree un `EmailThread` outbound et ajoute un `AuditLog` ;
 - un echec provider controle met le brouillon a `failed`, renseigne `last_error` et ajoute un `AuditLog` `send_gmail_draft_failed`.
+
+## Gmail inbound replies
+
+La sync inbound lit les reponses Gmail apres envoi manuel d'une reclamation. Elle ne repond jamais automatiquement et ne modifie pas Gmail cote utilisateur.
+
+Variables attendues :
+
+- `EMAIL_PROVIDER_ENABLED=false` par defaut ;
+- `GMAIL_INBOUND_SYNC_ENABLED=false` par defaut ;
+- `GMAIL_INBOUND_SYNC_LOOKBACK_DAYS=30` ;
+- `GMAIL_INBOUND_MAX_MESSAGES_PER_SYNC=100` ;
+- `GMAIL_SUPPORT_SENDER_FILTER=uber.com` ;
+- `GMAIL_SCOPES` doit inclure `https://www.googleapis.com/auth/gmail.readonly` en plus des scopes de brouillon/envoi.
+
+Les comptes connectes avant l'ajout de `gmail.readonly` doivent se reconnecter pour autoriser la lecture.
+
+### Status inbound
+
+- `GET /v1/email/gmail/inbound/status`
+
+```json
+{
+  "enabled": true,
+  "connected": true,
+  "last_sync_at": "2026-06-08T10:00:00Z",
+  "last_success_at": "2026-06-08T10:00:00Z",
+  "status": "success",
+  "last_error": null
+}
+```
+
+### Synchroniser les reponses Gmail
+
+- `POST /v1/email/gmail/inbound/sync`
+
+Body optionnel :
+
+```json
+{
+  "lookback_days": 30,
+  "max_messages": 100
+}
+```
+
+Reponse :
+
+```json
+{
+  "status": "success",
+  "synced_messages": 10,
+  "linked_messages": 7,
+  "unlinked_messages": 2,
+  "ignored_messages": 1,
+  "errors": []
+}
+```
+
+Regles :
+
+- `owner` et `manager` peuvent lancer la sync ;
+- `staff` ne peut pas lancer la sync ;
+- `EMAIL_PROVIDER_ENABLED` et `GMAIL_INBOUND_SYNC_ENABLED` doivent etre actifs ;
+- un compte Gmail connecte est obligatoire ;
+- les messages sont dedupliques par `email_account_id` + `provider_message_id` ;
+- un message est rattache par `provider_thread_id` si un `EmailThread` ou `EmailProviderDraft` connu existe ;
+- sinon, le numero Uber est recherche dans le sujet puis le corps ;
+- si aucun rattachement fiable n'existe, le message reste `unlinked` ;
+- les messages sortants de notre propre compte Gmail sont marques `ignored`.
+
+Si un message inbound est rattache et que la commande est `sent` ou `waiting_uber_response`, le statut passe a `response_received`. Les statuts finaux `accepted`, `payment_confirmed`, `refused` et `closed` restent inchanges.
+
+### Liste messages inbound
+
+- `GET /v1/email/inbound-messages`
+
+Query params :
+
+- `match_status`
+- `order_id`
+- `limit`
+- `offset`
+
+`owner` voit tout. `manager` voit les messages lies a ses restaurants assignes et ses messages non rattaches. `staff` voit seulement les messages lies aux restaurants assignes.
+
+### Historique email commande
+
+- `GET /v1/orders/{order_id}/email-messages`
+
+Retourne les `EmailThread` inbound/outbound et les `InboundEmailMessage` rattaches a la commande.
+
+### Rattachement manuel
+
+- `POST /v1/email/inbound-messages/{message_id}/link`
+
+Body :
+
+```json
+{
+  "order_id": 123
+}
+```
+
+Regles :
+
+- `owner` peut rattacher un message a toute commande ;
+- `manager` peut rattacher uniquement vers ses restaurants assignes ;
+- `staff` ne peut pas rattacher ;
+- le message passe a `match_status=linked` et `match_reason=manual_link` ;
+- un `EmailThread` inbound et un `AuditLog` sont crees.
 
 ## Dashboard
 

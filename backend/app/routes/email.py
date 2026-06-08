@@ -1,24 +1,48 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
-from app.core.auth import ensure_can_access_order, get_current_user, require_owner_or_manager
+from app.core.auth import (
+    can_access_restaurant,
+    ensure_can_access_order,
+    get_accessible_restaurant_ids,
+    get_current_user,
+    require_owner_or_manager,
+)
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.models import EmailDraft, EmailProviderDraft, EmailThread, User
+from app.models import (
+    ClaimOrder,
+    EmailAccount,
+    EmailDraft,
+    EmailProviderDraft,
+    EmailThread,
+    GmailSyncState,
+    InboundEmailMessage,
+    User,
+)
 from app.models.domain import utc_now
 from app.schemas.domain import (
     EmailProviderDraftRead,
+    EmailThreadRead,
     GmailConnectionStatus,
     GmailDraftCreate,
     GmailDraftSendRequest,
     GmailDraftSendResponse,
+    GmailInboundStatusResponse,
+    GmailInboundSyncRequest,
+    GmailInboundSyncResponse,
     GmailOAuthStartResponse,
+    InboundEmailMessageRead,
+    InboundManualLinkRequest,
+    InboundMessagesResponse,
+    OrderEmailMessagesResponse,
 )
 from app.services.audit import add_audit_log
 from app.services.email_provider import EmailProvider, EmailProviderError
 from app.services.gmail_email_provider import GmailEmailProvider
+from app.services.gmail_inbound_sync_service import GmailInboundSyncService
 
 router = APIRouter(tags=["email"])
 FINAL_ORDER_STATUSES = {"accepted", "payment_confirmed", "refused", "closed"}
@@ -258,3 +282,203 @@ def send_gmail_provider_draft(
         provider_thread_id=provider_draft.provider_thread_id,
         sent_at=provider_draft.sent_at,
     )
+
+
+@router.get("/v1/email/gmail/inbound/status", response_model=GmailInboundStatusResponse)
+def gmail_inbound_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    provider: EmailProvider = Depends(get_gmail_provider),
+) -> GmailInboundStatusResponse:
+    settings = get_settings()
+    connection_status = provider.get_connection_status(db, current_user)
+    account = get_active_gmail_account(db, current_user)
+    sync_state = None
+    if account is not None:
+        sync_state = db.scalar(select(GmailSyncState).where(GmailSyncState.email_account_id == account.id))
+    return GmailInboundStatusResponse(
+        enabled=settings.email_provider_enabled and settings.gmail_inbound_sync_enabled,
+        connected=connection_status.connected,
+        last_sync_at=sync_state.last_sync_at if sync_state else None,
+        last_success_at=sync_state.last_success_at if sync_state else None,
+        status=sync_state.status if sync_state else None,
+        last_error=sync_state.last_error if sync_state else None,
+    )
+
+
+@router.post("/v1/email/gmail/inbound/sync", response_model=GmailInboundSyncResponse)
+def sync_gmail_inbound(
+    payload: GmailInboundSyncRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+    provider: EmailProvider = Depends(get_gmail_provider),
+) -> GmailInboundSyncResponse:
+    settings = get_settings()
+    if not settings.email_provider_enabled:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Email provider is disabled")
+    if not settings.gmail_inbound_sync_enabled:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gmail inbound sync is disabled")
+
+    connection_status = provider.get_connection_status(db, current_user)
+    if not connection_status.connected:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Gmail account is not connected")
+
+    request_payload = payload or GmailInboundSyncRequest()
+    lookback_days = request_payload.lookback_days or settings.gmail_inbound_sync_lookback_days
+    max_messages = request_payload.max_messages or settings.gmail_inbound_max_messages_per_sync
+    service = GmailInboundSyncService(provider)
+    try:
+        result = service.sync(db, current_user, lookback_days=lookback_days, max_messages=max_messages)
+    except EmailProviderError as exc:
+        db.commit()
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    db.commit()
+    return GmailInboundSyncResponse(**result.__dict__)
+
+
+@router.get("/v1/email/inbound-messages", response_model=InboundMessagesResponse)
+def list_inbound_messages(
+    match_status: str | None = Query(default=None),
+    order_id: int | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> InboundMessagesResponse:
+    query = visible_inbound_messages_query(db, current_user)
+    if match_status:
+        query = query.where(InboundEmailMessage.match_status == match_status)
+    if order_id is not None:
+        order = db.get(ClaimOrder, order_id)
+        if order is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+        ensure_can_access_order(db, current_user, order)
+        query = query.where(InboundEmailMessage.order_id == order_id)
+
+    messages = db.scalars(
+        query.order_by(InboundEmailMessage.received_at.desc().nullslast(), InboundEmailMessage.id.desc())
+        .limit(limit)
+        .offset(offset)
+    ).all()
+    return InboundMessagesResponse(
+        messages=[InboundEmailMessageRead.model_validate(message) for message in messages],
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/v1/orders/{order_id}/email-messages", response_model=OrderEmailMessagesResponse)
+def get_order_email_messages(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> OrderEmailMessagesResponse:
+    order = db.get(ClaimOrder, order_id)
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    ensure_can_access_order(db, current_user, order)
+
+    threads = db.scalars(
+        select(EmailThread).where(EmailThread.order_id == order_id).order_by(EmailThread.created_at, EmailThread.id)
+    ).all()
+    inbound_messages = db.scalars(
+        select(InboundEmailMessage)
+        .where(InboundEmailMessage.order_id == order_id)
+        .order_by(InboundEmailMessage.received_at, InboundEmailMessage.id)
+    ).all()
+    return OrderEmailMessagesResponse(
+        threads=[EmailThreadRead.model_validate(thread) for thread in threads],
+        inbound_messages=[InboundEmailMessageRead.model_validate(message) for message in inbound_messages],
+    )
+
+
+@router.post("/v1/email/inbound-messages/{message_id}/link", response_model=InboundEmailMessageRead)
+def link_inbound_message(
+    message_id: int,
+    payload: InboundManualLinkRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+    provider: EmailProvider = Depends(get_gmail_provider),
+) -> InboundEmailMessageRead:
+    inbound_message = db.get(InboundEmailMessage, message_id)
+    if inbound_message is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inbound message not found")
+    order = db.get(ClaimOrder, payload.order_id)
+    if order is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found")
+    ensure_can_access_order(db, current_user, order)
+    ensure_can_manage_inbound_message(db, current_user, inbound_message)
+
+    service = GmailInboundSyncService(provider)
+    service.record_linked_message(db, current_user, inbound_message, order, match_reason="manual_link")
+    inbound_message.updated_at = utc_now()
+    db.commit()
+    db.refresh(inbound_message)
+    return InboundEmailMessageRead.model_validate(inbound_message)
+
+
+def get_active_gmail_account(db: Session, user: User) -> EmailAccount | None:
+    return db.scalar(
+        select(EmailAccount)
+        .where(
+            EmailAccount.user_id == user.id,
+            EmailAccount.provider == "gmail",
+            EmailAccount.disconnected_at.is_(None),
+        )
+        .order_by(EmailAccount.id.desc())
+    )
+
+
+def visible_inbound_messages_query(db: Session, user: User):
+    query = select(InboundEmailMessage)
+    if user.role == "owner":
+        return query
+
+    accessible_restaurant_ids = get_accessible_restaurant_ids(db, user)
+    if not accessible_restaurant_ids:
+        if user.role == "manager":
+            own_account_ids = select(EmailAccount.id).where(EmailAccount.user_id == user.id)
+            return query.where(
+                and_(
+                    InboundEmailMessage.order_id.is_(None),
+                    InboundEmailMessage.email_account_id.in_(own_account_ids),
+                )
+            )
+        return query.where(InboundEmailMessage.id == -1)
+
+    accessible_order_ids = select(ClaimOrder.id).where(ClaimOrder.restaurant_id.in_(accessible_restaurant_ids))
+    if user.role == "manager":
+        own_account_ids = select(EmailAccount.id).where(EmailAccount.user_id == user.id)
+        return query.where(
+            or_(
+                InboundEmailMessage.order_id.in_(accessible_order_ids),
+                and_(
+                    InboundEmailMessage.order_id.is_(None),
+                    InboundEmailMessage.email_account_id.in_(own_account_ids),
+                ),
+            )
+        )
+
+    return query.where(InboundEmailMessage.order_id.in_(accessible_order_ids))
+
+
+def ensure_can_manage_inbound_message(db: Session, user: User, inbound_message: InboundEmailMessage) -> None:
+    if user.role == "owner":
+        return
+    if inbound_message.order_id is not None:
+        existing_order = db.get(ClaimOrder, inbound_message.order_id)
+        if existing_order is not None and can_access_restaurant(db, user, existing_order.restaurant_id):
+            return
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inbound message access denied")
+
+    owns_account = (
+        db.scalar(
+            select(EmailAccount.id).where(
+                EmailAccount.id == inbound_message.email_account_id,
+                EmailAccount.user_id == user.id,
+            )
+        )
+        is not None
+    )
+    if not owns_account:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inbound message access denied")

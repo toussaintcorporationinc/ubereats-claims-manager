@@ -29,6 +29,7 @@ La V1 pose la base applicative et les premiers objets metier :
 - consultation de brouillons internes d'emails ;
 - creation de brouillons Gmail avec pieces jointes, sans envoi automatique ;
 - envoi manuel approuve de brouillons Gmail ;
+- lecture et rattachement des reponses Gmail entrantes ;
 - journalisation des creations importantes ;
 - authentification et roles utilisateurs ;
 - dashboard de synthese.
@@ -61,6 +62,10 @@ La V1 pose la base applicative et les premiers objets metier :
 16. Le brouillon Gmail apparait dans le compte Gmail de l'utilisateur, sans envoi automatique.
 17. Il coche la confirmation d'envoi manuel dans l'application.
 18. Il clique sur l'envoi Gmail ; la commande passe a `sent`, un `EmailThread` outbound et un `AuditLog` sont crees.
+19. Plus tard, un owner ou manager ouvre `/inbox` et lance la synchronisation des reponses Gmail.
+20. Les reponses Uber sont rattachees automatiquement par thread Gmail ou numero de commande Uber si le match est fiable.
+21. Les messages non rattaches restent visibles comme `unlinked` et peuvent etre rattaches manuellement par un utilisateur autorise.
+22. L'historique email apparait dans le detail de la commande, sans reponse automatique.
 
 ## Modeles metier V1
 
@@ -70,7 +75,9 @@ La V1 pose la base applicative et les premiers objets metier :
 - `EmailDraft` : brouillon interne, sans envoi reel ;
 - `EmailAccount` : connexion OAuth Gmail utilisateur, tokens proteges et jamais exposes ;
 - `EmailProviderDraft` : historique des brouillons Gmail crees et envoyes manuellement depuis un brouillon interne ;
-- `EmailThread` : futur historique des conversations email ;
+- `GmailSyncState` : etat de la derniere synchronisation inbound Gmail par compte email ;
+- `InboundEmailMessage` : reponse Gmail recue, rattachement automatique ou manuel et extrait stocke ;
+- `EmailThread` : historique des conversations email outbound et inbound ;
 - `AuditLog` : trace des actions importantes.
 - `User` : utilisateur interne avec role ;
 - `UserRestaurantAccess` : association utilisateur restaurant.
@@ -81,6 +88,8 @@ La V1 pose la base applicative et les premiers objets metier :
 
 - integration OpenAI API ;
 - envoi automatique Gmail ;
+- reponse automatique aux emails entrants ;
+- classification IA des reponses Uber ;
 - relances automatiques ;
 - automatisation metier des decisions.
 
