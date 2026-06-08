@@ -17,10 +17,17 @@ class Settings(BaseSettings):
     gmail_oauth_client_id: str | None = None
     gmail_oauth_client_secret: str | None = None
     gmail_oauth_redirect_uri: str = "http://localhost:8000/v1/email/gmail/oauth/callback"
-    gmail_scopes: str = "https://www.googleapis.com/auth/gmail.compose"
+    gmail_scopes: str = (
+        "https://www.googleapis.com/auth/gmail.compose "
+        "https://www.googleapis.com/auth/gmail.readonly"
+    )
     default_uber_eats_support_email: str = "merchants@uber.com"
     email_provider_enabled: bool = False
     email_max_attachment_total_mb: int = 20
+    gmail_inbound_sync_enabled: bool = False
+    gmail_inbound_sync_lookback_days: int = 30
+    gmail_inbound_max_messages_per_sync: int = 100
+    gmail_support_sender_filter: str = "uber.com"
     backend_cors_origins: str | None = None
     cors_origins: str = "http://localhost:3000"
     secret_key: str | None = None

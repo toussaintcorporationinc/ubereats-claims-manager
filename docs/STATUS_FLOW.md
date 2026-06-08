@@ -10,6 +10,7 @@ Ce document decrit les statuts V1 des commandes a reclamer.
 - `draft_email_created` : brouillon interne cree ;
 - `sent` : statut reserve a un futur envoi valide ;
 - `waiting_uber_response` : attente d'une reponse Uber Eats ;
+- `response_received` : reponse Uber Eats recue et rattachee au dossier ;
 - `followup_1_sent` : premiere relance tracee dans le futur ;
 - `followup_2_sent` : deuxieme relance tracee dans le futur ;
 - `escalation_sent` : escalade tracee dans le futur ;
@@ -28,6 +29,8 @@ draft -> validate -> ready_to_send
 missing_evidence -> validate -> ready_to_send
 ready_to_send -> create initial_claim draft -> draft_email_created
 draft_email_created -> sent -> waiting_uber_response
+sent -> inbound Gmail linked -> response_received
+waiting_uber_response -> inbound Gmail linked -> response_received
 waiting_uber_response -> accepted -> payment_to_verify -> payment_confirmed -> closed
 waiting_uber_response -> refused -> manual_review -> closed
 ```
@@ -39,6 +42,7 @@ waiting_uber_response -> refused -> manual_review -> closed
 - la validation ne genere pas de brouillon d'email ;
 - la validation d'un statut final est refusee ;
 - les relances automatiques ne sont pas implementees ;
+- la synchronisation inbound Gmail ne repond jamais automatiquement ;
 - les actions importantes doivent etre journalisees.
 
 ## Validation automatique V1
@@ -72,4 +76,22 @@ Les statuts finaux suivants refusent la generation de brouillon et restent incha
 - `payment_confirmed`
 - `refused`
 - `closed`
+
+## Reponses Gmail inbound V1
+
+La synchronisation Gmail entrante rattache les reponses recues apres envoi manuel.
+
+Transitions actives :
+
+- `sent` + message inbound rattache -> `response_received` ;
+- `waiting_uber_response` + message inbound rattache -> `response_received`.
+
+Les statuts finaux suivants ne sont jamais modifies par la sync inbound :
+
+- `accepted`
+- `payment_confirmed`
+- `refused`
+- `closed`
+
+Les messages sans rattachement fiable restent `unlinked` et ne changent pas le statut de la commande.
 

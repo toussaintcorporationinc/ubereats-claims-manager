@@ -55,9 +55,9 @@ Regles appliquees :
 - la taille maximale est controlee par `IMPORT_MAX_FILE_SIZE_MB` ;
 - les fichiers acceptes sont limites a `.csv` et `.xlsx`.
 
-## Gmail OAuth, brouillons provider et envoi manuel
+## Gmail OAuth, brouillons provider, envoi manuel et lecture inbound
 
-La V1 Gmail cree des brouillons Gmail avec le scope `gmail.compose` et permet leur envoi manuel approuve. Aucun endpoint n'envoie automatiquement un email.
+La V1 Gmail cree des brouillons Gmail, permet leur envoi manuel approuve et lit les reponses entrantes. Aucun endpoint n'envoie automatiquement un email et aucune reponse automatique n'est generee.
 
 Variables attendues :
 
@@ -65,9 +65,13 @@ Variables attendues :
 - `GMAIL_OAUTH_CLIENT_ID` ;
 - `GMAIL_OAUTH_CLIENT_SECRET` ;
 - `GMAIL_OAUTH_REDIRECT_URI` ;
-- `GMAIL_SCOPES=https://www.googleapis.com/auth/gmail.compose` ;
+- `GMAIL_SCOPES=https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/gmail.readonly` ;
 - `DEFAULT_UBER_EATS_SUPPORT_EMAIL` ;
-- `EMAIL_MAX_ATTACHMENT_TOTAL_MB`.
+- `EMAIL_MAX_ATTACHMENT_TOTAL_MB` ;
+- `GMAIL_INBOUND_SYNC_ENABLED=false` par defaut ;
+- `GMAIL_INBOUND_SYNC_LOOKBACK_DAYS` ;
+- `GMAIL_INBOUND_MAX_MESSAGES_PER_SYNC` ;
+- `GMAIL_SUPPORT_SENDER_FILTER`.
 
 Regles appliquees :
 
@@ -90,6 +94,14 @@ Regles appliquees :
 - les statuts finaux de commande bloquent l'envoi ;
 - un `EmailThread` outbound est cree apres envoi ;
 - `AuditLog` trace `send_gmail_draft` et `send_gmail_draft_failed` sans tokens ni secrets.
+- la lecture inbound requiert `gmail.readonly` et peut exiger une reconnexion OAuth des comptes deja connectes ;
+- les reponses Gmail sont stockees dans `InboundEmailMessage` sans tokens ni secrets ;
+- les messages sont dedupliques par compte Gmail et id message provider ;
+- les messages non rattaches restent `unlinked` tant qu'aucun match fiable n'existe ;
+- `owner` et `manager` peuvent lancer la sync inbound, `staff` ne peut pas ;
+- `staff` peut consulter uniquement les messages rattaches aux restaurants assignes ;
+- un `EmailThread` inbound est cree pour chaque message rattache ;
+- aucun endpoint inbound ne supprime, modifie ou repond a un email Gmail.
 
 Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit une protection isolee et remplacable ; une version production plus avancee pourra brancher un KMS ou un gestionnaire de secrets sans changer les routes.
 
@@ -150,4 +162,6 @@ Un `AuditLog` est cree pour :
 - pas de stockage cloud ;
 - pas d'envoi automatique ;
 - pas de retry automatique d'envoi Gmail ;
+- pas de reponse automatique aux messages Gmail entrants ;
+- pas de classification IA des reponses Uber ;
 - pas d'integration OpenAI.

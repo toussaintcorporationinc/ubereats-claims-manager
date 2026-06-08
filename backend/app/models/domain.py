@@ -28,6 +28,7 @@ CLAIM_ORDER_STATUSES = (
     "draft_email_created",
     "sent",
     "waiting_uber_response",
+    "response_received",
     "followup_1_sent",
     "followup_2_sent",
     "escalation_sent",
@@ -65,6 +66,16 @@ IMPORT_ROW_STATUSES = ("valid", "invalid", "duplicate", "unauthorized", "created
 EMAIL_ACCOUNT_PROVIDERS = ("gmail",)
 EMAIL_PROVIDER_DRAFT_PROVIDERS = ("gmail",)
 EMAIL_PROVIDER_DRAFT_STATUSES = ("provider_draft_created", "send_requested", "sent", "failed")
+GMAIL_SYNC_STATUSES = ("idle", "running", "success", "failed")
+INBOUND_EMAIL_MATCH_STATUSES = ("linked", "unlinked", "ignored")
+INBOUND_EMAIL_MATCH_REASONS = (
+    "thread_id_match",
+    "order_number_match",
+    "subject_match",
+    "manual_link",
+    "no_match",
+    "ignored_sender",
+)
 
 
 def utc_now() -> datetime:
@@ -173,6 +184,7 @@ class ClaimOrder(TimestampMixin, Base):
     evidence_files: Mapped[list["EvidenceFile"]] = relationship(back_populates="order")
     email_drafts: Mapped[list["EmailDraft"]] = relationship(back_populates="order")
     email_threads: Mapped[list["EmailThread"]] = relationship(back_populates="order")
+    inbound_email_messages: Mapped[list["InboundEmailMessage"]] = relationship(back_populates="order")
 
 
 class EvidenceFile(Base):
@@ -357,6 +369,74 @@ class EmailAccount(TimestampMixin, Base):
     scopes: Mapped[str | None] = mapped_column(Text)
     connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     disconnected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    sync_state: Mapped["GmailSyncState | None"] = relationship(
+        back_populates="email_account",
+        cascade="all, delete-orphan",
+    )
+    inbound_messages: Mapped[list["InboundEmailMessage"]] = relationship(back_populates="email_account")
+
+
+class GmailSyncState(TimestampMixin, Base):
+    __tablename__ = "gmail_sync_states"
+    __table_args__ = (
+        CheckConstraint(check_in_constraint("status", GMAIL_SYNC_STATUSES), name="ck_gmail_sync_states_status"),
+        Index("ix_gmail_sync_states_email_account_id", "email_account_id", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email_account_id: Mapped[int] = mapped_column(ForeignKey("email_accounts.id"), nullable=False)
+    last_history_id: Mapped[str | None] = mapped_column(String(255))
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="idle")
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+    email_account: Mapped[EmailAccount] = relationship(back_populates="sync_state")
+
+
+class InboundEmailMessage(TimestampMixin, Base):
+    __tablename__ = "inbound_email_messages"
+    __table_args__ = (
+        UniqueConstraint(
+            "email_account_id",
+            "provider_message_id",
+            name="uq_inbound_email_messages_account_message",
+        ),
+        CheckConstraint(check_in_constraint("provider", EMAIL_ACCOUNT_PROVIDERS), name="ck_inbound_email_provider"),
+        CheckConstraint(
+            check_in_constraint("match_status", INBOUND_EMAIL_MATCH_STATUSES),
+            name="ck_inbound_email_match_status",
+        ),
+        CheckConstraint(
+            check_in_constraint("match_reason", INBOUND_EMAIL_MATCH_REASONS),
+            name="ck_inbound_email_match_reason",
+        ),
+        Index("ix_inbound_email_messages_email_account_id", "email_account_id"),
+        Index("ix_inbound_email_messages_order_id", "order_id"),
+        Index("ix_inbound_email_messages_match_status", "match_status"),
+        Index("ix_inbound_email_messages_provider_thread_id", "provider_thread_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email_account_id: Mapped[int] = mapped_column(ForeignKey("email_accounts.id"), nullable=False)
+    order_id: Mapped[int | None] = mapped_column(ForeignKey("claim_orders.id"))
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, default="gmail")
+    provider_message_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_thread_id: Mapped[str | None] = mapped_column(String(255))
+    gmail_history_id: Mapped[str | None] = mapped_column(String(255))
+    from_email: Mapped[str | None] = mapped_column(String(255))
+    to_email: Mapped[str | None] = mapped_column(String(255))
+    subject: Mapped[str | None] = mapped_column(String(255))
+    snippet: Mapped[str | None] = mapped_column(Text)
+    body_text: Mapped[str | None] = mapped_column(Text)
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    raw_headers_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    match_status: Mapped[str] = mapped_column(String(50), nullable=False, default="unlinked")
+    match_reason: Mapped[str] = mapped_column(String(50), nullable=False, default="no_match")
+
+    email_account: Mapped[EmailAccount] = relationship(back_populates="inbound_messages")
+    order: Mapped[ClaimOrder | None] = relationship(back_populates="inbound_email_messages")
 
 
 class EmailProviderDraft(TimestampMixin, Base):

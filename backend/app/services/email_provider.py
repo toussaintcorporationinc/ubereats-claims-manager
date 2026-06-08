@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from sqlalchemy.orm import Session
 
@@ -29,6 +29,20 @@ class EmailSendResult:
     sent_at: datetime
 
 
+@dataclass(frozen=True)
+class InboundEmailPayload:
+    provider_message_id: str
+    provider_thread_id: str | None
+    gmail_history_id: str | None
+    from_email: str | None
+    to_email: str | None
+    subject: str | None
+    snippet: str | None
+    body_text: str | None
+    received_at: datetime | None
+    raw_headers: dict[str, Any]
+
+
 class EmailProvider(Protocol):
     def get_connection_status(self, db: Session, user: User) -> EmailConnectionStatus:
         ...
@@ -52,4 +66,22 @@ class EmailProvider(Protocol):
         user: User,
         provider_draft: EmailProviderDraft,
     ) -> EmailSendResult:
+        ...
+
+    def list_messages(self, db: Session, user: User, query: str, max_results: int) -> list[str]:
+        ...
+
+    def get_message(self, db: Session, user: User, message_id: str) -> InboundEmailPayload:
+        ...
+
+    def get_thread(self, db: Session, user: User, thread_id: str) -> dict[str, Any]:
+        ...
+
+    def sync_inbound_replies(
+        self,
+        db: Session,
+        user: User,
+        query: str,
+        max_results: int,
+    ) -> list[InboundEmailPayload]:
         ...

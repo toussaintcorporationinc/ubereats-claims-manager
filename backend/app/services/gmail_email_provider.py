@@ -3,9 +3,11 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
+from email.utils import parsedate_to_datetime, parseaddr
 from pathlib import Path
+from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 from urllib.request import Request, urlopen
 
 from sqlalchemy import select
@@ -15,7 +17,7 @@ from app.core.config import get_settings
 from app.core.security import create_access_token, decode_access_token
 from app.models import EmailAccount, EmailDraft, EmailProviderDraft, User
 from app.models.domain import utc_now
-from app.services.email_provider import EmailConnectionStatus, EmailProviderError, EmailSendResult
+from app.services.email_provider import EmailConnectionStatus, EmailProviderError, EmailSendResult, InboundEmailPayload
 from app.services.file_storage_service import FileStorageError, resolve_evidence_path
 from app.services.token_cipher_service import TokenCipherService
 
@@ -24,6 +26,8 @@ GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile"
 GMAIL_DRAFTS_URL = "https://gmail.googleapis.com/gmail/v1/users/me/drafts"
 GMAIL_DRAFTS_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send"
+GMAIL_MESSAGES_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
+GMAIL_THREADS_URL = "https://gmail.googleapis.com/gmail/v1/users/me/threads"
 
 
 @dataclass(frozen=True)
@@ -179,6 +183,47 @@ class GmailEmailProvider:
             sent_at=utc_now(),
         )
 
+    def list_messages(self, db: Session, user: User, query: str, max_results: int) -> list[str]:
+        self.ensure_enabled_and_configured(require_secret=True)
+        account = self.get_active_account(db, user.id)
+        if account is None:
+            raise EmailProviderError("Gmail account is not connected", 409)
+        access_token = self.ensure_access_token(db, account)
+        params = urlencode({"q": query, "maxResults": max_results})
+        payload = self.get_json(f"{GMAIL_MESSAGES_URL}?{params}", {"Authorization": f"Bearer {access_token}"})
+        return [str(message["id"]) for message in payload.get("messages", []) if message.get("id")]
+
+    def get_message(self, db: Session, user: User, message_id: str) -> InboundEmailPayload:
+        self.ensure_enabled_and_configured(require_secret=True)
+        account = self.get_active_account(db, user.id)
+        if account is None:
+            raise EmailProviderError("Gmail account is not connected", 409)
+        access_token = self.ensure_access_token(db, account)
+        url = f"{GMAIL_MESSAGES_URL}/{quote(message_id, safe='')}?format=full"
+        payload = self.get_json(url, {"Authorization": f"Bearer {access_token}"})
+        return self.parse_gmail_message(payload)
+
+    def get_thread(self, db: Session, user: User, thread_id: str) -> dict[str, Any]:
+        self.ensure_enabled_and_configured(require_secret=True)
+        account = self.get_active_account(db, user.id)
+        if account is None:
+            raise EmailProviderError("Gmail account is not connected", 409)
+        access_token = self.ensure_access_token(db, account)
+        return self.get_json(
+            f"{GMAIL_THREADS_URL}/{quote(thread_id, safe='')}?format=metadata",
+            {"Authorization": f"Bearer {access_token}"},
+        )
+
+    def sync_inbound_replies(
+        self,
+        db: Session,
+        user: User,
+        query: str,
+        max_results: int,
+    ) -> list[InboundEmailPayload]:
+        message_ids = self.list_messages(db, user, query, max_results)
+        return [self.get_message(db, user, message_id) for message_id in message_ids]
+
     def build_evidence_attachments(self, email_draft: EmailDraft, include_evidence: bool) -> list[EvidenceAttachment]:
         if not include_evidence:
             return []
@@ -322,6 +367,10 @@ class GmailEmailProvider:
         )
         return self.read_json_response(request)
 
+    def get_json(self, url: str, headers: dict[str, str] | None = None) -> dict:
+        request = Request(url, headers=headers or {}, method="GET")
+        return self.read_json_response(request)
+
     def read_json_response(self, request: Request) -> dict:
         try:
             with urlopen(request, timeout=20) as response:
@@ -360,6 +409,25 @@ class GmailEmailProvider:
         if require_secret and not settings.gmail_oauth_client_secret:
             raise EmailProviderError("Gmail OAuth client secret is not configured", 503)
 
+    def parse_gmail_message(self, payload: dict[str, Any]) -> InboundEmailPayload:
+        headers = extract_headers(payload.get("payload", {}))
+        body_text = extract_text_plain(payload.get("payload", {}))
+        received_at = parse_received_at(payload, headers)
+        from_email = parseaddr(headers.get("from", ""))[1] or headers.get("from")
+        to_email = parseaddr(headers.get("to", ""))[1] or headers.get("to")
+        return InboundEmailPayload(
+            provider_message_id=str(payload.get("id") or ""),
+            provider_thread_id=payload.get("threadId"),
+            gmail_history_id=str(payload.get("historyId")) if payload.get("historyId") is not None else None,
+            from_email=from_email,
+            to_email=to_email,
+            subject=headers.get("subject"),
+            snippet=payload.get("snippet"),
+            body_text=body_text[:20000] if body_text else None,
+            received_at=received_at,
+            raw_headers=headers,
+        )
+
 
 def split_mime_type(mime_type: str) -> tuple[str, str]:
     if "/" not in mime_type:
@@ -374,3 +442,53 @@ def normalize_datetime(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value
+
+
+def extract_headers(payload: dict[str, Any]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for header in payload.get("headers", []) or []:
+        name = str(header.get("name") or "").lower()
+        value = str(header.get("value") or "")
+        if name:
+            headers[name] = value
+    return headers
+
+
+def extract_text_plain(payload: dict[str, Any]) -> str:
+    body = payload.get("body") or {}
+    data = body.get("data")
+    mime_type = payload.get("mimeType")
+    if data and (mime_type == "text/plain" or not payload.get("parts")):
+        return decode_gmail_body(data)
+
+    chunks: list[str] = []
+    for part in payload.get("parts", []) or []:
+        text = extract_text_plain(part)
+        if text:
+            chunks.append(text)
+    return "\n".join(chunks).strip()
+
+
+def decode_gmail_body(value: str) -> str:
+    padding = "=" * (-len(value) % 4)
+    try:
+        return base64.urlsafe_b64decode(f"{value}{padding}").decode("utf-8", errors="replace")
+    except (ValueError, TypeError):
+        return ""
+
+
+def parse_received_at(payload: dict[str, Any], headers: dict[str, str]) -> datetime | None:
+    internal_date = payload.get("internalDate")
+    if internal_date is not None:
+        try:
+            return datetime.fromtimestamp(int(internal_date) / 1000, tz=timezone.utc)
+        except (TypeError, ValueError):
+            pass
+    date_header = headers.get("date")
+    if not date_header:
+        return None
+    try:
+        parsed = parsedate_to_datetime(date_header)
+    except (TypeError, ValueError):
+        return None
+    return normalize_datetime(parsed)

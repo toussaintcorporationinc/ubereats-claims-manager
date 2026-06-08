@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import ApiError from "@/components/ApiError";
 import LoadingState from "@/components/LoadingState";
 import StatusBadge from "@/components/StatusBadge";
-import { api, type GmailConnectionStatus } from "@/lib/api";
+import { api, formatDate, type GmailConnectionStatus, type GmailInboundStatus } from "@/lib/api";
 
 export default function EmailSettingsPage() {
   const [status, setStatus] = useState<GmailConnectionStatus | null>(null);
+  const [inboundStatus, setInboundStatus] = useState<GmailInboundStatus | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
@@ -17,7 +18,9 @@ export default function EmailSettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      setStatus(await api.getGmailStatus());
+      const [gmailStatus, gmailInboundStatus] = await Promise.all([api.getGmailStatus(), api.getInboundStatus()]);
+      setStatus(gmailStatus);
+      setInboundStatus(gmailInboundStatus);
     } catch (apiError) {
       setError(apiError);
     } finally {
@@ -98,6 +101,23 @@ export default function EmailSettingsPage() {
             </button>
           </div>
         )}
+      </section>
+
+      <section className="tool-panel">
+        <div className="section-heading">
+          <h2>Lecture reponses Gmail</h2>
+          <StatusBadge status={!inboundStatus?.enabled ? "disabled" : inboundStatus.status ?? "idle"} />
+        </div>
+        <div className="detail-grid">
+          <DetailItem label="Sync inbound" value={!inboundStatus?.enabled ? "desactivee" : "activee"} />
+          <DetailItem label="Derniere sync" value={formatDate(inboundStatus?.last_sync_at ?? null)} />
+          <DetailItem label="Dernier succes" value={formatDate(inboundStatus?.last_success_at ?? null)} />
+        </div>
+        <p className="muted">
+          La lecture Gmail requiert le scope gmail.readonly. Les comptes connectes avant ce changement peuvent devoir
+          se reconnecter pour autoriser la lecture des reponses.
+        </p>
+        {inboundStatus?.last_error ? <p className="muted">Derniere erreur: {inboundStatus.last_error}</p> : null}
       </section>
     </section>
   );

@@ -10,6 +10,7 @@ Ce document cadre les regles de brouillons email internes, de brouillons Gmail e
 - separer la generation de contenu, la validation et l'envoi.
 - creer un brouillon Gmail uniquement apres action explicite d'un utilisateur autorise.
 - envoyer un brouillon Gmail uniquement apres confirmation manuelle explicite.
+- lire les reponses Gmail uniquement apres sync manuelle explicite, sans reponse automatique.
 
 ## Brouillons disponibles V1
 
@@ -28,7 +29,7 @@ Un brouillon interne peut etre transforme en vrai brouillon Gmail via OAuth si `
 Regles :
 
 - aucun email n'est envoye automatiquement ;
-- le scope Gmail attendu est `https://www.googleapis.com/auth/gmail.compose` ;
+- les scopes Gmail attendus incluent `https://www.googleapis.com/auth/gmail.compose` et `https://www.googleapis.com/auth/gmail.readonly` ;
 - `owner` peut creer un brouillon Gmail pour tous les restaurants ;
 - `manager` peut creer un brouillon Gmail pour ses restaurants assignes ;
 - `staff` ne peut pas creer de brouillon Gmail ;
@@ -37,6 +38,25 @@ Regles :
 - seules les preuves existantes et accessibles via le service de stockage sont jointes ;
 - la taille totale des pieces jointes est limitee par `EMAIL_MAX_ATTACHMENT_TOTAL_MB` ;
 - chaque creation cree un `EmailProviderDraft` et un `AuditLog`.
+
+## Reponses Gmail inbound V1
+
+Les reponses Gmail peuvent etre synchronisees depuis l'application uniquement si `EMAIL_PROVIDER_ENABLED=true` et `GMAIL_INBOUND_SYNC_ENABLED=true`.
+
+Regles :
+
+- aucune reponse automatique n'est envoyee ;
+- aucune relance automatique n'est creee ;
+- aucune classification IA n'est executee ;
+- la sync est lancee manuellement par `owner` ou `manager` ;
+- `staff` ne peut pas lancer la sync ;
+- les messages sont dedupliques par compte Gmail et id message provider ;
+- les messages sont rattaches par thread Gmail connu, puis par numero de commande Uber dans le sujet ou le corps ;
+- en cas de doute, le message reste `unlinked` ;
+- les messages envoyes par notre propre compte Gmail sont marques `ignored` ;
+- un message rattache cree un `EmailThread` inbound ;
+- un rattachement manuel est possible pour `owner` et pour `manager` sur ses restaurants assignes ;
+- aucun token Gmail, secret ou mot de passe n'est stocke dans l'historique ou l'audit.
 
 ## Envoi Gmail manuel V1
 
@@ -81,6 +101,8 @@ Regles :
 - envoi automatique ;
 - relances automatiques ;
 - generation OpenAI de contenu d'email.
+- classification IA de reponses Uber ;
+- reponse automatique aux emails entrants.
 
 ## Donnees minimales futures
 
