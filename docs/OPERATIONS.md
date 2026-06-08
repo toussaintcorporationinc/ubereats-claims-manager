@@ -50,6 +50,12 @@ Script:
 API_URL=https://api.example.com FRONTEND_URL=https://app.example.com ./scripts/healthcheck.sh
 ```
 
+Full smoke test:
+
+```bash
+API_URL=https://api.example.com FRONTEND_URL=https://app.example.com ./scripts/smoke_test.sh
+```
+
 ## Database
 
 Check PostgreSQL readiness:

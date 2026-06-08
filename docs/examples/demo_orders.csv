@@ -1,0 +1,4 @@
+restaurant_name,uber_order_number,customer_name,order_date,order_time,cancellation_time,order_amount,currency,accepted_by_restaurant,prepared_before_cancellation,loss_type,notes,internal_reference
+Restaurant Demo Centre,UBER-DEMO-001,Client Test A,2026-06-01,20:15,20:35,24.90,EUR,true,true,gaspillage alimentaire,commande demo preparee puis annulee,DEMO-001
+Restaurant Demo Nord,UBER-DEMO-002,Client Test B,2026-06-02,19:05,19:25,18.50,EUR,true,true,annulation apres preparation,commande fictive pour recette,DEMO-002
+Restaurant Demo Centre,UBER-DEMO-003,Client Test C,2026-06-03,21:10,21:30,31.20,EUR,true,true,preuve a verifier,commande fictive pour recette finale,DEMO-003

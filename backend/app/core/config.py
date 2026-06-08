@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     gmail_oauth_redirect_uri: str = "http://localhost:8000/v1/email/gmail/oauth/callback"
     gmail_scopes: str = (
         "https://www.googleapis.com/auth/gmail.compose "
+        "https://www.googleapis.com/auth/gmail.send "
         "https://www.googleapis.com/auth/gmail.readonly"
     )
     default_uber_eats_support_email: str = "merchants@uber.com"
@@ -50,7 +51,7 @@ class Settings(BaseSettings):
     rate_limit_requests_per_minute: int = 120
     login_rate_limit_per_minute: int = 10
     build_sha: str | None = None
-    app_version: str = "0.1.0"
+    app_version: str = "1.0.0-v1"
 
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env"),

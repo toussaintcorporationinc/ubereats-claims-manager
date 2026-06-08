@@ -12,8 +12,8 @@ class ReadyResponse(BaseModel):
 
 
 class VersionResponse(BaseModel):
-    service: str
+    app: str
     version: str
     environment: str
-    build_sha: str | None
+    commit: str
 
