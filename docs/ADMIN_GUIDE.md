@@ -16,7 +16,7 @@ This guide is for owners and operators managing production.
 - claim management;
 - evidence upload;
 - validation, drafts, manual Gmail send, inbound review and follow-ups for assigned restaurants;
-- reporting for assigned restaurants.
+- reporting and recovery cockpit for assigned restaurants.
 
 `staff`:
 
@@ -24,7 +24,7 @@ This guide is for owners and operators managing production.
 - order creation;
 - evidence upload;
 - read access where allowed;
-- no user management, restaurant creation, Gmail send, response review, follow-up management or commercial exports.
+- no user management, restaurant creation, Gmail send, response review, follow-up management, recovery exports or commercial exports.
 
 ## User and restaurant administration
 
@@ -128,6 +128,26 @@ Recommended production defaults:
 - one use per link;
 - revoke links manually if sent to the wrong recipient;
 - never paste a mobile upload token into support tickets or logs.
+
+## Recovery cockpit administration
+
+Owners and managers can use `/recovery`, `/recovery/cases` and `/recovery/actions`.
+
+Rules:
+
+- owner sees all restaurants;
+- manager sees assigned restaurants only;
+- staff does not export financial recovery data;
+- recovery exports must be treated like financial reports;
+- customer refund decisions are manual and audited;
+- TENNET does not guarantee reimbursement or automate disputes.
+
+Operational review cadence:
+
+- review `/recovery/actions` daily;
+- review high-value missing evidence first;
+- confirm recovered amounts only after payment evidence or accounting confirmation;
+- document refusals and manual review notes.
 
 ## Data retention
 

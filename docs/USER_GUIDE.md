@@ -115,6 +115,32 @@ The application reads and links replies. It does not answer automatically.
 
 The decision updates the order and creates an audit log.
 
+## Customer refund deductions
+
+1. Open `/customer-refunds`.
+2. Detect deductions from imported Uber financial transactions.
+3. Open a dispute detail page.
+4. Create a TENNET claim order when the case is eligible.
+5. Upload the required evidence.
+6. Create an internal draft only when evidence is complete.
+7. If Gmail is connected, create a Gmail draft.
+8. Send manually through the Gmail send workflow.
+9. Record Uber's decision with a manual review.
+
+Possible decisions include accepted, payment to verify, payment confirmed, refused, evidence requested, information requested, follow-up needed, ignored and manual review.
+
+TENNET does not promise reimbursement. It helps ensure no detected deduction is left unreviewed.
+
+## Recovery cockpit
+
+1. Open `/recovery`.
+2. Review detected, claimable, missing evidence, sent, recovered and refused amounts.
+3. Open `/recovery/cases` to filter all recoverable cases.
+4. Open `/recovery/actions` to work through evidence, drafts, responses, follow-ups and manual reviews.
+5. Export summary XLSX or cases CSV if your role allows it.
+
+The cockpit does not send emails, create automatic follow-ups or make decisions without the user.
+
 ## Controlled follow-ups
 
 1. Open `/followups`.

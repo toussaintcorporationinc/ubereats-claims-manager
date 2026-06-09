@@ -16,6 +16,7 @@ const navigation = [
   { href: "/evidence-tasks", label: "Preuves" },
   { href: "/followups", label: "Relances", ownerOrManagerOnly: true },
   { href: "/customer-refunds", label: "Deductions Uber", ownerOrManagerOnly: true },
+  { href: "/recovery", label: "Recuperation", ownerOrManagerOnly: true },
   { href: "/reports", label: "Rapports", ownerOrManagerOnly: true },
   { href: "/uber", label: "Uber", ownerOrManagerOnly: true },
   { href: "/inbox", label: "Reponses Uber", ownerOrManagerOnly: true },

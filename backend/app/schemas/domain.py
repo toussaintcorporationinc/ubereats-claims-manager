@@ -88,6 +88,7 @@ ClaimResponseReviewType = Literal[
     "ignored",
     "manual_review",
 ]
+CustomerRefundReviewType = ClaimResponseReviewType
 FollowUpTaskType = Literal["followup_1", "followup_2", "escalation", "manual_review", "payment_verification"]
 FollowUpTaskStatus = Literal[
     "pending",
@@ -149,6 +150,41 @@ CustomerRefundDisputeStatus = Literal[
 ]
 CustomerRefundEvidenceStatus = Literal["missing", "partial", "complete", "not_required", "manual_review"]
 CustomerRefundRequirementStatus = Literal["pending", "uploaded", "waived", "not_available"]
+RecoveryLossCategory = Literal[
+    "cancellation_not_compensated",
+    "customer_refund",
+    "order_not_received",
+    "missing_item",
+    "incorrect_item",
+    "order_error_adjustment",
+    "chargeback",
+    "manual_review",
+]
+RecoveryStage = Literal[
+    "detected",
+    "needs_evidence",
+    "evidence_ready",
+    "draft_created",
+    "gmail_draft_created",
+    "sent",
+    "response_received",
+    "accepted",
+    "payment_to_verify",
+    "payment_confirmed",
+    "refused",
+    "ignored",
+    "manual_review",
+]
+RecoveryCaseType = Literal["claim_order", "reconciliation_result", "customer_refund_dispute"]
+RecoveryActionType = Literal[
+    "upload_evidence",
+    "create_claim_order",
+    "create_draft",
+    "create_gmail_draft",
+    "process_response",
+    "followup",
+    "manual_review",
+]
 
 
 class UserRead(BaseModel):
@@ -703,6 +739,9 @@ class CommercialResponseSummary(BaseModel):
 
 class CommercialCustomerRefundSummary(BaseModel):
     total_deducted_amount: Decimal = Decimal("0")
+    total_recovered_amount: Decimal = Decimal("0")
+    total_refused_amount: Decimal = Decimal("0")
+    total_pending_amount: Decimal = Decimal("0")
     disputes_count: int = 0
     needs_evidence_count: int = 0
     evidence_ready_count: int = 0
@@ -1305,6 +1344,53 @@ class UberCustomerRefundDisputeRead(BaseModel):
     ignored_at: datetime | None
     ignored_by_user_id: int | None
     ignore_reason: str | None
+    recovered_amount: Decimal | None
+    expected_payment_date: date | None
+    last_reviewed_at: datetime | None
+    last_reviewed_by_user_id: int | None
+
+
+class CustomerRefundDisputeReviewCreate(BaseModel):
+    inbound_message_id: int | None = None
+    review_type: CustomerRefundReviewType
+    recovered_amount: Decimal | None = None
+    expected_payment_date: date | None = None
+    refusal_reason: str | None = None
+    evidence_requested: bool | None = None
+    notes: str | None = None
+
+
+class CustomerRefundDisputeReviewRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    dispute_id: int
+    inbound_message_id: int | None
+    reviewed_by_user_id: int
+    review_type: CustomerRefundReviewType
+    previous_dispute_status: CustomerRefundDisputeStatus
+    new_dispute_status: CustomerRefundDisputeStatus
+    previous_claim_order_status: ClaimOrderStatus | None
+    new_claim_order_status: ClaimOrderStatus | None
+    recovered_amount: Decimal | None
+    expected_payment_date: date | None
+    refusal_reason: str | None
+    evidence_requested: bool | None
+    notes: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CustomerRefundDisputeReviewResponse(BaseModel):
+    review: CustomerRefundDisputeReviewRead
+    dispute_status: CustomerRefundDisputeStatus
+    claim_order_status: ClaimOrderStatus | None
+
+
+class CustomerRefundDisputeReviewsResponse(BaseModel):
+    reviews: list[CustomerRefundDisputeReviewRead]
+    limit: int
+    offset: int
 
 
 class CustomerRefundDisputeSummary(BaseModel):
@@ -1318,6 +1404,9 @@ class CustomerRefundDisputeSummary(BaseModel):
     reason: CustomerRefundDisputeReason
     status: CustomerRefundDisputeStatus
     customer_refund_amount: Decimal
+    recovered_amount: Decimal | None = None
+    expected_payment_date: date | None = None
+    last_reviewed_at: datetime | None = None
     currency: str
     deducted_at: date | None
     evidence_status: CustomerRefundEvidenceStatus
@@ -1341,6 +1430,7 @@ class CustomerRefundDisputeDetail(BaseModel):
     evidence_requirements: list[CustomerRefundEvidenceRequirementRead]
     evidence_files: list[EvidenceFileRead]
     evidence_tasks: list[EvidenceRequestTaskSummary]
+    reviews: list[CustomerRefundDisputeReviewRead] = []
 
 
 class CustomerRefundIgnoreRequest(BaseModel):
@@ -1356,4 +1446,96 @@ class CustomerRefundBulkResponse(BaseModel):
     skipped_count: int
     errors: list[str]
     created_ids: list[int]
+
+
+class RecoveryFilterEcho(BaseModel):
+    restaurant_id: int | None = None
+    date_from: date | None = None
+    date_to: date | None = None
+    loss_category: str | None = None
+    include_ignored: bool = False
+
+
+class RecoveryTotals(BaseModel):
+    detected_amount: Decimal = Decimal("0")
+    claimable_amount: Decimal = Decimal("0")
+    missing_evidence_amount: Decimal = Decimal("0")
+    sent_amount: Decimal = Decimal("0")
+    recovered_amount: Decimal = Decimal("0")
+    refused_amount: Decimal = Decimal("0")
+    pending_amount: Decimal = Decimal("0")
+    detected_count: int = 0
+    claimable_count: int = 0
+    missing_evidence_count: int = 0
+    sent_count: int = 0
+    recovered_count: int = 0
+    refused_count: int = 0
+    manual_review_count: int = 0
+    recovery_rate: Decimal = Decimal("0")
+    review_coverage_rate: Decimal = Decimal("0")
+
+
+class RecoveryBreakdownItem(BaseModel):
+    key: str
+    count: int
+    detected_amount: Decimal = Decimal("0")
+    claimable_amount: Decimal = Decimal("0")
+    recovered_amount: Decimal = Decimal("0")
+    refused_amount: Decimal = Decimal("0")
+
+
+class RecoveryRestaurantBreakdownItem(RecoveryBreakdownItem):
+    restaurant_id: int
+    restaurant_name: str
+
+
+class RecoveryCase(BaseModel):
+    case_type: RecoveryCaseType
+    case_id: int
+    restaurant_id: int
+    restaurant_name: str
+    uber_order_number: str | None
+    loss_category: RecoveryLossCategory
+    recovery_stage: RecoveryStage
+    detected_amount: Decimal = Decimal("0")
+    claimable_amount: Decimal = Decimal("0")
+    recovered_amount: Decimal = Decimal("0")
+    status: str
+    evidence_status: str | None
+    next_action: str | None
+    created_at: datetime
+    link_url: str
+
+
+class RecoverySummary(BaseModel):
+    filters: RecoveryFilterEcho
+    totals: RecoveryTotals
+    by_restaurant: list[RecoveryRestaurantBreakdownItem]
+    by_loss_category: list[RecoveryBreakdownItem]
+    by_recovery_stage: list[RecoveryBreakdownItem]
+    top_recoverable_cases: list[RecoveryCase]
+
+
+class RecoveryCasesResponse(BaseModel):
+    cases: list[RecoveryCase]
+    limit: int
+    offset: int
+
+
+class RecoveryAction(BaseModel):
+    action_type: RecoveryActionType
+    case_type: str
+    case_id: int
+    restaurant_name: str
+    priority: str
+    amount: Decimal = Decimal("0")
+    due_at: datetime | None
+    label: str
+    url: str
+
+
+class RecoveryActionsResponse(BaseModel):
+    actions: list[RecoveryAction]
+    limit: int
+    offset: int
 

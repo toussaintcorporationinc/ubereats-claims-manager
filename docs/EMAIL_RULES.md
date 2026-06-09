@@ -97,6 +97,19 @@ Regles :
 - `payment_confirmed` et `closed` protegent la commande contre une nouvelle decision non ignoree ;
 - chaque traitement ajoute un `AuditLog` sans token, secret, mot de passe ni contenu sensible inutile.
 
+## Traitement manuel des deductions Uber V1.1
+
+Les deductions Uber et remboursements clients peuvent recevoir une decision manuelle depuis le detail de la dispute.
+
+Regles :
+
+- le traitement ne cree aucune reponse automatique ;
+- le traitement ne cree aucun nouvel email automatiquement ;
+- le traitement peut mettre la dispute en `accepted`, `payment_to_verify`, `payment_confirmed`, `refused`, `needs_evidence`, `ignored` ou `manual_review` ;
+- une demande de preuve recalcule les taches de preuve, mais n'envoie rien ;
+- `payment_confirmed` et `ignored` protegent la dispute contre une nouvelle transition en V1.1 ;
+- chaque decision cree un `CustomerRefundDisputeReview` et un `AuditLog` sans token, secret ou mot de passe.
+
 ## Envoi Gmail manuel V1
 
 Un brouillon Gmail deja cree peut etre envoye uniquement depuis l'application, par un owner ou manager autorise, avec `confirm_send=true`.

@@ -141,6 +141,7 @@ export default function CustomerRefundsPage() {
   }
 
   const totalDeducted = disputes.reduce((sum, dispute) => sum + Number(dispute.customer_refund_amount ?? 0), 0);
+  const totalRecovered = disputes.reduce((sum, dispute) => sum + Number(dispute.recovered_amount ?? 0), 0);
   const needsEvidenceCount = disputes.filter((dispute) => dispute.evidence_status === "missing" || dispute.evidence_status === "partial").length;
   const readyCount = disputes.filter((dispute) => dispute.evidence_status === "complete").length;
 
@@ -159,6 +160,7 @@ export default function CustomerRefundsPage() {
 
       <div className="stats-grid">
         <StatCard label="Total deduit" value={formatCurrency(totalDeducted)} />
+        <StatCard label="Recupere" value={formatCurrency(totalRecovered)} />
         <StatCard label="Disputes detectees" value={disputes.length} />
         <StatCard label="Preuves manquantes" value={needsEvidenceCount} />
         <StatCard label="Pretes a contester" value={readyCount} />
@@ -253,8 +255,10 @@ export default function CustomerRefundsPage() {
                 <th>Type</th>
                 <th>Raison</th>
                 <th>Montant deduit</th>
+                <th>Recupere</th>
                 <th>Statut</th>
                 <th>Preuves</th>
+                <th>Derniere revue</th>
                 <th>Action</th>
               </tr>
             </thead>
@@ -266,6 +270,7 @@ export default function CustomerRefundsPage() {
                   <td>{dispute.dispute_type}</td>
                   <td>{dispute.reason}</td>
                   <td>{formatCurrency(dispute.customer_refund_amount, dispute.currency)}</td>
+                  <td>{formatCurrency(dispute.recovered_amount, dispute.currency)}</td>
                   <td>
                     <StatusBadge status={dispute.status} />
                   </td>
@@ -277,10 +282,11 @@ export default function CustomerRefundsPage() {
                       </span>
                     </div>
                   </td>
+                  <td>{formatDate(dispute.last_reviewed_at)}</td>
                   <td>
                     <div className="actions">
                       <Link className="secondary-button" href={`/customer-refunds/${dispute.id}`}>
-                        Detail
+                        Traiter
                       </Link>
                       {dispute.claim_order_id ? (
                         <Link className="secondary-button" href={`/orders/${dispute.claim_order_id}`}>

@@ -70,7 +70,15 @@ Les endpoints principaux sont :
 - `POST /v1/customer-refunds/{id}/create-claim-order`
 - `POST /v1/customer-refunds/{id}/create-draft`
 - `POST /v1/customer-refunds/{id}/create-gmail-draft`
+- `POST /v1/customer-refunds/{id}/reviews`
+- `GET /v1/customer-refunds/{id}/reviews`
 - `POST /v1/customer-refunds/{id}/ignore`
+- `GET /v1/customer-refund-reviews`
+- `GET /v1/recovery/summary`
+- `GET /v1/recovery/cases`
+- `GET /v1/recovery/actions`
+- `GET /v1/recovery/export/summary.xlsx`
+- `GET /v1/recovery/export/cases.csv`
 - `GET|POST /v1/orders/{id}/drafts`
 - `GET /v1/drafts`
 - `GET /v1/email/gmail/status`
@@ -118,7 +126,7 @@ Les preuves peuvent etre ajoutees par upload local securise depuis le detail d'u
 
 Les preuves manquantes peuvent aussi etre pilotees depuis `/evidence-tasks`. TENNET recalcule les demandes de preuves a partir des dossiers incomplets et des resultats de reconciliation Uber qui exigent des justificatifs. Un owner ou manager peut creer un lien mobile tokenise pour une demande precise. Le token brut est retourne une seule fois, seul son hash est stocke, et l'upload public reste limite a la preuve demandee. Aucun email n'est envoye automatiquement.
 
-Les deductions Uber et remboursements clients peuvent etre detectes depuis les transactions financieres importees. TENNET identifie les refunds, chargebacks, ajustements negatifs et motifs comme commande non recue ou article manquant, cree des exigences de preuves, puis laisse un owner ou manager creer le dossier et les brouillons. Aucune contestation n'est envoyee automatiquement.
+Les deductions Uber et remboursements clients peuvent etre detectes depuis les transactions financieres importees. TENNET identifie les refunds, chargebacks, ajustements negatifs et motifs comme commande non recue ou article manquant, cree des exigences de preuves, puis laisse un owner ou manager creer le dossier et les brouillons. Les decisions Uber sur ces deductions sont traitees manuellement avec historique de review, montant recupere, refus, paiement a verifier ou preuves demandees. Aucune contestation n'est envoyee automatiquement.
 
 Les commandes peuvent aussi etre importees en masse depuis `/imports/new` avec un fichier CSV ou XLSX. Le backend analyse les lignes, detecte erreurs, doublons et restaurants non autorises, puis cree uniquement les lignes valides lors de la confirmation.
 
@@ -130,7 +138,9 @@ Un owner ou manager peut ensuite traiter manuellement une reponse Uber rattachee
 
 Les relances controlees se recalculent depuis `/followups`. La politique V1 propose `followup_1` a J+2, `followup_2` a J+5, `escalation` a J+10 et `manual_review` a J+15 ou quand la limite de relances est atteinte. Les taches creent des brouillons internes puis, si Gmail est configure, des brouillons Gmail. Aucun envoi automatique n'est implemente ; l'envoi reste manuel et confirme via le workflow Gmail existant.
 
-Les rapports commerciaux sont disponibles depuis `/reports`. Ils permettent de suivre les montants reclames, recuperes, en attente ou refuses, les taux de reussite, les performances par restaurant, les relances et les reponses Uber traitees. Les exports CSV/XLSX sont reserves aux roles `owner` et `manager`, respectent les restaurants autorises et n'incluent pas les noms clients par defaut.
+Le cockpit recuperation est disponible depuis `/recovery`. Il unifie commandes annulees non compensees, resultats de reconciliation Uber, deductions clients, preuves manquantes, relances et outcomes. Il affiche les montants detectes, contestables, en attente de preuve, envoyes, recuperes, refuses et a revue manuelle. TENNET ne garantit pas le remboursement ; il garantit le suivi et la revue systematique des pertes detectees.
+
+Les rapports commerciaux sont disponibles depuis `/reports`. Ils permettent de suivre les montants reclames, recuperes, en attente ou refuses, les taux de reussite, les performances par restaurant, les relances, les reponses Uber traitees et les deductions clients. Les exports CSV/XLSX sont reserves aux roles `owner` et `manager`, respectent les restaurants autorises et n'incluent pas les noms clients par defaut.
 
 ## Demarrage rapide
 
