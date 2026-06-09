@@ -286,7 +286,7 @@ Documentation securite et roles : `docs/SECURITY.md`.
 Documentation production : `docs/DEPLOYMENT.md`, `docs/OPERATIONS.md`, `docs/BACKUP_RESTORE.md` et `docs/PRODUCTION_CHECKLIST.md`.
 Documentation go-live V1 : `docs/GO_LIVE_RUNBOOK.md`, `docs/ACCEPTANCE_TEST_PLAN.md`, `docs/USER_GUIDE.md`, `docs/ADMIN_GUIDE.md`, `docs/GMAIL_PRODUCTION_VALIDATION.md`, `docs/ROLLBACK_PLAN.md`, `docs/RELEASE_NOTES_V1.md` et `docs/KNOWN_LIMITATIONS_V1.md`.
 Documentation V1.1 : `docs/BULK_EVIDENCE_IMPORT.md`, `docs/AI_EVIDENCE_ANALYSIS.md`, `docs/PERSISTENT_APPEALS.md`, `docs/CUSTOMER_REFUND_DISPUTES.md`, `docs/RECOVERY_COCKPIT.md` et `docs/UBER_RECONCILIATION_RULES.md`.
-Documentation V1.1 RC et staging : `docs/RELEASE_NOTES_V1_1_RC.md`, `docs/KNOWN_LIMITATIONS_V1_1.md`, `docs/STAGING_DEPLOYMENT.md`, `docs/STAGING_ACCEPTANCE_PLAN.md` et `docs/V1_1_ACCEPTANCE_TEST_PLAN.md`.
+Documentation V1.1 finale et staging : `docs/RELEASE_NOTES_V1_1.md`, `docs/RELEASE_NOTES_V1_1_RC.md`, `docs/KNOWN_LIMITATIONS_V1_1.md`, `docs/STAGING_DEPLOYMENT.md`, `docs/STAGING_ACCEPTANCE_PLAN.md` et `docs/V1_1_ACCEPTANCE_TEST_PLAN.md`.
 
 ## Production
 
@@ -355,11 +355,11 @@ Exemples fictifs disponibles :
 - `docs/examples/uber_payments_report_template.csv` ;
 - `docs/examples/uber_adjustments_report_template.csv`.
 
-## V1.1 Release Candidate
+## V1.1 Final Release
 
-`VERSION` vaut `1.1.0-rc2-tennet`.
+`VERSION` vaut `1.1.0-tennet`.
 
-La RC V1.1 ajoute la recette staging pour les imports Uber Reporting, la reconciliation 6 mois, les deductions Uber, les demandes de preuves, l'import massif de preuves, le matching controle, les appels persistants et le cockpit recuperation.
+La V1.1 finale ajoute les imports Uber Reporting, la reconciliation 6 mois, les detections de commandes annulees non compensees, les deductions Uber / remboursements clients, les demandes de preuves, l'import massif de preuves, le matching controle, les appels persistants et le cockpit recuperation.
 
 Les donnees fictives de recette sont dans `docs/examples/v1_1`. Elles ne doivent pas etre remplacees par des donnees client reelles dans le depot.
 
@@ -370,4 +370,4 @@ Rappels :
 - aucun refus Uber n'est cloture automatiquement ;
 - aucun email, appel ou relance n'est envoye automatiquement ;
 - OpenAI/Vision est desactive par defaut ;
-- la validation terrain avec de vrais exports Uber est obligatoire avant production.
+- la validation terrain avec de vrais exports Uber reste necessaire avant exploitation commerciale.

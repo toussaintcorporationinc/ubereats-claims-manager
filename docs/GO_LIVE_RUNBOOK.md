@@ -92,7 +92,7 @@ GMAIL_INBOUND_SYNC_ENABLED=false
 
 Before any V1.1 production rollout, run the staging release candidate flow:
 
-1. Deploy `1.1.0-rc2-tennet` with `docker-compose.staging.yml`.
+1. Deploy `1.1.0-tennet` with `docker-compose.staging.yml` or keep the previously accepted RC2 staging environment as evidence.
 2. Use only fictitious examples from `docs/examples/v1_1` first.
 3. Run `scripts/smoke_test_v1_1.sh`.
 4. Execute `docs/V1_1_ACCEPTANCE_TEST_PLAN.md`.
@@ -100,5 +100,5 @@ Before any V1.1 production rollout, run the staging release candidate flow:
 6. Confirm no automatic email, follow-up or appeal send occurred.
 7. Document open risks in `docs/KNOWN_LIMITATIONS_V1_1.md`.
 
-Production `v1.0.3-tennet` should remain untouched until V1.1 acceptance is complete.
+Production `v1.0.3-tennet` should remain untouched until V1.1 acceptance is complete and the final tag is selected for rollout.
 
