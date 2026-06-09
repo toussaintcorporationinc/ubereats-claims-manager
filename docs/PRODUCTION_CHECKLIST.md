@@ -81,7 +81,7 @@ Use this checklist before launching a TENNET commercial production instance.
 
 ## V1.1 RC pre-production checklist
 
-- [ ] Staging deployed with `1.1.0-rc2-tennet`.
+- [ ] Staging acceptance completed with RC2 or final `1.1.0-tennet`.
 - [ ] `.env.staging` uses staging-only secrets.
 - [ ] `EMAIL_PROVIDER_ENABLED=false` unless Gmail staging test is explicit.
 - [ ] `GMAIL_INBOUND_SYNC_ENABLED=false` unless Gmail staging test is explicit.

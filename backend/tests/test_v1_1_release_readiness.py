@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-V1_1_VERSION = "1.1.0-rc2-tennet"
+V1_1_VERSION = "1.1.0-tennet"
 
 
 def read(path: str) -> str:
@@ -15,6 +15,7 @@ def test_v1_1_version_file() -> None:
 
 def test_v1_1_release_docs_exist() -> None:
     required = [
+        "docs/RELEASE_NOTES_V1_1.md",
         "docs/RELEASE_NOTES_V1_1_RC.md",
         "docs/KNOWN_LIMITATIONS_V1_1.md",
         "docs/STAGING_DEPLOYMENT.md",
@@ -61,6 +62,7 @@ def test_v1_1_examples_are_fictitious() -> None:
 def test_v1_1_no_misleading_reimbursement_promise() -> None:
     docs = [
         "README.md",
+        "docs/RELEASE_NOTES_V1_1.md",
         "docs/RELEASE_NOTES_V1_1_RC.md",
         "docs/KNOWN_LIMITATIONS_V1_1.md",
         "docs/V1_1_ACCEPTANCE_TEST_PLAN.md",

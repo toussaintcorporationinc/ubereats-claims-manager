@@ -1,6 +1,6 @@
 # Known Limitations V1.1
 
-TENNET V1.1 RC is designed for staging acceptance before production rollout.
+TENNET V1.1.0 is ready for controlled production rollout after RC2 staging acceptance, with the limitations below.
 
 ## Product Limits
 
