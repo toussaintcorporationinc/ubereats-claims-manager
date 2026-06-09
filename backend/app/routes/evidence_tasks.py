@@ -232,6 +232,7 @@ def build_task_summary(task: EvidenceRequestTask) -> EvidenceRequestTaskSummary:
         description=task.description,
         reason=task.reason,
         reconciliation_result_id=task.reconciliation_result_id,
+        customer_refund_dispute_id=task.customer_refund_dispute_id,
         last_upload_evidence_id=task.last_upload_evidence_id,
         created_at=task.created_at,
         updated_at=task.updated_at,

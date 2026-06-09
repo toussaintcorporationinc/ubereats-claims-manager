@@ -32,9 +32,25 @@ export type EvidenceType =
   | "preparation_proof"
   | "waste_photo"
   | "uber_screenshot"
+  | "delivery_proof"
+  | "packaging_photo"
+  | "sealed_bag_photo"
+  | "courier_statement"
+  | "gps_or_route_proof"
+  | "customer_contact_proof"
+  | "order_details_screenshot"
   | "other";
 
-export type EmailDraftType = "initial_claim" | "followup_1" | "followup_2" | "escalation" | "proof_reply";
+export type EmailDraftType =
+  | "initial_claim"
+  | "followup_1"
+  | "followup_2"
+  | "escalation"
+  | "proof_reply"
+  | "customer_refund_order_not_received"
+  | "customer_refund_missing_item"
+  | "customer_refund_order_error_adjustment"
+  | "customer_refund_generic";
 export type ImportBatchStatus = "uploaded" | "parsed" | "confirmed" | "partially_imported" | "failed" | "cancelled";
 export type ImportRowStatus = "valid" | "invalid" | "duplicate" | "unauthorized" | "created" | "skipped";
 export type EmailProviderDraftStatus = "provider_draft_created" | "send_requested" | "sent" | "failed";
@@ -88,6 +104,40 @@ export type UberReconciliationRunStatus = "pending" | "running" | "completed" | 
 export type UberReportingReportType = "orders_report" | "payments_report" | "adjustments_report" | "combined_report";
 export type UberReportingBatchStatus = "uploaded" | "parsed" | "confirmed" | "partially_imported" | "failed" | "cancelled";
 export type UberReportingRowStatus = "valid" | "invalid" | "warning" | "duplicate" | "created" | "skipped";
+export type CustomerRefundDisputeType =
+  | "order_not_received"
+  | "missing_item"
+  | "incorrect_item"
+  | "damaged_order"
+  | "quality_issue"
+  | "customer_refund"
+  | "order_error_adjustment"
+  | "chargeback"
+  | "unknown";
+export type CustomerRefundDisputeReason =
+  | "customer_reported_not_received"
+  | "customer_reported_missing_item"
+  | "customer_reported_wrong_item"
+  | "customer_reported_quality_issue"
+  | "uber_adjustment_order_error"
+  | "refund_without_sufficient_proof"
+  | "self_delivery_dispute"
+  | "unknown_reason";
+export type CustomerRefundDisputeStatus =
+  | "detected"
+  | "needs_evidence"
+  | "evidence_ready"
+  | "draft_created"
+  | "gmail_draft_created"
+  | "sent"
+  | "accepted"
+  | "payment_to_verify"
+  | "payment_confirmed"
+  | "refused"
+  | "ignored"
+  | "manual_review";
+export type CustomerRefundEvidenceStatus = "missing" | "partial" | "complete" | "not_required" | "manual_review";
+export type CustomerRefundRequirementStatus = "pending" | "uploaded" | "waived" | "not_available";
 
 export type Restaurant = {
   id: number;
@@ -388,6 +438,16 @@ export type CommercialRestaurantSummary = {
   manual_review_count: number;
 };
 
+export type CommercialCustomerRefundSummary = {
+  total_deducted_amount: MoneyValue;
+  disputes_count: number;
+  needs_evidence_count: number;
+  evidence_ready_count: number;
+  sent_count: number;
+  accepted_count: number;
+  refused_count: number;
+};
+
 export type CommercialSummary = {
   filters: ReportFilterEcho;
   totals: CommercialTotals;
@@ -407,6 +467,7 @@ export type CommercialSummary = {
     payment_confirmed_count: number;
     manual_review_count: number;
   };
+  customer_refunds: CommercialCustomerRefundSummary;
 };
 
 export type ReportOrderRow = {
@@ -569,6 +630,7 @@ export type EvidenceRequestTask = {
   id: number;
   order_id: number;
   reconciliation_result_id: number | null;
+  customer_refund_dispute_id: number | null;
   restaurant_id: number;
   task_type: EvidenceRequestTaskType;
   required_evidence_type: EvidenceType;
@@ -608,6 +670,7 @@ export type EvidenceRequestTaskSummary = {
   description: string | null;
   reason: string;
   reconciliation_result_id: number | null;
+  customer_refund_dispute_id: number | null;
   last_upload_evidence_id: number | null;
   created_at: string;
   updated_at: string;
@@ -673,6 +736,104 @@ export type EvidenceTaskUploadResponse = {
   task: EvidenceRequestTask;
   evidence_file: EvidenceFile;
   validation: ClaimValidationResponse;
+};
+
+export type CustomerRefundDetectPayload = {
+  restaurant_id?: number | null;
+  date_from?: string | null;
+  date_to?: string | null;
+};
+
+export type CustomerRefundDetectResponse = {
+  detected_count: number;
+  needs_evidence_count: number;
+  manual_review_count: number;
+  total_deducted_amount: MoneyValue;
+  errors: string[];
+};
+
+export type CustomerRefundEvidenceRequirement = {
+  id: number;
+  dispute_id: number;
+  required_evidence_type: EvidenceType;
+  status: CustomerRefundRequirementStatus;
+  evidence_file_id: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UberCustomerRefundDispute = {
+  id: number;
+  restaurant_id: number;
+  uber_store_id: string | null;
+  uber_order_id: string | null;
+  display_id: string | null;
+  claim_order_id: number | null;
+  financial_transaction_id: number | null;
+  customer_refund_reference: string | null;
+  dispute_type: CustomerRefundDisputeType;
+  reason: CustomerRefundDisputeReason;
+  status: CustomerRefundDisputeStatus;
+  customer_refund_amount: MoneyValue;
+  order_amount: MoneyValue;
+  currency: string;
+  deducted_at: string | null;
+  order_date: string | null;
+  evidence_required: boolean;
+  evidence_status: CustomerRefundEvidenceStatus;
+  dispute_email_draft_id: number | null;
+  provider_draft_id: number | null;
+  notes: string | null;
+  raw_payload_json: Record<string, unknown> | null;
+  created_by_user_id: number | null;
+  created_at: string;
+  updated_at: string;
+  ignored_at: string | null;
+  ignored_by_user_id: number | null;
+  ignore_reason: string | null;
+};
+
+export type CustomerRefundDisputeSummary = {
+  id: number;
+  restaurant_id: number;
+  restaurant_name: string;
+  uber_order_id: string | null;
+  display_id: string | null;
+  claim_order_id: number | null;
+  dispute_type: CustomerRefundDisputeType;
+  reason: CustomerRefundDisputeReason;
+  status: CustomerRefundDisputeStatus;
+  customer_refund_amount: MoneyValue;
+  currency: string;
+  deducted_at: string | null;
+  evidence_status: CustomerRefundEvidenceStatus;
+  requirements_count: number;
+  pending_requirements_count: number;
+  created_at: string;
+};
+
+export type CustomerRefundDisputesResponse = {
+  disputes: CustomerRefundDisputeSummary[];
+  limit: number;
+  offset: number;
+};
+
+export type CustomerRefundDisputeDetail = {
+  dispute: UberCustomerRefundDispute;
+  restaurant_name: string;
+  order_snapshot: Record<string, unknown> | null;
+  financial_transaction: Record<string, unknown> | null;
+  claim_order: ClaimOrder | null;
+  evidence_requirements: CustomerRefundEvidenceRequirement[];
+  evidence_files: EvidenceFile[];
+  evidence_tasks: EvidenceRequestTaskSummary[];
+};
+
+export type CustomerRefundBulkResponse = {
+  created_count: number;
+  skipped_count: number;
+  errors: string[];
+  created_ids: number[];
 };
 
 export type UberStatus = {
@@ -1419,6 +1580,40 @@ export const api = {
   },
   revokeEvidenceUploadLink: (linkId: number) =>
     postJson<EvidenceUploadLink, Record<string, never>>(`/v1/evidence-upload-links/${linkId}/revoke`, {}),
+  detectCustomerRefundDisputes: (payload: CustomerRefundDetectPayload = {}) =>
+    postJson<CustomerRefundDetectResponse, CustomerRefundDetectPayload>("/v1/customer-refunds/detect", payload),
+  getCustomerRefundDisputes: (
+    filters: {
+      restaurant_id?: number | "";
+      dispute_type?: CustomerRefundDisputeType | "";
+      status?: CustomerRefundDisputeStatus | "";
+      evidence_status?: CustomerRefundEvidenceStatus | "";
+      date_from?: string;
+      date_to?: string;
+      min_amount?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => request<CustomerRefundDisputesResponse>(`/v1/customer-refunds${buildQuery(filters)}`),
+  getCustomerRefundDispute: (id: number) => request<CustomerRefundDisputeDetail>(`/v1/customer-refunds/${id}`),
+  recalculateCustomerRefundEvidence: (id: number) =>
+    postJson<UberCustomerRefundDispute, Record<string, never>>(`/v1/customer-refunds/${id}/recalculate-evidence`, {}),
+  createClaimOrderFromCustomerRefund: (id: number) =>
+    postJson<ClaimOrder, Record<string, never>>(`/v1/customer-refunds/${id}/create-claim-order`, {}),
+  createCustomerRefundDraft: (id: number) =>
+    postJson<EmailDraft, Record<string, never>>(`/v1/customer-refunds/${id}/create-draft`, {}),
+  createCustomerRefundGmailDraft: (id: number) =>
+    postJson<EmailProviderDraft, Record<string, never>>(`/v1/customer-refunds/${id}/create-gmail-draft`, {}),
+  ignoreCustomerRefundDispute: (id: number, payload: { reason: string }) =>
+    postJson<UberCustomerRefundDispute, { reason: string }>(`/v1/customer-refunds/${id}/ignore`, payload),
+  bulkCreateCustomerRefundClaimOrders: (disputeIds: number[]) =>
+    postJson<CustomerRefundBulkResponse, { dispute_ids: number[] }>("/v1/customer-refunds/bulk-create-claim-orders", {
+      dispute_ids: disputeIds,
+    }),
+  bulkCreateCustomerRefundDrafts: (disputeIds: number[]) =>
+    postJson<CustomerRefundBulkResponse, { dispute_ids: number[] }>("/v1/customer-refunds/bulk-create-drafts", {
+      dispute_ids: disputeIds,
+    }),
   getUberStatus: () => request<UberStatus>("/v1/uber/status"),
   getUberStoreMappings: () => request<UberStoreMapping[]>("/v1/uber/store-mappings"),
   createUberStoreMapping: (payload: UberStoreMappingCreatePayload) =>

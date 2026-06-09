@@ -191,6 +191,22 @@ Regles appliquees :
 - aucun export ne contient tokens Gmail, secrets, mots de passe, `access_token`, `refresh_token` ou chemin disque brut de preuve ;
 - les fichiers exportes sont generes en memoire pour la V1 et ne sont pas stockes dans le depot.
 
+## Deductions Uber et remboursements clients
+
+Le module Customer Refund Disputes exploite uniquement les transactions Uber deja importees dans TENNET. Il ne se connecte pas a Uber Eats Manager, ne scrape aucune page, ne demande aucun mot de passe Uber et ne declenche aucune contestation automatique.
+
+Regles appliquees :
+
+- `owner` peut detecter, creer des dossiers, creer des brouillons et ignorer les disputes pour tous les restaurants ;
+- `manager` peut faire les memes actions uniquement sur restaurants assignes ;
+- `staff` ne peut pas detecter, creer de dossier, creer de brouillon, creer de brouillon Gmail ou ignorer une dispute ;
+- `staff` peut contribuer aux preuves uniquement via les taches de preuves autorisees ;
+- les pieces justificatives restent stockees comme `EvidenceFile` et accessibles uniquement via API protegee ou lien tokenise limite ;
+- les transactions brutes peuvent etre conservees dans `raw_payload_json` pour audit, sans token, secret ou mot de passe ;
+- les brouillons de contestation restent internes ou Gmail draft, sans envoi automatique ;
+- aucun module ne promet un remboursement automatique ou une decision sans validation humaine ;
+- chaque detection, creation de dispute, recalcul preuve, creation de dossier, creation de brouillon, brouillon Gmail et ignore cree un `AuditLog`.
+
 ## Backups
 
 - sauvegardes PostgreSQL quotidiennes recommandees ;
@@ -263,6 +279,7 @@ Un `AuditLog` est cree pour :
 - changement de statut issu d'une revue de reponse Uber ;
 - message inbound marque revu ou ignore.
 - creation, skip et completion de taches de relance.
+- detection, creation, recalcul, brouillon et ignore de disputes de deductions Uber.
 
 ## Limites V1
 

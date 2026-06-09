@@ -1,0 +1,15 @@
+Bonjour,
+
+Nous contestons la deduction Uber Eats appliquee sur la commande {uber_order_number} du restaurant {restaurant_name}.
+
+Type de deduction : {dispute_type}.
+Raison detectee : {reason}.
+Montant deduit : {customer_refund_amount} {currency}.
+
+Les preuves disponibles sont jointes :
+{evidence_list}
+
+Merci de verifier ce remboursement client ou ajustement negatif et de regulariser le paiement si la deduction a ete appliquee a tort.
+
+Cordialement,
+{signature}

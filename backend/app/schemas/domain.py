@@ -29,6 +29,13 @@ EvidenceType = Literal[
     "preparation_proof",
     "waste_photo",
     "uber_screenshot",
+    "delivery_proof",
+    "packaging_photo",
+    "sealed_bag_photo",
+    "courier_statement",
+    "gps_or_route_proof",
+    "customer_contact_proof",
+    "order_details_screenshot",
     "other",
 ]
 EvidenceRequestTaskType = Literal[
@@ -42,7 +49,17 @@ EvidenceRequestTaskType = Literal[
 EvidenceRequestTaskStatus = Literal["pending", "uploaded", "completed", "skipped", "cancelled"]
 EvidenceRequestPriority = Literal["low", "normal", "high", "urgent"]
 
-EmailDraftType = Literal["initial_claim", "followup_1", "followup_2", "escalation", "proof_reply"]
+EmailDraftType = Literal[
+    "initial_claim",
+    "followup_1",
+    "followup_2",
+    "escalation",
+    "proof_reply",
+    "customer_refund_order_not_received",
+    "customer_refund_missing_item",
+    "customer_refund_order_error_adjustment",
+    "customer_refund_generic",
+]
 EmailDraftStatus = Literal["created", "draft", "ready", "archived"]
 UserRole = Literal["owner", "manager", "staff"]
 ImportBatchStatus = Literal["uploaded", "parsed", "confirmed", "partially_imported", "failed", "cancelled"]
@@ -95,6 +112,43 @@ UberReconciliationRunStatus = Literal["pending", "running", "completed", "failed
 UberReportingReportType = Literal["orders_report", "payments_report", "adjustments_report", "combined_report"]
 UberReportingBatchStatus = Literal["uploaded", "parsed", "confirmed", "partially_imported", "failed", "cancelled"]
 UberReportingRowStatus = Literal["valid", "invalid", "warning", "duplicate", "created", "skipped"]
+CustomerRefundDisputeType = Literal[
+    "order_not_received",
+    "missing_item",
+    "incorrect_item",
+    "damaged_order",
+    "quality_issue",
+    "customer_refund",
+    "order_error_adjustment",
+    "chargeback",
+    "unknown",
+]
+CustomerRefundDisputeReason = Literal[
+    "customer_reported_not_received",
+    "customer_reported_missing_item",
+    "customer_reported_wrong_item",
+    "customer_reported_quality_issue",
+    "uber_adjustment_order_error",
+    "refund_without_sufficient_proof",
+    "self_delivery_dispute",
+    "unknown_reason",
+]
+CustomerRefundDisputeStatus = Literal[
+    "detected",
+    "needs_evidence",
+    "evidence_ready",
+    "draft_created",
+    "gmail_draft_created",
+    "sent",
+    "accepted",
+    "payment_to_verify",
+    "payment_confirmed",
+    "refused",
+    "ignored",
+    "manual_review",
+]
+CustomerRefundEvidenceStatus = Literal["missing", "partial", "complete", "not_required", "manual_review"]
+CustomerRefundRequirementStatus = Literal["pending", "uploaded", "waived", "not_available"]
 
 
 class UserRead(BaseModel):
@@ -647,6 +701,16 @@ class CommercialResponseSummary(BaseModel):
     manual_review_count: int
 
 
+class CommercialCustomerRefundSummary(BaseModel):
+    total_deducted_amount: Decimal = Decimal("0")
+    disputes_count: int = 0
+    needs_evidence_count: int = 0
+    evidence_ready_count: int = 0
+    sent_count: int = 0
+    accepted_count: int = 0
+    refused_count: int = 0
+
+
 class CommercialSummary(BaseModel):
     filters: ReportFilterEcho
     totals: CommercialTotals
@@ -655,6 +719,7 @@ class CommercialSummary(BaseModel):
     by_restaurant: list[CommercialRestaurantSummary]
     followups: CommercialFollowupSummary
     responses: CommercialResponseSummary
+    customer_refunds: CommercialCustomerRefundSummary
 
 
 class ReportOrderRow(BaseModel):
@@ -1064,6 +1129,7 @@ class EvidenceRequestTaskRead(BaseModel):
     id: int
     order_id: int
     reconciliation_result_id: int | None
+    customer_refund_dispute_id: int | None
     restaurant_id: int
     task_type: EvidenceRequestTaskType
     required_evidence_type: EvidenceType
@@ -1103,6 +1169,7 @@ class EvidenceRequestTaskSummary(BaseModel):
     description: str | None
     reason: str
     reconciliation_result_id: int | None
+    customer_refund_dispute_id: int | None
     last_upload_evidence_id: int | None
     created_at: datetime
     updated_at: datetime
@@ -1179,4 +1246,114 @@ class EvidenceTaskUploadResponse(BaseModel):
     task: EvidenceRequestTaskRead
     evidence_file: EvidenceFileRead
     validation: ClaimValidationResponse
+
+
+class CustomerRefundDetectRequest(BaseModel):
+    restaurant_id: int | None = None
+    date_from: date | None = None
+    date_to: date | None = None
+
+
+class CustomerRefundDetectResponse(BaseModel):
+    detected_count: int
+    needs_evidence_count: int
+    manual_review_count: int
+    total_deducted_amount: Decimal
+    errors: list[str]
+
+
+class CustomerRefundEvidenceRequirementRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    dispute_id: int
+    required_evidence_type: EvidenceType
+    status: CustomerRefundRequirementStatus
+    evidence_file_id: int | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class UberCustomerRefundDisputeRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    restaurant_id: int
+    uber_store_id: str | None
+    uber_order_id: str | None
+    display_id: str | None
+    claim_order_id: int | None
+    financial_transaction_id: int | None
+    customer_refund_reference: str | None
+    dispute_type: CustomerRefundDisputeType
+    reason: CustomerRefundDisputeReason
+    status: CustomerRefundDisputeStatus
+    customer_refund_amount: Decimal
+    order_amount: Decimal | None
+    currency: str
+    deducted_at: date | None
+    order_date: date | None
+    evidence_required: bool
+    evidence_status: CustomerRefundEvidenceStatus
+    dispute_email_draft_id: int | None
+    provider_draft_id: int | None
+    notes: str | None
+    raw_payload_json: dict[str, Any] | None
+    created_by_user_id: int | None
+    created_at: datetime
+    updated_at: datetime
+    ignored_at: datetime | None
+    ignored_by_user_id: int | None
+    ignore_reason: str | None
+
+
+class CustomerRefundDisputeSummary(BaseModel):
+    id: int
+    restaurant_id: int
+    restaurant_name: str
+    uber_order_id: str | None
+    display_id: str | None
+    claim_order_id: int | None
+    dispute_type: CustomerRefundDisputeType
+    reason: CustomerRefundDisputeReason
+    status: CustomerRefundDisputeStatus
+    customer_refund_amount: Decimal
+    currency: str
+    deducted_at: date | None
+    evidence_status: CustomerRefundEvidenceStatus
+    requirements_count: int
+    pending_requirements_count: int
+    created_at: datetime
+
+
+class CustomerRefundDisputesResponse(BaseModel):
+    disputes: list[CustomerRefundDisputeSummary]
+    limit: int
+    offset: int
+
+
+class CustomerRefundDisputeDetail(BaseModel):
+    dispute: UberCustomerRefundDisputeRead
+    restaurant_name: str
+    order_snapshot: dict[str, Any] | None
+    financial_transaction: dict[str, Any] | None
+    claim_order: ClaimOrderRead | None
+    evidence_requirements: list[CustomerRefundEvidenceRequirementRead]
+    evidence_files: list[EvidenceFileRead]
+    evidence_tasks: list[EvidenceRequestTaskSummary]
+
+
+class CustomerRefundIgnoreRequest(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+class CustomerRefundBulkRequest(BaseModel):
+    dispute_ids: list[int] = Field(min_length=1, max_length=500)
+
+
+class CustomerRefundBulkResponse(BaseModel):
+    created_count: int
+    skipped_count: int
+    errors: list[str]
+    created_ids: list[int]
 

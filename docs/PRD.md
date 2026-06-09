@@ -33,6 +33,7 @@ La V1 pose la base applicative et les premiers objets metier :
 - traitement manuel des reponses Uber pour accepter, refuser, demander des preuves ou confirmer un paiement ;
 - workflow de relances controlees pour dossiers non resolus ;
 - file de demandes de preuves et upload mobile par lien tokenise ;
+- detection et contestation controlee des remboursements clients, chargebacks et ajustements negatifs Uber ;
 - reporting commercial et exports CSV/XLSX ;
 - journalisation des creations importantes ;
 - authentification et roles utilisateurs ;
@@ -92,6 +93,12 @@ La V1 pose la base applicative et les premiers objets metier :
 42. L'utilisateur peut uploader la preuve depuis la tache ou creer un lien mobile tokenise.
 43. Le lien mobile permet uniquement l'upload de la preuve demandee, expire automatiquement et ne stocke que le hash du token.
 44. Apres upload, TENNET rattache la preuve, complete la tache, audite l'action et relance la validation du dossier.
+45. Un owner ou manager ouvre `/customer-refunds` pour detecter les deductions Uber depuis les transactions financieres importees.
+46. TENNET classe les deductions en commande non recue, article manquant, mauvaise commande, probleme qualite, remboursement client, ajustement negatif ou revue manuelle.
+47. TENNET cree les exigences de preuves selon le type de deduction et, si un dossier existe, les taches de preuves associees.
+48. L'utilisateur cree manuellement un dossier TENNET depuis une deduction eligible.
+49. Une fois les preuves completees, l'utilisateur cree un brouillon interne, puis eventuellement un brouillon Gmail.
+50. Aucun email, aucune relance et aucune contestation Uber ne sont envoyes automatiquement.
 
 ## Modeles metier V1
 
@@ -100,6 +107,8 @@ La V1 pose la base applicative et les premiers objets metier :
 - `EvidenceFile` : fichier de preuve local attache a une commande avec metadonnees, checksum et acces securise ;
 - `EvidenceRequestTask` : demande de preuve manquante, priorisee, auditee et rattachee a une commande ;
 - `EvidenceUploadLink` : lien d'upload mobile tokenise, stocke uniquement sous forme de hash ;
+- `UberCustomerRefundDispute` : deduction Uber ou remboursement client detecte depuis une transaction financiere importee ;
+- `CustomerRefundEvidenceRequirement` : preuve requise pour contester une deduction client ou ajustement negatif ;
 - `EmailDraft` : brouillon interne, sans envoi reel ;
 - `EmailAccount` : connexion OAuth Gmail utilisateur, tokens proteges et jamais exposes ;
 - `EmailProviderDraft` : historique des brouillons Gmail crees et envoyes manuellement depuis un brouillon interne ;
