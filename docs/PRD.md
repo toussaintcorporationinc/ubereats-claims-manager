@@ -82,8 +82,10 @@ La V1 pose la base applicative et les premiers objets metier :
 33. Un owner ou manager ouvre `/uber` pour preparer l'acces officiel aux donnees Uber Eats.
 34. Un owner mappe les restaurants TENNET avec leurs stores Uber Eats dans `/uber/stores`.
 35. En attendant l'approbation API Uber, un owner ou manager importe des exports Uber Eats Manager dans `/uber/reconciliation`.
-36. TENNET rapproche commandes annulees et transactions financieres pour detecter les commandes non compensees.
-37. Un owner ou manager cree un dossier TENNET depuis un resultat non compense, puis suit le workflow de preuves et validation existant.
+36. Pour un backfill de plusieurs mois, il passe par `/uber/reporting/new`, choisit le type de rapport, controle la preview, corrige les stores non mappes puis confirme l'import.
+37. TENNET cree des snapshots commandes et transactions financieres uniquement apres confirmation.
+38. TENNET rapproche commandes annulees et transactions financieres pour detecter les commandes non compensees.
+39. Un owner ou manager cree un dossier TENNET depuis un resultat non compense, puis suit le workflow de preuves et validation existant.
 
 ## Modeles metier V1
 
@@ -103,6 +105,8 @@ La V1 pose la base applicative et les premiers objets metier :
 - `UberOrderSnapshot` : snapshot de commande Uber importe par API future ou rapport manager ;
 - `UberFinancialTransaction` : transaction financiere Uber importee pour reconciliation ;
 - `UberReconciliationResult` : resultat de rapprochement compensation / non compensation ;
+- `UberReportingImportBatch` : fichier Uber Reporting analyse avant confirmation ;
+- `UberReportingImportRow` : ligne de rapport avec raw data, normalisation, erreurs et warnings ;
 - `EmailThread` : historique des conversations email outbound et inbound ;
 - `AuditLog` : trace des actions importantes.
 - `User` : utilisateur interne avec role ;

@@ -38,6 +38,18 @@ La Reporting API est la source attendue pour l'historique, les paiements, rembou
 
 En attendant les credentials officiels, TENNET supporte l'import CSV/XLSX de rapports Uber Eats Manager. Ce fallback permet de tester la reconciliation sans appel Uber reel et sans secret Uber.
 
+Mission 19 structure ce fallback en workflow robuste :
+
+1. upload d'un rapport ;
+2. choix du type interne TENNET : `orders_report`, `payments_report`, `adjustments_report` ou `combined_report` ;
+3. preview des colonnes detectees, lignes valides, erreurs, warnings et stores non mappes ;
+4. mapping explicite des stores non mappes vers restaurants TENNET ;
+5. confirmation manuelle ;
+6. creation de `UberOrderSnapshot` et `UberFinancialTransaction` ;
+7. reconciliation financiere.
+
+Ce workflow est adapte au backfill des 6 derniers mois, mais ne code aucune limite de restaurant ni aucune limite stricte de periode.
+
 ## Limites Mission 18
 
 - Aucun appel API Uber reel.

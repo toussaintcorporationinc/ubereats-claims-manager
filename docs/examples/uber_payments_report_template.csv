@@ -1,0 +1,2 @@
+store_id,order_id,transaction_type,transaction_date,payout_reference,amount,currency
+UBER-STORE-TEST-001,UBER-ORDER-TEST-001,compensation,2026-06-03,PAYOUT-TEST-001,12.00,EUR

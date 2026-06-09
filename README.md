@@ -276,3 +276,16 @@ Mission 18 prepare TENNET a une integration officielle Uber Eats sans scraping n
 - endpoints `/v1/uber/*` pour statut, mappings, import reporting et reconciliation.
 
 La V1 du connecteur ne fait aucun appel API Uber reel. Les imports de rapports restent le fallback jusqu'a approbation Uber et obtention de credentials officiels.
+
+Mission 19 ajoute le workflow d'import reporting sur plusieurs mois :
+
+- `/uber/reporting/new` : upload CSV/XLSX et choix `orders_report`, `payments_report`, `adjustments_report` ou `combined_report` ;
+- preview avec colonnes detectees, lignes invalides, warnings et stores non mappes ;
+- `/uber/reporting/{batch_id}` : confirmation de l'import apres controle ;
+- `/uber/unmapped-stores` : mapping explicite des stores Uber vers restaurants TENNET.
+
+Exemples fictifs disponibles :
+
+- `docs/examples/uber_orders_report_template.csv` ;
+- `docs/examples/uber_payments_report_template.csv` ;
+- `docs/examples/uber_adjustments_report_template.csv`.

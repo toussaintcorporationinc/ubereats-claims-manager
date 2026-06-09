@@ -81,6 +81,9 @@ UberReconciliationStatus = Literal[
     "ignored",
     "manual_review",
 ]
+UberReportingReportType = Literal["orders_report", "payments_report", "adjustments_report", "combined_report"]
+UberReportingBatchStatus = Literal["uploaded", "parsed", "confirmed", "partially_imported", "failed", "cancelled"]
+UberReportingRowStatus = Literal["valid", "invalid", "warning", "duplicate", "created", "skipped"]
 
 
 class UserRead(BaseModel):
@@ -838,6 +841,77 @@ class UberReportingImportResponse(BaseModel):
     transactions_created: int
     rows_skipped: int
     errors: list[str]
+
+
+class UberReportingImportRowRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    batch_id: int
+    row_number: int
+    raw_data: dict[str, Any]
+    normalized_data: dict[str, Any] | None
+    status: UberReportingRowStatus
+    errors: list[str]
+    warnings: list[str]
+    created_snapshot_id: int | None
+    created_transaction_id: int | None
+    created_at: datetime
+
+
+class UberReportingImportBatchRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    uploaded_by_user_id: int
+    original_filename: str
+    report_type: UberReportingReportType
+    file_type: str
+    status: UberReportingBatchStatus
+    total_rows: int
+    valid_rows: int
+    invalid_rows: int
+    warning_rows: int
+    created_snapshots_count: int
+    created_transactions_count: int
+    duplicate_rows: int
+    error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+    confirmed_at: datetime | None
+
+
+class UberReportingPreviewResponse(UberReportingImportBatchRead):
+    batch_id: int
+    unmapped_store_ids: list[str]
+    detected_columns: list[str]
+    rows_preview: list[UberReportingImportRowRead]
+
+
+class UberReportingRowsResponse(BaseModel):
+    rows: list[UberReportingImportRowRead]
+    limit: int
+    offset: int
+
+
+class UberReportingConfirmResponse(BaseModel):
+    batch_id: int
+    status: UberReportingBatchStatus
+    created_snapshots_count: int
+    created_transactions_count: int
+    skipped_rows: int
+    errors: list[str]
+
+
+class UberUnmappedStoreRead(BaseModel):
+    uber_store_id: str
+    uber_store_name: str | None
+    row_count: int
+    suggested_restaurant_matches: list[RestaurantRead] = Field(default_factory=list)
+
+
+class UberUnmappedStoreMapRequest(BaseModel):
+    restaurant_id: int
 
 
 class UberReconciliationRunResponse(BaseModel):

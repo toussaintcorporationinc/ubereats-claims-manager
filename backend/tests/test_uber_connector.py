@@ -1,6 +1,7 @@
 from io import BytesIO
 
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -84,6 +85,28 @@ def upload_report(client: TestClient, token: str, csv_text: str) -> dict:
     )
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def preview_report(client: TestClient, token: str, csv_text: str, report_type: str = "orders_report") -> dict:
+    response = client.post(
+        f"/v1/uber/reporting/preview?report_type={report_type}",
+        files={"file": ("uber-report.csv", BytesIO(csv_text.encode("utf-8")), "text/csv")},
+        headers=auth_headers(token),
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def xlsx_bytes(headers: list[str], rows: list[list[object]]) -> BytesIO:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(headers)
+    for row in rows:
+        sheet.append(row)
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return output
 
 
 def test_health_still_public(unauthenticated_client: TestClient) -> None:
@@ -215,3 +238,196 @@ def test_uber_endpoints_are_protected_and_staff_cannot_access_config(unauthentic
     response = unauthenticated_client.get("/v1/uber/status", headers=auth_headers(staff_token))
 
     assert response.status_code == 403
+
+
+def test_owner_can_preview_orders_report_csv_with_normalization(unauthenticated_client: TestClient) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Restaurant Uber Preview")
+    create_store_mapping(unauthenticated_client, owner_token, restaurant["id"], "store-preview")
+
+    preview = preview_report(
+        unauthenticated_client,
+        owner_token,
+        "\n".join(
+            [
+                "store id,numero_commande,statut,date_commande,annulation,montant_commande,devise,unknown_column",
+                "store-preview,UBER-PREVIEW-1,annulé,01/06/2026 20:15,01/06/2026 20:35,\"1 234,56\",EUR,ignored",
+            ]
+        ),
+    )
+
+    row = preview["rows_preview"][0]
+    assert preview["valid_rows"] == 1
+    assert preview["detected_columns"]
+    assert row["normalized_data"]["order_total_amount"] == "1234.56"
+    assert row["normalized_data"]["is_cancelled"] is True
+    assert row["normalized_data"]["placed_at"].startswith("2026-06-01T20:15")
+
+
+def test_preview_payments_adjustments_and_xlsx(unauthenticated_client: TestClient) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Restaurant Uber XLSX")
+    create_store_mapping(unauthenticated_client, owner_token, restaurant["id"], "store-xlsx")
+    payments = preview_report(
+        unauthenticated_client,
+        owner_token,
+        "\n".join(
+            [
+                "store_uuid,order_uuid,payment_type,payment_date,payout_id,net_amount,currency",
+                "store-xlsx,UBER-PAY-1,compensation,2026-06-02,PAYOUT-1,\"-12,50\",EUR",
+            ]
+        ),
+        "payments_report",
+    )
+    assert payments["total_rows"] == 1
+
+    workbook_payload = xlsx_bytes(
+        ["store_uuid", "order_uuid", "adjustment_type", "date_transaction", "value", "currency"],
+        [["store-xlsx", "UBER-ADJ-1", "refund", "02/06/2026", "-12,50", "EUR"]],
+    )
+    response = unauthenticated_client.post(
+        "/v1/uber/reporting/preview?report_type=adjustments_report",
+        files={"file": ("adjustments.xlsx", workbook_payload, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=auth_headers(owner_token),
+    )
+    assert response.status_code == 200, response.text
+    row = response.json()["rows_preview"][0]
+    assert row["normalized_data"]["amount"] == "-12.50"
+    assert row["normalized_data"]["transaction_date"] == "2026-06-02"
+
+
+def test_preview_rejects_forbidden_extension_and_reports_missing_columns(unauthenticated_client: TestClient) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    forbidden = unauthenticated_client.post(
+        "/v1/uber/reporting/preview?report_type=orders_report",
+        files={"file": ("report.txt", BytesIO(b"hello"), "text/plain")},
+        headers=auth_headers(owner_token),
+    )
+    assert forbidden.status_code == 400
+
+    preview = preview_report(
+        unauthenticated_client,
+        owner_token,
+        "unknown_column\nvalue",
+    )
+    row = preview["rows_preview"][0]
+    assert row["status"] == "invalid"
+    assert "missing_uber_store_id" in row["errors"]
+
+
+def test_unmapped_store_preview_and_owner_mapping(unauthenticated_client: TestClient) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Restaurant Uber Map Later")
+    preview = preview_report(
+        unauthenticated_client,
+        owner_token,
+        "\n".join(
+            [
+                "store_id,store_name,order_id,status,amount,currency",
+                "store-later,Store Later,UBER-LATER-1,cancelled,10.00,EUR",
+            ]
+        ),
+    )
+    assert preview["unmapped_store_ids"] == ["store-later"]
+
+    stores = unauthenticated_client.get("/v1/uber/reporting/unmapped-stores", headers=auth_headers(owner_token))
+    assert stores.status_code == 200
+    assert stores.json()[0]["uber_store_id"] == "store-later"
+
+    mapped = unauthenticated_client.post(
+        "/v1/uber/reporting/unmapped-stores/store-later/map",
+        json={"restaurant_id": restaurant["id"]},
+        headers=auth_headers(owner_token),
+    )
+    assert mapped.status_code == 200
+    assert mapped.json()["restaurant_id"] == restaurant["id"]
+
+
+def test_confirm_reporting_batch_creates_snapshot_and_no_snapshot_duplicate(
+    unauthenticated_client: TestClient,
+    db_session: Session,
+) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Restaurant Uber Confirm")
+    create_store_mapping(unauthenticated_client, owner_token, restaurant["id"], "store-confirm")
+    preview = preview_report(
+        unauthenticated_client,
+        owner_token,
+        "\n".join(
+            [
+                "store_id,order_id,status,amount,currency",
+                "store-confirm,UBER-CONFIRM-1,cancelled,20.00,EUR",
+            ]
+        ),
+    )
+
+    first = unauthenticated_client.post(
+        f"/v1/uber/reporting/batches/{preview['batch_id']}/confirm",
+        headers=auth_headers(owner_token),
+    )
+    second = unauthenticated_client.post(
+        f"/v1/uber/reporting/batches/{preview['batch_id']}/confirm",
+        headers=auth_headers(owner_token),
+    )
+
+    assert first.status_code == 200
+    assert first.json()["created_snapshots_count"] == 1
+    assert second.status_code == 400
+    snapshots = db_session.scalars(select(UberOrderSnapshot).where(UberOrderSnapshot.uber_order_id == "UBER-CONFIRM-1")).all()
+    assert len(snapshots) == 1
+
+
+def test_confirm_reporting_batch_creates_transaction_without_duplicate(
+    unauthenticated_client: TestClient,
+    db_session: Session,
+) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Restaurant Uber Transaction")
+    create_store_mapping(unauthenticated_client, owner_token, restaurant["id"], "store-tx")
+    preview = preview_report(
+        unauthenticated_client,
+        owner_token,
+        "\n".join(
+            [
+                "store_id,order_id,transaction_type,transaction_date,payout_reference,amount,currency",
+                "store-tx,UBER-TX-1,compensation,2026-06-02,PAYOUT-1,10.00,EUR",
+                "store-tx,UBER-TX-1,compensation,2026-06-02,PAYOUT-1,10.00,EUR",
+            ]
+        ),
+        "payments_report",
+    )
+    assert preview["duplicate_rows"] == 1
+
+    result = unauthenticated_client.post(
+        f"/v1/uber/reporting/batches/{preview['batch_id']}/confirm",
+        headers=auth_headers(owner_token),
+    )
+
+    assert result.status_code == 200
+    assert result.json()["created_transactions_count"] == 1
+    transactions = db_session.scalars(
+        select(UberFinancialTransaction).where(UberFinancialTransaction.uber_order_id == "UBER-TX-1")
+    ).all()
+    assert len(transactions) == 1
+
+
+def test_manager_non_assigned_and_staff_are_refused_for_reporting_preview(unauthenticated_client: TestClient) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    manager = create_user(unauthenticated_client, owner_token, "manager@example.com", "manager")
+    staff = create_user(unauthenticated_client, owner_token, "staff@example.com", "staff")
+    manager_token = login(unauthenticated_client, manager["email"])
+    staff_token = login(unauthenticated_client, staff["email"])
+
+    manager_preview = preview_report(
+        unauthenticated_client,
+        manager_token,
+        "store_id,order_id,status,amount\nunknown-store,UBER-DENIED,cancelled,10.00",
+    )
+    assert manager_preview["rows_preview"][0]["status"] == "warning"
+
+    staff_response = unauthenticated_client.post(
+        "/v1/uber/reporting/preview?report_type=orders_report",
+        files={"file": ("uber-report.csv", BytesIO(b"store_id,order_id\nx,y"), "text/csv")},
+        headers=auth_headers(staff_token),
+    )
+    assert staff_response.status_code == 403
