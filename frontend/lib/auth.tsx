@@ -1,7 +1,15 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, clearStoredToken, getStoredToken, type LoginPayload, type RegisterOwnerPayload, type User } from "./api";
+import {
+  SESSION_EXPIRED_EVENT,
+  api,
+  clearStoredToken,
+  getStoredToken,
+  type LoginPayload,
+  type RegisterOwnerPayload,
+  type User,
+} from "./api";
 
 type AuthContextValue = {
   user: User | null;
@@ -38,6 +46,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void refreshUser();
+  }, []);
+
+  useEffect(() => {
+    function handleSessionExpired() {
+      setUser(null);
+      setLoading(false);
+    }
+
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
   }, []);
 
   const value = useMemo<AuthContextValue>(
