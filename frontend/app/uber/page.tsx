@@ -55,6 +55,12 @@ export default function UberPage() {
         <Link className="secondary-button" href="/uber/reconciliation">
           Reconciliation
         </Link>
+        <Link className="secondary-button" href="/uber/reporting">
+          Reporting imports
+        </Link>
+        <Link className="secondary-button" href="/uber/unmapped-stores">
+          Stores non mappes
+        </Link>
       </div>
     </section>
   );

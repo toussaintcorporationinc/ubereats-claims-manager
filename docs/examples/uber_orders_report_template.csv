@@ -1,0 +1,2 @@
+store_id,store_name,order_id,display_id,status,order_date,cancellation_date,order_amount,currency
+UBER-STORE-TEST-001,Restaurant Test TENNET,UBER-ORDER-TEST-001,TEST-001,cancelled,2026-06-01 20:15,2026-06-01 20:35,24.90,EUR

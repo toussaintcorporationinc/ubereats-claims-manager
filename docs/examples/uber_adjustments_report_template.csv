@@ -1,0 +1,2 @@
+store_id,order_id,adjustment_type,date_transaction,payout_reference,value,currency
+UBER-STORE-TEST-001,UBER-ORDER-TEST-001,refund,2026-06-04,PAYOUT-TEST-002,-5.00,EUR

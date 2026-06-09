@@ -109,6 +109,9 @@ UBER_RECONCILIATION_STATUSES = (
     "ignored",
     "manual_review",
 )
+UBER_REPORTING_IMPORT_REPORT_TYPES = ("orders_report", "payments_report", "adjustments_report", "combined_report")
+UBER_REPORTING_IMPORT_BATCH_STATUSES = ("uploaded", "parsed", "confirmed", "partially_imported", "failed", "cancelled")
+UBER_REPORTING_IMPORT_ROW_STATUSES = ("valid", "invalid", "warning", "duplicate", "created", "skipped")
 
 
 def utc_now() -> datetime:
@@ -703,6 +706,70 @@ class UberReconciliationResult(TimestampMixin, Base):
 
     restaurant: Mapped[Restaurant] = relationship(back_populates="uber_reconciliation_results")
     claim_order: Mapped[ClaimOrder | None] = relationship()
+
+
+class UberReportingImportBatch(TimestampMixin, Base):
+    __tablename__ = "uber_reporting_import_batches"
+    __table_args__ = (
+        CheckConstraint(
+            check_in_constraint("report_type", UBER_REPORTING_IMPORT_REPORT_TYPES),
+            name="ck_uber_reporting_import_batches_report_type",
+        ),
+        CheckConstraint(
+            check_in_constraint("status", UBER_REPORTING_IMPORT_BATCH_STATUSES),
+            name="ck_uber_reporting_import_batches_status",
+        ),
+        Index("ix_uber_reporting_import_batches_uploaded_by_user_id", "uploaded_by_user_id"),
+        Index("ix_uber_reporting_import_batches_status", "status"),
+        Index("ix_uber_reporting_import_batches_report_type", "report_type"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    uploaded_by_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    report_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="uploaded")
+    total_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    valid_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    invalid_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    warning_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_snapshots_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_transactions_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    duplicate_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    rows: Mapped[list["UberReportingImportRow"]] = relationship(
+        back_populates="batch",
+        cascade="all, delete-orphan",
+    )
+
+
+class UberReportingImportRow(Base):
+    __tablename__ = "uber_reporting_import_rows"
+    __table_args__ = (
+        CheckConstraint(
+            check_in_constraint("status", UBER_REPORTING_IMPORT_ROW_STATUSES),
+            name="ck_uber_reporting_import_rows_status",
+        ),
+        Index("ix_uber_reporting_import_rows_batch_id", "batch_id"),
+        Index("ix_uber_reporting_import_rows_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("uber_reporting_import_batches.id"), nullable=False)
+    row_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    raw_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    normalized_data: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    errors: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    warnings: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    created_snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("uber_order_snapshots.id"))
+    created_transaction_id: Mapped[int | None] = mapped_column(ForeignKey("uber_financial_transactions.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    batch: Mapped[UberReportingImportBatch] = relationship(back_populates="rows")
 
 
 class AuditLog(Base):
