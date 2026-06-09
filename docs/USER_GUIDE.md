@@ -187,3 +187,11 @@ Follow-ups are limited and traceable. There is no infinite follow-up loop.
 
 Customer names are excluded from reports and exports by default.
 
+## V1.1 staging acceptance
+
+For the V1.1 release candidate, use `/uber/reporting`, `/uber/reconciliation`, `/customer-refunds`, `/evidence-tasks`, `/evidence-imports`, `/appeals` and `/recovery` with fictitious data first.
+
+Use `docs/examples/v1_1` as the starting dataset.
+
+Before production rollout, repeat the import and reconciliation scenarios with real-format Uber exports supplied by the operator, while keeping customer data minimized.
+

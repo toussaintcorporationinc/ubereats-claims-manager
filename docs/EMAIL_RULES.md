@@ -211,3 +211,12 @@ Regles :
 - date de creation du brouillon ;
 - date d'envoi manuel.
 
+## V1.1 RC reminders
+
+- Refusals create review/appeal work, not automatic closure.
+- Appeal drafts stay internal until an authorized user creates a Gmail draft.
+- Gmail sending remains manual and explicit.
+- `APPEAL_AUTO_SEND_ENABLED=false` must remain the default.
+- `FOLLOWUP_AUTOMATIC_SEND_ENABLED=false` must remain the default.
+- No spam loop is acceptable.
+

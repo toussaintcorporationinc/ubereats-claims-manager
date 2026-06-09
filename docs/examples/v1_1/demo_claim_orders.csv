@@ -1,0 +1,4 @@
+restaurant_name,uber_order_number,customer_name,order_date,order_time,cancellation_time,order_amount,currency,accepted_by_restaurant,prepared_before_cancellation,loss_type,notes,internal_reference
+Restaurant Test Nord,UBER-RC-004,Client Test,2026-02-11,21:05,21:44,41.20,EUR,true,true,gaspillage alimentaire,Dossier deja cree pour verifier already_claimed,RC-DEMO-004
+Restaurant Test Nord,UBER-RC-012,Client Test,2026-04-02,19:30,19:55,27.80,EUR,true,true,gaspillage alimentaire,Dossier fictif avec preuves manquantes,RC-DEMO-012
+Restaurant Test Sud,UBER-RC-013,Client Test,2026-04-04,12:10,12:40,15.60,EUR,true,true,commande non recue,Dossier fictif pour deduction client,RC-DEMO-013

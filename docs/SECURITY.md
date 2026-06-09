@@ -294,6 +294,22 @@ Regles appliquees :
 
 Le chiffrement des tokens est encapsule dans `TokenCipherService`. La V1 fournit une protection isolee et remplacable ; une version production plus avancee pourra brancher un KMS ou un gestionnaire de secrets sans changer les routes.
 
+## V1.1 RC staging security
+
+Staging must use `.env.staging`, never `.env.production`.
+
+Rules:
+
+- no production secret in staging;
+- no real customer data in committed examples;
+- OpenAI/Vision disabled by default;
+- Gmail disabled by default;
+- inbound Gmail disabled by default;
+- follow-up automatic send disabled;
+- appeal automatic send disabled;
+- recovery and reporting exports still enforce owner/manager permissions;
+- final manual closure of appeal workflows remains owner-only.
+
 ## Roles
 
 ### owner

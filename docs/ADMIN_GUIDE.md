@@ -197,3 +197,18 @@ V1 does not include an automated retention workflow. Recommended operating polic
 - keep backups encrypted and access-limited;
 - review old evidence files regularly.
 
+## V1.1 staging administration
+
+Use `docker-compose.staging.yml` and `.env.staging.example` for the V1.1 release candidate.
+
+Rules:
+
+- do not reuse production volumes;
+- do not copy production secrets into staging;
+- keep `EMAIL_PROVIDER_ENABLED=false` unless Gmail staging is intentionally tested;
+- keep `AI_EVIDENCE_ANALYSIS_ENABLED=false` by default;
+- keep `FOLLOWUP_AUTOMATIC_SEND_ENABLED=false`;
+- keep `APPEAL_AUTO_SEND_ENABLED=false`;
+- run `scripts/smoke_test_v1_1.sh` before acceptance;
+- validate with `docs/V1_1_ACCEPTANCE_TEST_PLAN.md`.
+

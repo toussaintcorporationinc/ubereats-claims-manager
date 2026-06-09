@@ -107,3 +107,16 @@ TENNET cree un `AuditLog` pour :
 - Les preuves et decisions restent sous controle humain.
 
 Objectif commercial : aucune deduction significative ne doit rester non revue, tout en gardant une trace claire et responsable.
+
+## V1.1 RC acceptance
+
+Use `docs/examples/v1_1/uber_adjustments_report_sample.csv` to validate:
+
+- customer refund detection;
+- order not received;
+- missing item;
+- negative adjustment;
+- chargeback;
+- manual review when reason is unclear;
+- evidence requirements;
+- refusal review opening an appeal workflow.

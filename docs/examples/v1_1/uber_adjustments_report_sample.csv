@@ -1,0 +1,6 @@
+uber_store_id,uber_order_id,transaction_type,transaction_date,payout_reference,amount,currency,description
+STORE-RC-001,UBER-RC-007,eater_refund,2026-03-12,PAYOUT-RC-005,-16.90,EUR,Commande non recue par Client Test
+STORE-RC-001,UBER-RC-008,refund,2026-03-13,PAYOUT-RC-005,-8.50,EUR,Article manquant signale par Client Test
+STORE-RC-002,UBER-RC-009,adjustment_negative,2026-03-16,PAYOUT-RC-006,-12.20,EUR,Ajustement net lie a une erreur de commande
+STORE-RC-002,UBER-RC-010,chargeback,2026-03-18,PAYOUT-RC-006,-21.00,EUR,Chargeback fictif pour recette
+STORE-RC-003,UBER-RC-011,unknown_adjustment,2026-03-21,PAYOUT-RC-007,-5.00,EUR,Motif incomplet a revoir manuellement

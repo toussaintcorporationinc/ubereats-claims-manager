@@ -1,0 +1,5 @@
+uber_store_id,uber_order_id,transaction_type,transaction_date,payout_reference,amount,currency
+STORE-RC-001,UBER-RC-002,compensation,2026-01-15,PAYOUT-RC-001,18.50,EUR
+STORE-RC-002,UBER-RC-003,merchant_payment,2026-02-06,PAYOUT-RC-002,10.00,EUR
+STORE-RC-002,UBER-RC-004,payment,2026-02-14,PAYOUT-RC-003,41.20,EUR
+STORE-RC-003,UBER-RC-006,payment,2026-03-08,PAYOUT-RC-004,22.10,EUR

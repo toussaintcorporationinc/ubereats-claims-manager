@@ -104,6 +104,9 @@ jobs:
       - name: Validate production compose file
         run: PRODUCTION_ENV_FILE=.env.production.example docker compose --env-file .env.production.example -f docker-compose.prod.yml config
 
+      - name: Validate staging compose file
+        run: STAGING_ENV_FILE=.env.staging.example docker compose --env-file .env.staging.example -f docker-compose.staging.yml config
+
       - name: Build images
         run: docker compose build
 
