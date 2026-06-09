@@ -10,6 +10,7 @@ const positiveStatuses = new Set([
   "provider_draft_created",
   "sent",
   "response_received",
+  "evidence_ready",
   "linked",
   "success",
   "reviewed",
@@ -33,11 +34,15 @@ const warningStatuses = new Set([
   "information_requested",
   "followup_needed",
   "pending",
+  "needs_evidence",
+  "detected",
   "draft_created",
   "provider_draft_created",
   "payment_verification",
+  "high",
+  "normal",
 ]);
-const closedStatuses = new Set(["refused", "closed", "inactive", "failed", "cancelled", "invalid", "skipped", "ignored"]);
+const closedStatuses = new Set(["refused", "closed", "inactive", "failed", "cancelled", "invalid", "skipped", "ignored", "low"]);
 
 export default function StatusBadge({ status }: { status: string }) {
   const tone = positiveStatuses.has(status)

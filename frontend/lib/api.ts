@@ -74,6 +74,7 @@ export type ClaimResponseReviewType =
   | "followup_needed"
   | "ignored"
   | "manual_review";
+export type CustomerRefundReviewType = ClaimResponseReviewType;
 export type FollowUpTaskType = "followup_1" | "followup_2" | "escalation" | "manual_review" | "payment_verification";
 export type FollowUpTaskStatus =
   | "pending"
@@ -138,6 +139,38 @@ export type CustomerRefundDisputeStatus =
   | "manual_review";
 export type CustomerRefundEvidenceStatus = "missing" | "partial" | "complete" | "not_required" | "manual_review";
 export type CustomerRefundRequirementStatus = "pending" | "uploaded" | "waived" | "not_available";
+export type RecoveryLossCategory =
+  | "cancellation_not_compensated"
+  | "customer_refund"
+  | "order_not_received"
+  | "missing_item"
+  | "incorrect_item"
+  | "order_error_adjustment"
+  | "chargeback"
+  | "manual_review";
+export type RecoveryStage =
+  | "detected"
+  | "needs_evidence"
+  | "evidence_ready"
+  | "draft_created"
+  | "gmail_draft_created"
+  | "sent"
+  | "response_received"
+  | "accepted"
+  | "payment_to_verify"
+  | "payment_confirmed"
+  | "refused"
+  | "ignored"
+  | "manual_review";
+export type RecoveryCaseType = "claim_order" | "reconciliation_result" | "customer_refund_dispute";
+export type RecoveryActionType =
+  | "upload_evidence"
+  | "create_claim_order"
+  | "create_draft"
+  | "create_gmail_draft"
+  | "process_response"
+  | "followup"
+  | "manual_review";
 
 export type Restaurant = {
   id: number;
@@ -440,6 +473,9 @@ export type CommercialRestaurantSummary = {
 
 export type CommercialCustomerRefundSummary = {
   total_deducted_amount: MoneyValue;
+  total_recovered_amount: MoneyValue;
+  total_refused_amount: MoneyValue;
+  total_pending_amount: MoneyValue;
   disputes_count: number;
   needs_evidence_count: number;
   evidence_ready_count: number;
@@ -776,6 +812,10 @@ export type UberCustomerRefundDispute = {
   status: CustomerRefundDisputeStatus;
   customer_refund_amount: MoneyValue;
   order_amount: MoneyValue;
+  recovered_amount: MoneyValue;
+  expected_payment_date: string | null;
+  last_reviewed_at: string | null;
+  last_reviewed_by_user_id: number | null;
   currency: string;
   deducted_at: string | null;
   order_date: string | null;
@@ -804,6 +844,9 @@ export type CustomerRefundDisputeSummary = {
   reason: CustomerRefundDisputeReason;
   status: CustomerRefundDisputeStatus;
   customer_refund_amount: MoneyValue;
+  recovered_amount: MoneyValue;
+  expected_payment_date: string | null;
+  last_reviewed_at: string | null;
   currency: string;
   deducted_at: string | null;
   evidence_status: CustomerRefundEvidenceStatus;
@@ -827,6 +870,7 @@ export type CustomerRefundDisputeDetail = {
   evidence_requirements: CustomerRefundEvidenceRequirement[];
   evidence_files: EvidenceFile[];
   evidence_tasks: EvidenceRequestTaskSummary[];
+  reviews: CustomerRefundDisputeReview[];
 };
 
 export type CustomerRefundBulkResponse = {
@@ -834,6 +878,149 @@ export type CustomerRefundBulkResponse = {
   skipped_count: number;
   errors: string[];
   created_ids: number[];
+};
+
+export type CustomerRefundDisputeReview = {
+  id: number;
+  dispute_id: number;
+  inbound_message_id: number | null;
+  reviewed_by_user_id: number;
+  review_type: CustomerRefundReviewType;
+  previous_dispute_status: CustomerRefundDisputeStatus;
+  new_dispute_status: CustomerRefundDisputeStatus;
+  previous_claim_order_status: ClaimOrderStatus | null;
+  new_claim_order_status: ClaimOrderStatus | null;
+  recovered_amount: MoneyValue;
+  expected_payment_date: string | null;
+  refusal_reason: string | null;
+  evidence_requested: boolean | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CustomerRefundDisputeReviewPayload = {
+  inbound_message_id?: number | null;
+  review_type: CustomerRefundReviewType;
+  recovered_amount?: string | null;
+  expected_payment_date?: string | null;
+  refusal_reason?: string | null;
+  evidence_requested?: boolean | null;
+  notes?: string | null;
+};
+
+export type CustomerRefundDisputeReviewResponse = {
+  review: CustomerRefundDisputeReview;
+  dispute_status: CustomerRefundDisputeStatus;
+  claim_order_status: ClaimOrderStatus | null;
+};
+
+export type CustomerRefundDisputeReviewsResponse = {
+  reviews: CustomerRefundDisputeReview[];
+  limit: number;
+  offset: number;
+};
+
+export type RecoveryFilters = {
+  restaurant_id?: number | "";
+  date_from?: string;
+  date_to?: string;
+  loss_category?: RecoveryLossCategory | "";
+  include_ignored?: boolean;
+  case_type?: RecoveryCaseType | "";
+  recovery_stage?: RecoveryStage | "";
+  min_amount?: string;
+  max_amount?: string;
+  needs_evidence?: boolean;
+  limit?: number;
+  offset?: number;
+};
+
+export type RecoveryTotals = {
+  detected_amount: MoneyValue;
+  claimable_amount: MoneyValue;
+  missing_evidence_amount: MoneyValue;
+  sent_amount: MoneyValue;
+  recovered_amount: MoneyValue;
+  refused_amount: MoneyValue;
+  pending_amount: MoneyValue;
+  detected_count: number;
+  claimable_count: number;
+  missing_evidence_count: number;
+  sent_count: number;
+  recovered_count: number;
+  refused_count: number;
+  manual_review_count: number;
+  recovery_rate: MoneyValue;
+  review_coverage_rate: MoneyValue;
+};
+
+export type RecoveryBreakdownItem = {
+  key: string;
+  count: number;
+  detected_amount: MoneyValue;
+  claimable_amount: MoneyValue;
+  recovered_amount: MoneyValue;
+  refused_amount: MoneyValue;
+  restaurant_id?: number;
+  restaurant_name?: string;
+};
+
+export type RecoveryCase = {
+  case_type: RecoveryCaseType;
+  case_id: number;
+  restaurant_id: number;
+  restaurant_name: string;
+  uber_order_number: string | null;
+  loss_category: RecoveryLossCategory;
+  recovery_stage: RecoveryStage;
+  detected_amount: MoneyValue;
+  claimable_amount: MoneyValue;
+  recovered_amount: MoneyValue;
+  status: string;
+  evidence_status: string | null;
+  next_action: string | null;
+  created_at: string;
+  link_url: string;
+};
+
+export type RecoverySummary = {
+  filters: {
+    restaurant_id: number | null;
+    date_from: string | null;
+    date_to: string | null;
+    loss_category: string | null;
+    include_ignored: boolean;
+  };
+  totals: RecoveryTotals;
+  by_restaurant: RecoveryBreakdownItem[];
+  by_loss_category: RecoveryBreakdownItem[];
+  by_recovery_stage: RecoveryBreakdownItem[];
+  top_recoverable_cases: RecoveryCase[];
+};
+
+export type RecoveryCasesResponse = {
+  cases: RecoveryCase[];
+  limit: number;
+  offset: number;
+};
+
+export type RecoveryAction = {
+  action_type: RecoveryActionType;
+  case_type: string;
+  case_id: number;
+  restaurant_name: string;
+  priority: string;
+  amount: MoneyValue;
+  due_at: string | null;
+  label: string;
+  url: string;
+};
+
+export type RecoveryActionsResponse = {
+  actions: RecoveryAction[];
+  limit: number;
+  offset: number;
 };
 
 export type UberStatus = {
@@ -1606,6 +1793,24 @@ export const api = {
     postJson<EmailProviderDraft, Record<string, never>>(`/v1/customer-refunds/${id}/create-gmail-draft`, {}),
   ignoreCustomerRefundDispute: (id: number, payload: { reason: string }) =>
     postJson<UberCustomerRefundDispute, { reason: string }>(`/v1/customer-refunds/${id}/ignore`, payload),
+  createCustomerRefundReview: (id: number, payload: CustomerRefundDisputeReviewPayload) =>
+    postJson<CustomerRefundDisputeReviewResponse, CustomerRefundDisputeReviewPayload>(
+      `/v1/customer-refunds/${id}/reviews`,
+      payload,
+    ),
+  getCustomerRefundReviews: (id: number) =>
+    request<CustomerRefundDisputeReview[]>(`/v1/customer-refunds/${id}/reviews`),
+  getCustomerRefundReviewsList: (
+    filters: {
+      restaurant_id?: number | "";
+      review_type?: CustomerRefundReviewType | "";
+      dispute_id?: number;
+      date_from?: string;
+      date_to?: string;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => request<CustomerRefundDisputeReviewsResponse>(`/v1/customer-refund-reviews${buildQuery(filters)}`),
   bulkCreateCustomerRefundClaimOrders: (disputeIds: number[]) =>
     postJson<CustomerRefundBulkResponse, { dispute_ids: number[] }>("/v1/customer-refunds/bulk-create-claim-orders", {
       dispute_ids: disputeIds,
@@ -1614,6 +1819,16 @@ export const api = {
     postJson<CustomerRefundBulkResponse, { dispute_ids: number[] }>("/v1/customer-refunds/bulk-create-drafts", {
       dispute_ids: disputeIds,
     }),
+  getRecoverySummary: (filters: RecoveryFilters = {}) =>
+    request<RecoverySummary>(`/v1/recovery/summary${buildQuery(filters)}`),
+  getRecoveryCases: (filters: RecoveryFilters = {}) =>
+    request<RecoveryCasesResponse>(`/v1/recovery/cases${buildQuery(filters)}`),
+  getRecoveryActions: (filters: RecoveryFilters = {}) =>
+    request<RecoveryActionsResponse>(`/v1/recovery/actions${buildQuery(filters)}`),
+  downloadRecoverySummaryXlsx: (filters: RecoveryFilters = {}) =>
+    downloadBlob(`/v1/recovery/export/summary.xlsx${buildQuery(filters)}`),
+  downloadRecoveryCasesCsv: (filters: RecoveryFilters = {}) =>
+    downloadBlob(`/v1/recovery/export/cases.csv${buildQuery(filters)}`),
   getUberStatus: () => request<UberStatus>("/v1/uber/status"),
   getUberStoreMappings: () => request<UberStoreMapping[]>("/v1/uber/store-mappings"),
   createUberStoreMapping: (payload: UberStoreMappingCreatePayload) =>

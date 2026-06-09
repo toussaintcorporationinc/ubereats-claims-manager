@@ -20,6 +20,7 @@ from app.routes import (
     health,
     imports,
     orders,
+    recovery,
     reports,
     response_reviews,
     restaurants,
@@ -84,8 +85,10 @@ async def production_hardening_middleware(request: Request, call_next):
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(customer_refunds.router)
+app.include_router(customer_refunds.reviews_router)
 app.include_router(restaurants.router)
 app.include_router(orders.router)
+app.include_router(recovery.router)
 app.include_router(reports.router)
 app.include_router(evidence.router)
 app.include_router(evidence_tasks.router)

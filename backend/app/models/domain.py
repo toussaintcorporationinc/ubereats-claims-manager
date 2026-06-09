@@ -99,6 +99,7 @@ CLAIM_RESPONSE_REVIEW_TYPES = (
     "ignored",
     "manual_review",
 )
+CUSTOMER_REFUND_REVIEW_TYPES = CLAIM_RESPONSE_REVIEW_TYPES
 FOLLOWUP_TASK_TYPES = ("followup_1", "followup_2", "escalation", "manual_review", "payment_verification")
 FOLLOWUP_TASK_STATUSES = (
     "pending",
@@ -551,6 +552,7 @@ class InboundEmailMessage(TimestampMixin, Base):
     email_account: Mapped[EmailAccount] = relationship(back_populates="inbound_messages")
     order: Mapped[ClaimOrder | None] = relationship(back_populates="inbound_email_messages")
     response_reviews: Mapped[list["ClaimResponseReview"]] = relationship(back_populates="inbound_message")
+    customer_refund_reviews: Mapped[list["CustomerRefundDisputeReview"]] = relationship(back_populates="inbound_message")
 
 
 class ClaimResponseReview(TimestampMixin, Base):
@@ -798,6 +800,10 @@ class UberCustomerRefundDispute(TimestampMixin, Base):
     ignored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ignored_by_user_id: Mapped[int | None] = mapped_column(Integer)
     ignore_reason: Mapped[str | None] = mapped_column(Text)
+    recovered_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    expected_payment_date: Mapped[date | None] = mapped_column(Date)
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_reviewed_by_user_id: Mapped[int | None] = mapped_column(Integer)
 
     restaurant: Mapped[Restaurant] = relationship(back_populates="customer_refund_disputes")
     claim_order: Mapped[ClaimOrder | None] = relationship(back_populates="customer_refund_disputes")
@@ -809,6 +815,7 @@ class UberCustomerRefundDispute(TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
     evidence_request_tasks: Mapped[list["EvidenceRequestTask"]] = relationship(back_populates="customer_refund_dispute")
+    reviews: Mapped[list["CustomerRefundDisputeReview"]] = relationship(back_populates="dispute")
 
 
 class CustomerRefundEvidenceRequirement(TimestampMixin, Base):
@@ -835,6 +842,38 @@ class CustomerRefundEvidenceRequirement(TimestampMixin, Base):
 
     dispute: Mapped[UberCustomerRefundDispute] = relationship(back_populates="evidence_requirements")
     evidence_file: Mapped[EvidenceFile | None] = relationship()
+
+
+class CustomerRefundDisputeReview(TimestampMixin, Base):
+    __tablename__ = "customer_refund_dispute_reviews"
+    __table_args__ = (
+        CheckConstraint(
+            check_in_constraint("review_type", CUSTOMER_REFUND_REVIEW_TYPES),
+            name="ck_customer_refund_dispute_reviews_type",
+        ),
+        Index("ix_customer_refund_dispute_reviews_dispute_id", "dispute_id"),
+        Index("ix_customer_refund_dispute_reviews_inbound_message_id", "inbound_message_id"),
+        Index("ix_customer_refund_dispute_reviews_reviewed_by_user_id", "reviewed_by_user_id"),
+        Index("ix_customer_refund_dispute_reviews_review_type", "review_type"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dispute_id: Mapped[int] = mapped_column(ForeignKey("uber_customer_refund_disputes.id"), nullable=False)
+    inbound_message_id: Mapped[int | None] = mapped_column(ForeignKey("inbound_email_messages.id"))
+    reviewed_by_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    review_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    previous_dispute_status: Mapped[str] = mapped_column(String(50), nullable=False)
+    new_dispute_status: Mapped[str] = mapped_column(String(50), nullable=False)
+    previous_claim_order_status: Mapped[str | None] = mapped_column(String(50))
+    new_claim_order_status: Mapped[str | None] = mapped_column(String(50))
+    recovered_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    expected_payment_date: Mapped[date | None] = mapped_column(Date)
+    refusal_reason: Mapped[str | None] = mapped_column(Text)
+    evidence_requested: Mapped[bool | None] = mapped_column(Boolean)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    dispute: Mapped[UberCustomerRefundDispute] = relationship(back_populates="reviews")
+    inbound_message: Mapped[InboundEmailMessage | None] = relationship(back_populates="customer_refund_reviews")
 
 
 class UberReconciliationRun(Base):

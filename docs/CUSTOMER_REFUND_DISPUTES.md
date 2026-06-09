@@ -45,6 +45,34 @@ Une preuve manquante bloque la creation du brouillon de contestation. Les preuve
 8. Creer un brouillon interne.
 9. Si Gmail est configure, creer un brouillon Gmail.
 10. Envoyer manuellement uniquement via le workflow Gmail deja approuve.
+11. Traiter manuellement la decision Uber dans le detail de la deduction.
+12. Consulter `/recovery` pour suivre le montant detecte, contestable, envoye, recupere, refuse ou en revue manuelle.
+
+## Traitement manuel des outcomes
+
+Un `owner` ou `manager` peut creer une `CustomerRefundDisputeReview`.
+
+Types de decisions :
+
+- `accepted`
+- `payment_to_verify`
+- `payment_confirmed`
+- `refused`
+- `evidence_requested`
+- `information_requested`
+- `followup_needed`
+- `ignored`
+- `manual_review`
+
+Effets :
+
+- le statut de la dispute est mis a jour ;
+- le dossier TENNET lie est mis a jour si present ;
+- `recovered_amount` et `expected_payment_date` sont renseignes si disponibles ;
+- une demande de preuve recalcule les exigences et taches ;
+- chaque decision est historisee et auditee.
+
+Les statuts `payment_confirmed` et `ignored` sont proteges contre une nouvelle transition en V1.1.
 
 ## Permissions
 
@@ -63,6 +91,8 @@ TENNET cree un `AuditLog` pour :
 - brouillon interne cree ;
 - brouillon Gmail cree ;
 - dispute ignoree.
+- review de decision creee ;
+- statut de deduction ou dossier lie modifie par review.
 
 ## Limites
 

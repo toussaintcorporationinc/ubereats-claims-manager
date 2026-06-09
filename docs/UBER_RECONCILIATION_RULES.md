@@ -54,3 +54,15 @@ Ce module est distinct de la reconciliation de compensation :
 - aucune action ne clique dans Uber Eats Manager ;
 - aucune contestation, aucun email et aucune relance ne sont envoyes automatiquement ;
 - les dossiers crees depuis une deduction restent soumis aux preuves et au workflow TENNET standard.
+
+## Cockpit recuperation
+
+Les resultats de reconciliation alimentent `/recovery` avec la categorie `cancellation_not_compensated`.
+
+Regles :
+
+- un resultat `not_compensated`, `partially_compensated` ou `needs_evidence` peut contribuer au montant contestable ;
+- un resultat `compensated` est assimile a une etape de paiement confirme pour le cockpit ;
+- un resultat `already_claimed`, `manual_review` ou ambigu reste en revue humaine ;
+- aucun `ClaimOrder`, brouillon, email ou relance n'est cree automatiquement depuis le cockpit ;
+- les exports recovery ne doivent pas contenir de token, secret ou chemin disque brut de preuve.

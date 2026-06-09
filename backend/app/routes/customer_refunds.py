@@ -9,6 +9,7 @@ from app.core.auth import ensure_can_access_restaurant, get_accessible_restauran
 from app.core.database import get_db
 from app.models import (
     ClaimOrder,
+    CustomerRefundDisputeReview,
     EmailDraft,
     EvidenceFile,
     EvidenceRequestTask,
@@ -25,6 +26,10 @@ from app.schemas.domain import (
     CustomerRefundDetectRequest,
     CustomerRefundDetectResponse,
     CustomerRefundDisputeDetail,
+    CustomerRefundDisputeReviewCreate,
+    CustomerRefundDisputeReviewRead,
+    CustomerRefundDisputeReviewResponse,
+    CustomerRefundDisputeReviewsResponse,
     CustomerRefundDisputeSummary,
     CustomerRefundDisputesResponse,
     CustomerRefundDisputeStatus,
@@ -47,10 +52,12 @@ from app.services.customer_refund_dispute_service import (
     ignore_customer_refund_dispute,
     recalculate_dispute_evidence,
 )
+from app.services.customer_refund_review_service import CustomerRefundReviewError, create_customer_refund_review
 from app.services.email_provider import EmailProvider
 from app.services.gmail_email_provider import GmailEmailProvider
 
 router = APIRouter(prefix="/v1/customer-refunds", tags=["customer-refunds"])
+reviews_router = APIRouter(tags=["customer-refunds"])
 
 
 def get_gmail_provider() -> EmailProvider:
@@ -184,6 +191,87 @@ def ignore_dispute(
     return ignore_customer_refund_dispute(db, current_user, dispute, payload.reason)
 
 
+@router.post("/{dispute_id}/reviews", response_model=CustomerRefundDisputeReviewResponse, status_code=status.HTTP_201_CREATED)
+def create_dispute_review(
+    dispute_id: int,
+    payload: CustomerRefundDisputeReviewCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+) -> CustomerRefundDisputeReviewResponse:
+    dispute = get_dispute_or_404(db, current_user, dispute_id)
+    try:
+        review = create_customer_refund_review(db, dispute=dispute, user=current_user, payload=payload)
+    except CustomerRefundReviewError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    db.commit()
+    db.refresh(review)
+    db.refresh(dispute)
+    claim_order_status = None
+    if dispute.claim_order_id is not None:
+        claim_order = db.get(ClaimOrder, dispute.claim_order_id)
+        claim_order_status = claim_order.status if claim_order is not None else None
+    return CustomerRefundDisputeReviewResponse(
+        review=CustomerRefundDisputeReviewRead.model_validate(review),
+        dispute_status=dispute.status,
+        claim_order_status=claim_order_status,
+    )
+
+
+@router.get("/{dispute_id}/reviews", response_model=list[CustomerRefundDisputeReviewRead])
+def list_dispute_reviews(
+    dispute_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+) -> list[CustomerRefundDisputeReviewRead]:
+    dispute = get_dispute_or_404(db, current_user, dispute_id)
+    reviews = db.scalars(
+        select(CustomerRefundDisputeReview)
+        .where(CustomerRefundDisputeReview.dispute_id == dispute.id)
+        .order_by(CustomerRefundDisputeReview.created_at.desc(), CustomerRefundDisputeReview.id.desc())
+    ).all()
+    return [CustomerRefundDisputeReviewRead.model_validate(review) for review in reviews]
+
+
+@reviews_router.get("/v1/customer-refund-reviews", response_model=CustomerRefundDisputeReviewsResponse)
+def list_customer_refund_reviews(
+    restaurant_id: int | None = Query(default=None),
+    review_type: str | None = Query(default=None),
+    dispute_id: int | None = Query(default=None),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+) -> CustomerRefundDisputeReviewsResponse:
+    statement = (
+        select(CustomerRefundDisputeReview)
+        .join(UberCustomerRefundDispute, CustomerRefundDisputeReview.dispute_id == UberCustomerRefundDispute.id)
+        .order_by(CustomerRefundDisputeReview.created_at.desc(), CustomerRefundDisputeReview.id.desc())
+    )
+    accessible_ids = get_accessible_restaurant_ids(db, current_user)
+    if restaurant_id is not None:
+        ensure_can_access_restaurant(db, current_user, restaurant_id)
+        statement = statement.where(UberCustomerRefundDispute.restaurant_id == restaurant_id)
+    elif accessible_ids is not None:
+        statement = statement.where(UberCustomerRefundDispute.restaurant_id.in_(accessible_ids))
+    if review_type:
+        statement = statement.where(CustomerRefundDisputeReview.review_type == review_type)
+    if dispute_id is not None:
+        dispute = get_dispute_or_404(db, current_user, dispute_id)
+        statement = statement.where(CustomerRefundDisputeReview.dispute_id == dispute.id)
+    if date_from is not None:
+        statement = statement.where(CustomerRefundDisputeReview.created_at >= date_from)
+    if date_to is not None:
+        statement = statement.where(CustomerRefundDisputeReview.created_at <= date_to)
+    reviews = db.scalars(statement.limit(limit).offset(offset)).all()
+    return CustomerRefundDisputeReviewsResponse(
+        reviews=[CustomerRefundDisputeReviewRead.model_validate(review) for review in reviews],
+        limit=limit,
+        offset=offset,
+    )
+
+
 @router.post("/bulk-create-claim-orders", response_model=CustomerRefundBulkResponse)
 def bulk_create_claim_orders(
     payload: CustomerRefundBulkRequest,
@@ -270,6 +358,10 @@ def build_dispute_detail(db: Session, dispute: UberCustomerRefundDispute) -> Cus
         evidence_requirements=[CustomerRefundEvidenceRequirementRead.model_validate(item) for item in dispute.evidence_requirements],
         evidence_files=[EvidenceFileRead.model_validate(item) for item in evidence_files],
         evidence_tasks=evidence_tasks,
+        reviews=[
+            CustomerRefundDisputeReviewRead.model_validate(review)
+            for review in sorted(dispute.reviews, key=lambda item: item.id, reverse=True)
+        ],
     )
 
 

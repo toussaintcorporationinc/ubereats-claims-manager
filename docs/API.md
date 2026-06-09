@@ -1312,6 +1312,9 @@ Endpoints :
 - `POST /v1/customer-refunds/{id}/create-claim-order`
 - `POST /v1/customer-refunds/{id}/create-draft`
 - `POST /v1/customer-refunds/{id}/create-gmail-draft`
+- `POST /v1/customer-refunds/{id}/reviews`
+- `GET /v1/customer-refunds/{id}/reviews`
+- `GET /v1/customer-refund-reviews`
 - `POST /v1/customer-refunds/{id}/ignore`
 - `POST /v1/customer-refunds/bulk-create-claim-orders`
 - `POST /v1/customer-refunds/bulk-create-drafts`
@@ -1386,6 +1389,98 @@ Filtres :
 `POST /v1/customer-refunds/{id}/ignore` marque la dispute `ignored` avec une raison obligatoire.
 
 Les endpoints bulk appliquent les memes validations et retournent `created_count`, `skipped_count`, `errors` et `created_ids`.
+
+### Reviews de deductions
+
+`POST /v1/customer-refunds/{id}/reviews`
+
+Body :
+
+```json
+{
+  "inbound_message_id": 123,
+  "review_type": "payment_confirmed",
+  "recovered_amount": "24.90",
+  "expected_payment_date": "2026-06-15",
+  "refusal_reason": null,
+  "evidence_requested": false,
+  "notes": "Uber confirme la regularisation."
+}
+```
+
+`review_type` accepte :
+
+- `accepted`
+- `payment_to_verify`
+- `payment_confirmed`
+- `refused`
+- `evidence_requested`
+- `information_requested`
+- `followup_needed`
+- `ignored`
+- `manual_review`
+
+Effets :
+
+- met a jour `UberCustomerRefundDispute.status` ;
+- met a jour le `ClaimOrder` lie si present ;
+- renseigne `recovered_amount`, `expected_payment_date`, `last_reviewed_at` et `last_reviewed_by_user_id` si applicable ;
+- recalcule les preuves et taches si `evidence_requested` ;
+- cree un `CustomerRefundDisputeReview` ;
+- cree un `AuditLog`.
+
+Les statuts `payment_confirmed` et `ignored` protegent la dispute contre une nouvelle transition en V1.1.
+
+`GET /v1/customer-refunds/{id}/reviews` retourne l'historique d'une dispute.
+
+`GET /v1/customer-refund-reviews` retourne les reviews visibles, filtrees par `restaurant_id`, `review_type`, `dispute_id`, `date_from`, `date_to`, `limit` et `offset`.
+
+## Recovery Cockpit
+
+Le cockpit recuperation unifie les pertes issues des `ClaimOrder`, `UberReconciliationResult` et `UberCustomerRefundDispute`.
+
+Endpoints :
+
+- `GET /v1/recovery/summary`
+- `GET /v1/recovery/cases`
+- `GET /v1/recovery/actions`
+- `GET /v1/recovery/export/summary.xlsx`
+- `GET /v1/recovery/export/cases.csv`
+
+Filtres communs :
+
+- `restaurant_id`
+- `date_from`
+- `date_to`
+- `loss_category`
+- `include_ignored`
+
+`GET /v1/recovery/summary` retourne :
+
+- `totals.detected_amount`
+- `totals.claimable_amount`
+- `totals.missing_evidence_amount`
+- `totals.sent_amount`
+- `totals.recovered_amount`
+- `totals.refused_amount`
+- `totals.pending_amount`
+- `totals.recovery_rate`
+- `totals.review_coverage_rate`
+- `by_restaurant`
+- `by_loss_category`
+- `by_recovery_stage`
+- `top_recoverable_cases`
+
+`GET /v1/recovery/cases` retourne une liste paginee de cas recuperables avec `case_type`, `case_id`, restaurant, commande, categorie, etape, montants, statut preuve, prochaine action et URL frontend. Filtres supplementaires : `case_type`, `recovery_stage`, `min_amount`, `max_amount`, `needs_evidence`, `limit`, `offset`.
+
+`GET /v1/recovery/actions` retourne les actions operationnelles : preuve a uploader, dossier a creer, brouillon a creer, brouillon Gmail a creer, reponse a traiter, relance ou revue manuelle.
+
+Exports :
+
+- `summary.xlsx` contient `Summary`, `By Restaurant`, `By Category`, `By Stage`, `Top Recoverable`, `Actions` ;
+- `cases.csv` exporte les cas filtres.
+
+Les exports sont reserves a `owner` et `manager`, respectent les restaurants autorises et ne contiennent jamais tokens, secrets, mots de passe, chemins disque bruts ou donnees Gmail sensibles.
 
 ## Dashboard
 
