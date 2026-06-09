@@ -57,6 +57,19 @@ Required blocking evidence for validation:
 
 The receipt is recommended but not blocking in V1.
 
+## Evidence request queue
+
+1. Open `/evidence-tasks`.
+2. Recalculate evidence requests as owner or manager.
+3. Review missing proof tasks by restaurant, status, type and priority.
+4. Open a task.
+5. Upload the requested file directly, or create a mobile upload link.
+6. Send the link to the person who can provide the proof.
+7. The mobile page accepts only the requested proof type.
+8. After upload, TENNET attaches the proof, completes the task, audits the action and validates the order again.
+
+The raw mobile token is shown only once. TENNET stores only the token hash.
+
 ## Claim validation
 
 1. Open the order detail page.

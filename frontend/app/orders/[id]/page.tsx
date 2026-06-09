@@ -19,6 +19,7 @@ import {
   type EmailDraft,
   type EmailProviderDraft,
   type EvidenceFile,
+  type EvidenceRequestTaskSummary,
   type EvidenceType,
   type FollowUpTaskSummary,
   type GmailConnectionStatus,
@@ -90,6 +91,7 @@ export default function OrderDetailPage() {
   const [emailMessages, setEmailMessages] = useState<OrderEmailMessagesResponse | null>(null);
   const [responseReviews, setResponseReviews] = useState<ClaimResponseReview[]>([]);
   const [followupTasks, setFollowupTasks] = useState<FollowUpTaskSummary[]>([]);
+  const [evidenceTasks, setEvidenceTasks] = useState<EvidenceRequestTaskSummary[]>([]);
   const [gmailStatus, setGmailStatus] = useState<GmailConnectionStatus | null>(null);
   const [validation, setValidation] = useState<ClaimValidationResponse | null>(null);
   const [generatedDraft, setGeneratedDraft] = useState<EmailDraft | null>(null);
@@ -115,7 +117,16 @@ export default function OrderDetailPage() {
   const [followupActionTaskId, setFollowupActionTaskId] = useState<number | null>(null);
 
   const loadOrderData = useCallback(async () => {
-    const [orderData, restaurantsData, evidenceData, draftsData, emailMessagesData, responseReviewsData, followupsData] =
+    const [
+      orderData,
+      restaurantsData,
+      evidenceData,
+      draftsData,
+      emailMessagesData,
+      responseReviewsData,
+      followupsData,
+      evidenceTasksData,
+    ] =
       await Promise.all([
         api.getOrder(orderId),
         api.getRestaurants(),
@@ -124,6 +135,7 @@ export default function OrderDetailPage() {
         api.getOrderEmailMessages(orderId),
         api.getOrderResponseReviews(orderId),
         api.getDueFollowups({ limit: 200 }),
+        api.getEvidenceTasks({ limit: 200 }),
       ]);
     setOrder(orderData);
     setRestaurants(restaurantsData);
@@ -132,6 +144,7 @@ export default function OrderDetailPage() {
     setEmailMessages(emailMessagesData);
     setResponseReviews(responseReviewsData);
     setFollowupTasks(followupsData.tasks.filter((task) => task.order_id === orderId));
+    setEvidenceTasks(evidenceTasksData.tasks.filter((task) => task.order_id === orderId));
   }, [orderId]);
 
   useEffect(() => {
@@ -423,6 +436,54 @@ export default function OrderDetailPage() {
           <ResultList title="blocking_reasons" values={validation.blocking_reasons} />
         </section>
       ) : null}
+
+      <section className="tool-panel">
+        <div className="section-heading">
+          <h2>Demandes de preuves</h2>
+          <span className="muted">Les liens mobiles se gerent depuis la file Preuves.</span>
+        </div>
+        {evidenceTasks.length > 0 ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Preuve</th>
+                  <th>Priorite</th>
+                  <th>Statut</th>
+                  <th>Echeance</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {evidenceTasks.map((task) => (
+                  <tr key={task.id}>
+                    <td>
+                      <div className="stack-sm">
+                        <strong>{task.title}</strong>
+                        <span className="muted">{task.required_evidence_type}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <StatusBadge status={task.priority} />
+                    </td>
+                    <td>
+                      <StatusBadge status={task.status} />
+                    </td>
+                    <td>{formatDate(task.due_at)}</td>
+                    <td>
+                      <Link href={`/evidence-tasks/${task.id}`} className="secondary-button">
+                        Ouvrir
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState title="Aucune demande de preuve active" />
+        )}
+      </section>
 
       <section className="tool-panel">
         <div className="section-heading">

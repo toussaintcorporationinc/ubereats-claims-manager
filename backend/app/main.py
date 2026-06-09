@@ -13,6 +13,7 @@ from app.routes import (
     dashboard,
     drafts,
     email,
+    evidence_tasks,
     evidence,
     followups,
     health,
@@ -85,6 +86,7 @@ app.include_router(restaurants.router)
 app.include_router(orders.router)
 app.include_router(reports.router)
 app.include_router(evidence.router)
+app.include_router(evidence_tasks.router)
 app.include_router(drafts.router)
 app.include_router(email.router)
 app.include_router(followups.router)

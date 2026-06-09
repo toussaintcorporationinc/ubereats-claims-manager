@@ -111,6 +111,24 @@ docker run --rm -v ubereats_claims_manager_evidence_data:/data:ro alpine:3.20 du
 
 Evidence and import files are local in V1. Plan enough disk and backups.
 
+## Evidence request links
+
+Owners and managers can create mobile upload links from `/evidence-tasks/{id}`.
+
+Operational settings:
+
+- `EVIDENCE_TASK_HIGH_AMOUNT` sets the high priority threshold;
+- `EVIDENCE_TASK_URGENT_AMOUNT` sets the urgent priority threshold;
+- `EVIDENCE_UPLOAD_LINK_EXPIRY_HOURS` controls link expiration;
+- `EVIDENCE_UPLOAD_LINK_MAX_USES` controls allowed uploads per link.
+
+Recommended production defaults:
+
+- short enough expiration for operational control;
+- one use per link;
+- revoke links manually if sent to the wrong recipient;
+- never paste a mobile upload token into support tickets or logs.
+
 ## Data retention
 
 V1 does not include an automated retention workflow. Recommended operating policy:

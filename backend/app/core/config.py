@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     uber_reconciliation_amount_tolerance: float = 0.01
     uber_reconciliation_min_missing_amount: float = 0.01
     uber_reconciliation_max_results: int = 5000
+    evidence_task_high_amount: float = 50
+    evidence_task_urgent_amount: float = 100
+    evidence_upload_link_expiry_hours: int = 48
+    evidence_upload_link_max_uses: int = 3
     backend_cors_origins: str | None = None
     cors_origins: str = "http://localhost:3000"
     frontend_url: str | None = None
