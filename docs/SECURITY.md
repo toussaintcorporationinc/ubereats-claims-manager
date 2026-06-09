@@ -272,3 +272,7 @@ La fondation Uber Mission 18 respecte les regles suivantes :
 - `staff` n'a pas acces au connecteur Uber ;
 - la reconciliation ne cree pas de reclamation envoyee automatiquement ;
 - un dossier cree depuis reconciliation reste soumis aux preuves obligatoires TENNET.
+- les imports Uber Reporting se font par preview puis confirmation explicite ;
+- les colonnes inconnues sont ignorees, les colonnes manquantes produisent erreurs/warnings ;
+- les stores non mappes ne creent pas automatiquement de restaurant ;
+- les exemples CSV fournis sont fictifs et ne contiennent aucune vraie commande.

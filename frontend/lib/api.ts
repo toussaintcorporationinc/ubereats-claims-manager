@@ -75,6 +75,9 @@ export type UberReconciliationStatus =
   | "already_claimed"
   | "ignored"
   | "manual_review";
+export type UberReportingReportType = "orders_report" | "payments_report" | "adjustments_report" | "combined_report";
+export type UberReportingBatchStatus = "uploaded" | "parsed" | "confirmed" | "partially_imported" | "failed" | "cancelled";
+export type UberReportingRowStatus = "valid" | "invalid" | "warning" | "duplicate" | "created" | "skipped";
 
 export type Restaurant = {
   id: number;
@@ -587,6 +590,69 @@ export type UberReportingImportResponse = {
   transactions_created: number;
   rows_skipped: number;
   errors: string[];
+};
+
+export type UberReportingImportRow = {
+  id: number;
+  batch_id: number;
+  row_number: number;
+  raw_data: Record<string, unknown>;
+  normalized_data: Record<string, unknown> | null;
+  status: UberReportingRowStatus;
+  errors: string[];
+  warnings: string[];
+  created_snapshot_id: number | null;
+  created_transaction_id: number | null;
+  created_at: string;
+};
+
+export type UberReportingImportBatch = {
+  id: number;
+  uploaded_by_user_id: number;
+  original_filename: string;
+  report_type: UberReportingReportType;
+  file_type: string;
+  status: UberReportingBatchStatus;
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  warning_rows: number;
+  created_snapshots_count: number;
+  created_transactions_count: number;
+  duplicate_rows: number;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  confirmed_at: string | null;
+};
+
+export type UberReportingPreviewResponse = UberReportingImportBatch & {
+  batch_id: number;
+  unmapped_store_ids: string[];
+  detected_columns: string[];
+  rows_preview: UberReportingImportRow[];
+};
+
+export type UberReportingRowsResponse = {
+  rows: UberReportingImportRow[];
+  limit: number;
+  offset: number;
+};
+
+export type UberReportingConfirmResponse = {
+  batch_id: number;
+  status: UberReportingBatchStatus;
+  created_snapshots_count: number;
+  created_transactions_count: number;
+  skipped_rows: number;
+  errors: string[];
+};
+
+export type UberUnmappedStore = {
+  uber_store_id: string;
+  uber_store_name: string | null;
+  row_count: number;
+  suggested_restaurant_matches: Restaurant[];
 };
 
 export type UberReconciliationRunResponse = {
@@ -1123,6 +1189,28 @@ export const api = {
       body: formData,
     });
   },
+  previewUberReportingImport: (file: File, reportType: UberReportingReportType) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return request<UberReportingPreviewResponse>(`/v1/uber/reporting/preview?report_type=${reportType}`, {
+      method: "POST",
+      body: formData,
+    });
+  },
+  getUberReportingBatches: () => request<UberReportingImportBatch[]>("/v1/uber/reporting/batches"),
+  getUberReportingBatch: (batchId: number) => request<UberReportingImportBatch>(`/v1/uber/reporting/batches/${batchId}`),
+  getUberReportingRows: (batchId: number, filters: { status?: UberReportingRowStatus | ""; limit?: number; offset?: number } = {}) =>
+    request<UberReportingRowsResponse>(`/v1/uber/reporting/batches/${batchId}/rows${buildQuery(filters)}`),
+  confirmUberReportingBatch: (batchId: number) =>
+    postJson<UberReportingConfirmResponse, Record<string, never>>(`/v1/uber/reporting/batches/${batchId}/confirm`, {}),
+  cancelUberReportingBatch: (batchId: number) =>
+    postJson<UberReportingImportBatch, Record<string, never>>(`/v1/uber/reporting/batches/${batchId}/cancel`, {}),
+  getUberUnmappedStores: () => request<UberUnmappedStore[]>("/v1/uber/reporting/unmapped-stores"),
+  mapUberUnmappedStore: (uberStoreId: string, restaurantId: number) =>
+    postJson<UberStoreMapping, { restaurant_id: number }>(
+      `/v1/uber/reporting/unmapped-stores/${encodeURIComponent(uberStoreId)}/map`,
+      { restaurant_id: restaurantId },
+    ),
   getUberReconciliationResults: (filters: { status?: UberReconciliationStatus | ""; limit?: number; offset?: number } = {}) =>
     request<UberReconciliationResultsResponse>(`/v1/uber/reconciliation/results${buildQuery(filters)}`),
   runUberReconciliation: () =>

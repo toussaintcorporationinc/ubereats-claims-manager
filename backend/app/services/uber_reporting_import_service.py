@@ -1,5 +1,5 @@
 import csv
-from collections.abc import Iterable
+from collections import Counter
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from io import BytesIO, StringIO
@@ -11,72 +11,457 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth import can_access_restaurant
-from app.models import Restaurant, UberFinancialTransaction, UberOrderSnapshot, UberStoreMapping, User
+from app.models import (
+    Restaurant,
+    UberFinancialTransaction,
+    UberOrderSnapshot,
+    UberReportingImportBatch,
+    UberReportingImportRow,
+    UberStoreMapping,
+    User,
+)
+from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 
+REPORT_TYPES = {"orders_report", "payments_report", "adjustments_report", "combined_report"}
+ROW_PREVIEW_LIMIT = 100
+MAX_ROWS = 20000
 
-MAX_ROWS = 5000
+COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
+    "uber_store_id": ("uber_store_id", "store_id", "store_uuid", "restaurant_uuid", "merchant_store_id", "store id", "store uuid"),
+    "uber_store_name": ("store_name", "restaurant_name", "merchant_name", "restaurant", "store"),
+    "uber_order_id": (
+        "uber_order_id",
+        "order_id",
+        "order_uuid",
+        "workflow_uuid",
+        "commande_uber",
+        "numéro_commande",
+        "numero_commande",
+        "uber_id",
+    ),
+    "display_id": ("display_id", "visible_id", "short_order_id", "order_display_id"),
+    "order_status": ("order_status", "status", "current_state", "state", "statut"),
+    "placed_at": ("placed_at", "order_date", "date", "date_commande", "created_at"),
+    "canceled_at": ("canceled_at", "cancellation_date", "cancellation_time", "heure_annulation", "annulation"),
+    "order_total_amount": ("order_total_amount", "total", "amount", "order_amount", "montant", "montant_commande"),
+    "transaction_type": ("transaction_type", "type", "adjustment_type", "payment_type", "line_item_type"),
+    "transaction_date": ("transaction_date", "payout_date", "payment_date", "date_transaction", "date_paiement"),
+    "payout_reference": ("payout_reference", "payout_id", "payment_reference", "versement", "reference_paiement"),
+    "amount": ("amount", "montant", "total", "value", "net_amount", "payout_amount"),
+    "currency": ("currency", "devise"),
+}
+
+ORDER_FIELDS = {
+    "uber_store_id",
+    "uber_store_name",
+    "uber_order_id",
+    "display_id",
+    "order_status",
+    "placed_at",
+    "canceled_at",
+    "order_total_amount",
+    "currency",
+}
+TRANSACTION_FIELDS = {
+    "uber_store_id",
+    "uber_order_id",
+    "transaction_type",
+    "transaction_date",
+    "payout_reference",
+    "amount",
+    "currency",
+}
+CANCELLED_MARKERS = {
+    "canceled",
+    "cancelled",
+    "cancel",
+    "annulé",
+    "annule",
+    "annulée",
+    "cancellation",
+    "customer_cancelled",
+    "eater_cancelled",
+    "failed_delivery",
+    "unfulfilled",
+}
 
 
-async def import_uber_reporting_file(db: Session, current_user: User, file: UploadFile) -> dict[str, object]:
+def is_cancelled_order_status(value: object) -> bool:
+    normalized = normalize_text(value).replace(" ", "_")
+    return normalized in CANCELLED_MARKERS or any(marker in normalized for marker in ("cancel", "annul"))
+
+
+async def create_uber_reporting_preview(
+    db: Session,
+    current_user: User,
+    file: UploadFile,
+    report_type: str,
+) -> UberReportingImportBatch:
+    if report_type not in REPORT_TYPES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported report_type")
     filename = file.filename or "uber-report"
     suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
     if suffix not in {"csv", "xlsx"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only CSV and XLSX reports are supported")
 
-    content = await file.read()
-    rows = parse_rows(content, suffix)
-    snapshots_created = 0
-    transactions_created = 0
-    rows_skipped = 0
-    errors: list[str] = []
+    parsed_rows = parse_rows(await file.read(), suffix)
+    batch = UberReportingImportBatch(
+        uploaded_by_user_id=current_user.id,
+        original_filename=filename,
+        report_type=report_type,
+        file_type=suffix,
+        status="parsed",
+    )
+    db.add(batch)
+    db.flush()
 
-    for row_number, raw_row in enumerate(rows, start=2):
-        if row_number > MAX_ROWS + 1:
-            errors.append("Maximum import row limit reached")
-            break
-        row = normalize_keys(raw_row)
-        if not any(value not in {None, ""} for value in row.values()):
-            rows_skipped += 1
+    seen: set[tuple[Any, ...]] = set()
+    for index, raw_row in enumerate(parsed_rows[:MAX_ROWS], start=2):
+        normalized_raw = normalize_keys(raw_row)
+        if is_empty_row(normalized_raw):
             continue
-        mapping = resolve_mapping(db, row)
-        if mapping is None:
-            rows_skipped += 1
-            errors.append(f"Row {row_number}: unknown uber_store_id")
-            continue
-        if not can_access_restaurant(db, current_user, mapping.restaurant_id):
-            rows_skipped += 1
-            errors.append(f"Row {row_number}: restaurant access denied")
-            continue
+        normalized_data, errors, warnings = normalize_report_row(db, current_user, normalized_raw, report_type)
+        dedupe_key = row_dedupe_key(normalized_data, report_type)
+        row_status = "invalid" if errors else "warning" if warnings else "valid"
+        if dedupe_key and dedupe_key in seen:
+            row_status = "duplicate"
+            warnings.append("duplicate_in_file")
+        elif dedupe_key:
+            seen.add(dedupe_key)
+        db.add(
+            UberReportingImportRow(
+                batch_id=batch.id,
+                row_number=index,
+                raw_data=safe_json(normalized_raw),
+                normalized_data=normalized_data or None,
+                status=row_status,
+                errors=errors,
+                warnings=warnings,
+            )
+        )
 
-        if is_transaction_row(row):
-            transaction = build_transaction(mapping, row)
-            db.add(transaction)
-            transactions_created += 1
-        else:
-            snapshot = upsert_snapshot(db, mapping, row)
-            if snapshot:
-                snapshots_created += 1
-
+    db.flush()
+    refresh_batch_counts(db, batch)
     add_audit_log(
         db,
-        entity_type="uber_reporting_import",
-        entity_id=current_user.id,
-        action="import_uber_reporting",
+        entity_type="uber_reporting_import_batch",
+        entity_id=batch.id,
+        action="preview_uber_reporting_import",
+        user_id=current_user.id,
+        new_value={"report_type": report_type, "filename": filename, "rows": batch.total_rows},
+    )
+    db.commit()
+    db.refresh(batch)
+    return batch
+
+
+def confirm_uber_reporting_batch(
+    db: Session,
+    current_user: User,
+    batch: UberReportingImportBatch,
+) -> dict[str, object]:
+    if batch.status in {"confirmed", "partially_imported"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Batch already confirmed")
+    if batch.status == "cancelled":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Batch cancelled")
+    rows = db.scalars(
+        select(UberReportingImportRow)
+        .where(UberReportingImportRow.batch_id == batch.id)
+        .order_by(UberReportingImportRow.row_number)
+    ).all()
+    errors: list[str] = []
+    skipped = 0
+    created_snapshots = 0
+    created_transactions = 0
+    for row in rows:
+        if row.status not in {"valid", "warning"} or not row.normalized_data:
+            skipped += 1
+            continue
+        restaurant_id = row.normalized_data.get("restaurant_id")
+        if not isinstance(restaurant_id, int) or not can_access_restaurant(db, current_user, restaurant_id):
+            row.status = "skipped"
+            row.errors = [*row.errors, "restaurant_access_denied"]
+            skipped += 1
+            continue
+        try:
+            if row.normalized_data.get("row_kind") == "order":
+                snapshot, created = create_or_update_snapshot(db, row.normalized_data)
+                row.created_snapshot_id = snapshot.id
+                created_snapshots += int(created)
+            elif row.normalized_data.get("row_kind") == "transaction":
+                transaction, created = create_transaction_if_missing(db, row.normalized_data)
+                row.created_transaction_id = transaction.id if transaction else None
+                created_transactions += int(created)
+                if not created:
+                    skipped += 1
+            row.status = "created"
+        except Exception as exc:
+            row.status = "skipped"
+            row.errors = [*row.errors, str(exc)]
+            errors.append(f"Row {row.row_number}: {exc}")
+            skipped += 1
+
+    batch.created_snapshots_count = created_snapshots
+    batch.created_transactions_count = created_transactions
+    batch.confirmed_at = utc_now()
+    batch.status = "confirmed" if not errors else "partially_imported"
+    add_audit_log(
+        db,
+        entity_type="uber_reporting_import_batch",
+        entity_id=batch.id,
+        action="confirm_uber_reporting_import",
         user_id=current_user.id,
         new_value={
-            "snapshots_created": snapshots_created,
-            "transactions_created": transactions_created,
-            "rows_skipped": rows_skipped,
+            "created_snapshots_count": created_snapshots,
+            "created_transactions_count": created_transactions,
+            "skipped_rows": skipped,
         },
     )
     db.commit()
     return {
-        "snapshots_created": snapshots_created,
-        "transactions_created": transactions_created,
-        "rows_skipped": rows_skipped,
+        "batch_id": batch.id,
+        "status": batch.status,
+        "created_snapshots_count": created_snapshots,
+        "created_transactions_count": created_transactions,
+        "skipped_rows": skipped,
         "errors": errors,
     }
+
+
+async def import_uber_reporting_file(db: Session, current_user: User, file: UploadFile) -> dict[str, object]:
+    batch = await create_uber_reporting_preview(db, current_user, file, "combined_report")
+    result = confirm_uber_reporting_batch(db, current_user, batch)
+    return {
+        "snapshots_created": result["created_snapshots_count"],
+        "transactions_created": result["created_transactions_count"],
+        "rows_skipped": result["skipped_rows"],
+        "errors": result["errors"],
+    }
+
+
+def normalize_report_row(
+    db: Session,
+    current_user: User,
+    row: dict[str, Any],
+    report_type: str,
+) -> tuple[dict[str, Any], list[str], list[str]]:
+    normalized: dict[str, Any] = {"currency": get_column_value(row, "currency") or "EUR"}
+    errors: list[str] = []
+    warnings: list[str] = []
+    for field in ORDER_FIELDS | TRANSACTION_FIELDS:
+        value = get_column_value(row, field)
+        if value not in {None, ""}:
+            normalized[field] = value
+
+    mapping = resolve_mapping(db, normalized.get("uber_store_id"))
+    if mapping:
+        normalized["restaurant_id"] = mapping.restaurant_id
+        if not can_access_restaurant(db, current_user, mapping.restaurant_id):
+            errors.append("restaurant_access_denied")
+    elif normalized.get("uber_store_id"):
+        warnings.append("unmapped_store")
+    else:
+        errors.append("missing_uber_store_id")
+
+    row_kind = infer_row_kind(normalized, report_type)
+    normalized["row_kind"] = row_kind
+    if row_kind == "order":
+        normalize_order_values(normalized, errors, warnings)
+    elif row_kind == "transaction":
+        normalize_transaction_values(normalized, errors)
+    else:
+        errors.append("unable_to_determine_row_type")
+    return normalized, errors, warnings
+
+
+def infer_row_kind(row: dict[str, Any], report_type: str) -> str:
+    if report_type == "orders_report":
+        return "order"
+    if report_type in {"payments_report", "adjustments_report"}:
+        return "transaction"
+    if row.get("transaction_type") or row.get("transaction_date"):
+        return "transaction"
+    if row.get("order_status") or row.get("order_total_amount"):
+        return "order"
+    return "unknown"
+
+
+def normalize_order_values(row: dict[str, Any], errors: list[str], warnings: list[str]) -> None:
+    if not row.get("uber_order_id"):
+        errors.append("missing_uber_order_id")
+    amount = parse_decimal(row.get("order_total_amount"))
+    if amount is None:
+        errors.append("missing_or_invalid_order_total_amount")
+    else:
+        row["order_total_amount"] = str(amount)
+    for key in ("placed_at", "canceled_at"):
+        parsed = parse_datetime(row.get(key))
+        row[key] = parsed.isoformat() if parsed else None
+    status_value = row.get("order_status")
+    if status_value and is_cancelled_order_status(status_value):
+        row["is_cancelled"] = True
+    elif status_value:
+        row["is_cancelled"] = False
+        warnings.append("order_status_not_cancelled")
+    else:
+        warnings.append("missing_order_status")
+
+
+def normalize_transaction_values(row: dict[str, Any], errors: list[str]) -> None:
+    if not row.get("uber_order_id"):
+        errors.append("missing_uber_order_id")
+    if not row.get("transaction_type"):
+        errors.append("missing_transaction_type")
+    amount = parse_decimal(row.get("amount"))
+    if amount is None:
+        errors.append("missing_or_invalid_amount")
+    else:
+        row["amount"] = str(amount)
+    parsed_date = parse_date(row.get("transaction_date"))
+    if parsed_date is None:
+        errors.append("missing_or_invalid_transaction_date")
+    else:
+        row["transaction_date"] = parsed_date.isoformat()
+
+
+def create_or_update_snapshot(db: Session, data: dict[str, Any]) -> tuple[UberOrderSnapshot, bool]:
+    snapshot = db.scalar(
+        select(UberOrderSnapshot).where(
+            UberOrderSnapshot.restaurant_id == data["restaurant_id"],
+            UberOrderSnapshot.uber_order_id == data["uber_order_id"],
+        )
+    )
+    created = snapshot is None
+    if snapshot is None:
+        snapshot = UberOrderSnapshot(
+            restaurant_id=data["restaurant_id"],
+            uber_store_id=data["uber_store_id"],
+            uber_order_id=data["uber_order_id"],
+            raw_payload_json=data,
+            imported_from="manager_export",
+            current_state="unknown",
+        )
+        db.add(snapshot)
+        db.flush()
+    snapshot.uber_store_id = data["uber_store_id"]
+    snapshot.display_id = data.get("display_id")
+    snapshot.current_state = str(data.get("order_status") or "unknown")
+    snapshot.placed_at = parse_datetime(data.get("placed_at"))
+    snapshot.canceled_at = parse_datetime(data.get("canceled_at"))
+    snapshot.order_total_amount = Decimal(str(data["order_total_amount"]))
+    snapshot.currency = str(data.get("currency") or "EUR")
+    snapshot.raw_payload_json = data
+    return snapshot, created
+
+
+def create_transaction_if_missing(db: Session, data: dict[str, Any]) -> tuple[UberFinancialTransaction | None, bool]:
+    transaction_date = parse_date(data.get("transaction_date"))
+    amount = Decimal(str(data["amount"]))
+    existing = db.scalar(
+        select(UberFinancialTransaction).where(
+            UberFinancialTransaction.restaurant_id == data["restaurant_id"],
+            UberFinancialTransaction.uber_order_id == data["uber_order_id"],
+            UberFinancialTransaction.transaction_type == data["transaction_type"],
+            UberFinancialTransaction.transaction_date == transaction_date,
+            UberFinancialTransaction.amount == amount,
+            UberFinancialTransaction.payout_reference == data.get("payout_reference"),
+        )
+    )
+    if existing:
+        return existing, False
+    transaction = UberFinancialTransaction(
+        restaurant_id=data["restaurant_id"],
+        uber_store_id=data["uber_store_id"],
+        uber_order_id=data["uber_order_id"],
+        transaction_type=data["transaction_type"],
+        amount=amount,
+        currency=str(data.get("currency") or "EUR"),
+        transaction_date=transaction_date or date.today(),
+        payout_reference=data.get("payout_reference"),
+        raw_payload_json=data,
+        imported_from="manager_export",
+    )
+    db.add(transaction)
+    db.flush()
+    return transaction, True
+
+
+def preview_metadata(db: Session, batch: UberReportingImportBatch) -> tuple[list[str], list[str]]:
+    rows = db.scalars(select(UberReportingImportRow).where(UberReportingImportRow.batch_id == batch.id)).all()
+    detected = sorted({key for row in rows for key in row.raw_data})
+    unmapped = sorted(
+        {
+            str(row.normalized_data.get("uber_store_id"))
+            for row in rows
+            if row.normalized_data and "unmapped_store" in row.warnings and row.normalized_data.get("uber_store_id")
+        }
+    )
+    return detected, unmapped
+
+
+def unmapped_stores(db: Session, current_user: User) -> list[dict[str, Any]]:
+    rows = db.scalars(select(UberReportingImportRow).where(UberReportingImportRow.status.in_(["warning", "invalid"]))).all()
+    counter: Counter[str] = Counter()
+    names: dict[str, str | None] = {}
+    for row in rows:
+        data = row.normalized_data or {}
+        store_id = data.get("uber_store_id")
+        if not store_id or "restaurant_id" in data:
+            continue
+        counter[str(store_id)] += 1
+        names.setdefault(str(store_id), data.get("uber_store_name"))
+    restaurants = db.scalars(select(Restaurant).order_by(Restaurant.name)).all()
+    visible_restaurants = [
+        restaurant for restaurant in restaurants if current_user.role == "owner" or can_access_restaurant(db, current_user, restaurant.id)
+    ]
+    return [
+        {
+            "uber_store_id": store_id,
+            "uber_store_name": names.get(store_id),
+            "row_count": count,
+            "suggested_restaurant_matches": visible_restaurants[:5],
+        }
+        for store_id, count in counter.items()
+    ]
+
+
+def map_unmapped_store(db: Session, current_user: User, uber_store_id: str, restaurant_id: int) -> UberStoreMapping:
+    restaurant = db.get(Restaurant, restaurant_id)
+    if restaurant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found")
+    mapping = db.scalar(select(UberStoreMapping).where(UberStoreMapping.uber_store_id == uber_store_id))
+    if mapping is None:
+        mapping = UberStoreMapping(
+            restaurant_id=restaurant_id,
+            uber_store_id=uber_store_id,
+            uber_store_name=restaurant.name,
+            active=True,
+        )
+        db.add(mapping)
+    else:
+        mapping.restaurant_id = restaurant_id
+        mapping.active = True
+    add_audit_log(
+        db,
+        entity_type="uber_store_mapping",
+        entity_id=restaurant_id,
+        action="map_unmapped_uber_store",
+        user_id=current_user.id,
+        new_value={"uber_store_id": uber_store_id, "restaurant_id": restaurant_id},
+    )
+    db.commit()
+    db.refresh(mapping)
+    return mapping
+
+
+def refresh_batch_counts(db: Session, batch: UberReportingImportBatch) -> None:
+    rows = db.scalars(select(UberReportingImportRow).where(UberReportingImportRow.batch_id == batch.id)).all()
+    batch.total_rows = len(rows)
+    batch.valid_rows = sum(1 for row in rows if row.status == "valid")
+    batch.invalid_rows = sum(1 for row in rows if row.status == "invalid")
+    batch.warning_rows = sum(1 for row in rows if row.status == "warning")
+    batch.duplicate_rows = sum(1 for row in rows if row.status == "duplicate")
 
 
 def parse_rows(content: bytes, suffix: str) -> list[dict[str, Any]]:
@@ -94,69 +479,78 @@ def normalize_keys(row: dict[str, Any]) -> dict[str, Any]:
     return {str(key).strip().lower(): value for key, value in row.items() if key is not None}
 
 
-def resolve_mapping(db: Session, row: dict[str, Any]) -> UberStoreMapping | None:
-    store_id = text_value(row, "uber_store_id", "store_id", "restaurant_store_id")
-    if store_id:
-        return db.scalar(select(UberStoreMapping).where(UberStoreMapping.uber_store_id == store_id))
-    restaurant_id = int_value(row, "restaurant_id")
-    if restaurant_id:
-        restaurant = db.get(Restaurant, restaurant_id)
-        if restaurant is None:
-            return None
-        return db.scalar(select(UberStoreMapping).where(UberStoreMapping.restaurant_id == restaurant_id))
+def get_column_value(row: dict[str, Any], field: str) -> Any:
+    for alias in COLUMN_ALIASES[field]:
+        key = alias.lower()
+        if key in row and row[key] not in {None, ""}:
+            return row[key].strip() if isinstance(row[key], str) else row[key]
     return None
 
 
-def is_transaction_row(row: dict[str, Any]) -> bool:
-    return bool(text_value(row, "transaction_type", "type_transaction", "financial_type"))
-
-
-def build_transaction(mapping: UberStoreMapping, row: dict[str, Any]) -> UberFinancialTransaction:
-    amount = decimal_value(row, "amount", "transaction_amount", "montant") or Decimal("0")
-    return UberFinancialTransaction(
-        restaurant_id=mapping.restaurant_id,
-        uber_store_id=mapping.uber_store_id,
-        uber_order_id=text_value(row, "uber_order_id", "order_id", "uber_order_number"),
-        transaction_type=text_value(row, "transaction_type", "type_transaction", "financial_type") or "unknown",
-        amount=amount,
-        currency=text_value(row, "currency", "devise") or "EUR",
-        transaction_date=date_value(row, "transaction_date", "date") or date.today(),
-        payout_reference=text_value(row, "payout_reference", "payout_id"),
-        raw_payload_json=safe_json(row),
-        imported_from="manager_export",
-    )
-
-
-def upsert_snapshot(db: Session, mapping: UberStoreMapping, row: dict[str, Any]) -> UberOrderSnapshot | None:
-    uber_order_id = text_value(row, "uber_order_id", "order_id", "uber_order_number")
-    if not uber_order_id:
+def resolve_mapping(db: Session, uber_store_id: object) -> UberStoreMapping | None:
+    if not uber_store_id:
         return None
-    snapshot = db.scalar(
-        select(UberOrderSnapshot).where(
-            UberOrderSnapshot.uber_store_id == mapping.uber_store_id,
-            UberOrderSnapshot.uber_order_id == uber_order_id,
-        )
-    )
-    if snapshot is None:
-        snapshot = UberOrderSnapshot(
-            restaurant_id=mapping.restaurant_id,
-            uber_store_id=mapping.uber_store_id,
-            uber_order_id=uber_order_id,
-            raw_payload_json=safe_json(row),
-            imported_from="manager_export",
-            current_state="unknown",
-        )
-        db.add(snapshot)
-        db.flush()
+    return db.scalar(select(UberStoreMapping).where(UberStoreMapping.uber_store_id == str(uber_store_id).strip()))
 
-    snapshot.display_id = text_value(row, "display_id", "display_order_id")
-    snapshot.current_state = text_value(row, "current_state", "state", "status") or "unknown"
-    snapshot.placed_at = datetime_value(row, "placed_at", "order_date")
-    snapshot.canceled_at = datetime_value(row, "canceled_at", "cancelled_at", "cancellation_date")
-    snapshot.order_total_amount = decimal_value(row, "order_total_amount", "order_amount", "total")
-    snapshot.currency = text_value(row, "currency", "devise") or "EUR"
-    snapshot.raw_payload_json = safe_json(row)
-    return snapshot
+
+def row_dedupe_key(data: dict[str, Any], report_type: str) -> tuple[Any, ...] | None:
+    kind = data.get("row_kind")
+    if kind == "order":
+        return ("order", data.get("restaurant_id"), data.get("uber_order_id"))
+    if kind == "transaction":
+        return (
+            "transaction",
+            data.get("restaurant_id"),
+            data.get("uber_order_id"),
+            data.get("transaction_type"),
+            data.get("transaction_date"),
+            data.get("amount"),
+            data.get("payout_reference"),
+        )
+    return None
+
+
+def is_empty_row(row: dict[str, Any]) -> bool:
+    return not any(value not in {None, ""} for value in row.values())
+
+
+def parse_decimal(value: object) -> Decimal | None:
+    if value is None or str(value).strip() == "":
+        return None
+    text = str(value).strip().replace(" ", "")
+    if "," in text and "." in text:
+        if text.rfind(",") > text.rfind("."):
+            text = text.replace(".", "").replace(",", ".")
+        else:
+            text = text.replace(",", "")
+    else:
+        text = text.replace(",", ".")
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        return None
+
+
+def parse_date(value: object) -> date | None:
+    parsed = parse_datetime(value)
+    return parsed.date() if parsed else None
+
+
+def parse_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time(), tzinfo=timezone.utc)
+    text = str(value).strip() if value is not None else ""
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M", "%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            parsed = datetime.strptime(text, fmt)
+            return parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    return None
 
 
 def safe_json(row: dict[str, Any]) -> dict[str, Any]:
@@ -173,65 +567,5 @@ def safe_json(row: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def text_value(row: dict[str, Any], *keys: str) -> str | None:
-    for key in keys:
-        value = row.get(key)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return None
-
-
-def int_value(row: dict[str, Any], *keys: str) -> int | None:
-    value = text_value(row, *keys)
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        return None
-
-
-def decimal_value(row: dict[str, Any], *keys: str) -> Decimal | None:
-    value = text_value(row, *keys)
-    if value is None:
-        return None
-    normalized = value.replace(" ", "").replace(",", ".")
-    try:
-        return Decimal(normalized)
-    except InvalidOperation:
-        return None
-
-
-def date_value(row: dict[str, Any], *keys: str) -> date | None:
-    value = first_value(row, keys)
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    text = str(value).strip() if value is not None else ""
-    if not text:
-        return None
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
-        try:
-            return datetime.strptime(text, fmt).date()
-        except ValueError:
-            pass
-    return None
-
-
-def datetime_value(row: dict[str, Any], *keys: str) -> datetime | None:
-    value = first_value(row, keys)
-    if isinstance(value, datetime):
-        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
-    parsed_date = date_value(row, *keys)
-    if parsed_date:
-        return datetime.combine(parsed_date, datetime.min.time(), tzinfo=timezone.utc)
-    return None
-
-
-def first_value(row: dict[str, Any], keys: Iterable[str]) -> Any:
-    for key in keys:
-        value = row.get(key)
-        if value not in {None, ""}:
-            return value
-    return None
+def normalize_text(value: object) -> str:
+    return str(value or "").strip().lower()

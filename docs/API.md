@@ -1152,6 +1152,14 @@ Mission 18 expose une fondation de connecteur Uber Eats sans appel API Uber reel
 - `POST /v1/uber/store-mappings` : cree un mapping. Owner uniquement.
 - `PATCH /v1/uber/store-mappings/{id}` : modifie un mapping. Owner uniquement.
 - `POST /v1/uber/reporting/import` : importe un rapport CSV/XLSX Uber Eats Manager fictif ou generique.
+- `POST /v1/uber/reporting/preview` : analyse un CSV/XLSX avec `report_type`, cree un batch parse et retourne `rows_preview`, `detected_columns` et `unmapped_store_ids`.
+- `GET /v1/uber/reporting/batches` : liste les batches visibles.
+- `GET /v1/uber/reporting/batches/{batch_id}` : retourne le resume d'un batch.
+- `GET /v1/uber/reporting/batches/{batch_id}/rows` : liste les lignes avec filtre optionnel `status`.
+- `POST /v1/uber/reporting/batches/{batch_id}/confirm` : cree snapshots et transactions pour les lignes valides/warning.
+- `POST /v1/uber/reporting/batches/{batch_id}/cancel` : annule un batch non confirme.
+- `GET /v1/uber/reporting/unmapped-stores` : liste les stores detectes mais non mappes.
+- `POST /v1/uber/reporting/unmapped-stores/{uber_store_id}/map` : mappe un store vers un restaurant TENNET. Owner uniquement.
 - `GET /v1/uber/reconciliation/results` : liste les resultats visibles.
 - `POST /v1/uber/reconciliation/run` : calcule les statuts `compensated`, `not_compensated`, `partially_compensated`, `already_claimed` ou `manual_review`.
 - `POST /v1/uber/reconciliation/results/{id}/claim-order` : cree un dossier TENNET depuis un resultat eligible, sans doublon.
