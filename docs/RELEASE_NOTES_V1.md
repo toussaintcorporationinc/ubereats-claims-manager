@@ -1,6 +1,6 @@
 # TENNET release notes V1
 
-Version: `1.0.2-tennet`
+Version: `1.0.3-tennet`
 
 ## Features
 
