@@ -29,6 +29,7 @@ Le backend expose maintenant les premiers objets metier :
 - upload local securise des fichiers de preuve ;
 - file de demandes de preuves et upload mobile par lien tokenise ;
 - import massif CSV/XLSX des commandes annulees ;
+- detection et suivi des deductions Uber / remboursements clients depuis transactions importees ;
 - creation de vrais brouillons Gmail via OAuth ;
 - envoi manuel approuve de brouillons Gmail, sans automatisation ;
 - lecture et rattachement manuel des reponses Gmail entrantes ;
@@ -62,6 +63,14 @@ Les endpoints principaux sont :
 - `POST /v1/evidence-tasks/{id}/upload`
 - `POST /v1/evidence-tasks/{id}/upload-link`
 - `GET|POST /v1/evidence-upload-links/{token}`
+- `POST /v1/customer-refunds/detect`
+- `GET /v1/customer-refunds`
+- `GET /v1/customer-refunds/{id}`
+- `POST /v1/customer-refunds/{id}/recalculate-evidence`
+- `POST /v1/customer-refunds/{id}/create-claim-order`
+- `POST /v1/customer-refunds/{id}/create-draft`
+- `POST /v1/customer-refunds/{id}/create-gmail-draft`
+- `POST /v1/customer-refunds/{id}/ignore`
 - `GET|POST /v1/orders/{id}/drafts`
 - `GET /v1/drafts`
 - `GET /v1/email/gmail/status`
@@ -108,6 +117,8 @@ Le service de brouillons cree uniquement des contenus internes a partir des donn
 Les preuves peuvent etre ajoutees par upload local securise depuis le detail d'une commande. Les fichiers acceptes sont PDF et images courantes (`jpg`, `png`, `webp`, `heic`, `heif`) avec limite de taille configurable. Les telechargements passent toujours par l'API protegee.
 
 Les preuves manquantes peuvent aussi etre pilotees depuis `/evidence-tasks`. TENNET recalcule les demandes de preuves a partir des dossiers incomplets et des resultats de reconciliation Uber qui exigent des justificatifs. Un owner ou manager peut creer un lien mobile tokenise pour une demande precise. Le token brut est retourne une seule fois, seul son hash est stocke, et l'upload public reste limite a la preuve demandee. Aucun email n'est envoye automatiquement.
+
+Les deductions Uber et remboursements clients peuvent etre detectes depuis les transactions financieres importees. TENNET identifie les refunds, chargebacks, ajustements negatifs et motifs comme commande non recue ou article manquant, cree des exigences de preuves, puis laisse un owner ou manager creer le dossier et les brouillons. Aucune contestation n'est envoyee automatiquement.
 
 Les commandes peuvent aussi etre importees en masse depuis `/imports/new` avec un fichier CSV ou XLSX. Le backend analyse les lignes, detecte erreurs, doublons et restaurants non autorises, puis cree uniquement les lignes valides lors de la confirmation.
 

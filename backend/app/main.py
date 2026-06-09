@@ -10,6 +10,7 @@ from app.core.config import get_settings
 from app.core.rate_limit import is_rate_limited
 from app.routes import (
     auth,
+    customer_refunds,
     dashboard,
     drafts,
     email,
@@ -82,6 +83,7 @@ async def production_hardening_middleware(request: Request, call_next):
 
 app.include_router(health.router)
 app.include_router(auth.router)
+app.include_router(customer_refunds.router)
 app.include_router(restaurants.router)
 app.include_router(orders.router)
 app.include_router(reports.router)

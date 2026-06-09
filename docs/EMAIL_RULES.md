@@ -20,8 +20,29 @@ Ce document cadre les regles de brouillons email internes, de brouillons Gmail e
 - `followup_2`
 - `escalation`
 - `proof_reply`
+- `customer_refund_order_not_received`
+- `customer_refund_missing_item`
+- `customer_refund_order_error_adjustment`
+- `customer_refund_generic`
 
 Les brouillons sont crees depuis des templates locaux dans `backend/app/templates/emails`.
+
+## Brouillons deductions Uber V1.1
+
+Les disputes de remboursements clients et ajustements negatifs peuvent creer des brouillons internes specifiques :
+
+- commande non recue ;
+- article manquant ;
+- ajustement negatif ou erreur de commande ;
+- deduction generique.
+
+Regles :
+
+- le brouillon est cree uniquement apres action explicite d'un owner ou manager ;
+- les preuves requises doivent etre completes avant creation, sauf future revue manuelle documentee ;
+- le brouillon reprend uniquement les donnees connues : restaurant, numero commande, type deduction, montant deduit et preuves existantes ;
+- aucune fausse preuve, aucun montant invente et aucune promesse de remboursement ne sont ajoutes ;
+- un brouillon Gmail peut ensuite etre cree si Gmail est configure, mais aucun email n'est envoye automatiquement.
 
 ## Brouillons Gmail V1
 

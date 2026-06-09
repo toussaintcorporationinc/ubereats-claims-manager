@@ -15,11 +15,13 @@ from app.models import (
     FollowUpTask,
     InboundEmailMessage,
     Restaurant,
+    UberCustomerRefundDispute,
     User,
 )
 from app.models.domain import utc_now
 from app.schemas.domain import (
     CommercialFollowupSummary,
+    CommercialCustomerRefundSummary,
     CommercialResponseSummary,
     CommercialRestaurantSummary,
     CommercialSummary,
@@ -69,6 +71,7 @@ class ReportingService:
         orders = self.order_rows(limit=None, offset=0)
         followups = self.followup_rows(limit=None, offset=0)
         responses = self.response_rows(limit=None, offset=0)
+        customer_refunds = self.customer_refund_rows()
 
         total_claimed = sum_decimal(row.order_amount for row in orders)
         total_recovered = sum_decimal(row.recovered_amount for row in orders)
@@ -110,7 +113,21 @@ class ReportingService:
                 payment_confirmed_count=len([row for row in responses if row.review_type == "payment_confirmed"]),
                 manual_review_count=len([row for row in responses if row.review_type == "manual_review"]),
             ),
+            customer_refunds=CommercialCustomerRefundSummary(
+                total_deducted_amount=sum_decimal(row.customer_refund_amount for row in customer_refunds),
+                disputes_count=len(customer_refunds),
+                needs_evidence_count=len([row for row in customer_refunds if row.evidence_status in {"missing", "partial"}]),
+                evidence_ready_count=len([row for row in customer_refunds if row.evidence_status == "complete"]),
+                sent_count=len([row for row in customer_refunds if row.status == "sent"]),
+                accepted_count=len([row for row in customer_refunds if row.status in {"accepted", "payment_confirmed"}]),
+                refused_count=len([row for row in customer_refunds if row.status == "refused"]),
+            ),
         )
+
+    def customer_refund_rows(self) -> list[UberCustomerRefundDispute]:
+        statement = select(UberCustomerRefundDispute)
+        statement = self.apply_customer_refund_filters(statement)
+        return list(self.db.scalars(statement).all())
 
     def order_rows(self, *, limit: int | None, offset: int = 0) -> list[ReportOrderRow]:
         evidence_counts = (
@@ -261,6 +278,28 @@ class ReportingService:
             statement = statement.where(ClaimOrder.order_amount >= self.filters.min_amount)
         if self.filters.max_amount is not None:
             statement = statement.where(ClaimOrder.order_amount <= self.filters.max_amount)
+        return statement
+
+    def apply_customer_refund_filters(self, statement: Any) -> Any:
+        accessible_ids = get_accessible_restaurant_ids(self.db, self.user)
+        if self.filters.restaurant_id is not None:
+            if not can_access_restaurant(self.db, self.user, self.filters.restaurant_id):
+                raise ReportingPermissionError("Restaurant access denied")
+            statement = statement.where(UberCustomerRefundDispute.restaurant_id == self.filters.restaurant_id)
+        elif accessible_ids is not None:
+            if not accessible_ids:
+                return statement.where(UberCustomerRefundDispute.id == -1)
+            statement = statement.where(UberCustomerRefundDispute.restaurant_id.in_(accessible_ids))
+        if self.filters.date_from is not None:
+            statement = statement.where(UberCustomerRefundDispute.deducted_at >= self.filters.date_from)
+        if self.filters.date_to is not None:
+            statement = statement.where(UberCustomerRefundDispute.deducted_at <= self.filters.date_to)
+        if self.filters.status:
+            statement = statement.where(UberCustomerRefundDispute.status == self.filters.status)
+        if self.filters.min_amount is not None:
+            statement = statement.where(UberCustomerRefundDispute.customer_refund_amount >= self.filters.min_amount)
+        if self.filters.max_amount is not None:
+            statement = statement.where(UberCustomerRefundDispute.customer_refund_amount <= self.filters.max_amount)
         return statement
 
     def ensure_export_limit(self, rows: list[object], max_rows: int) -> None:
