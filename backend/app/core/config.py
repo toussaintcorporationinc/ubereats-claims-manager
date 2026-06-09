@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     followup_automatic_send_enabled: bool = False
     export_max_rows: int = 10000
     report_default_lookback_days: int = 90
+    uber_reconciliation_default_lookback_days: int = 180
+    uber_reconciliation_amount_tolerance: float = 0.01
+    uber_reconciliation_min_missing_amount: float = 0.01
+    uber_reconciliation_max_results: int = 5000
     backend_cors_origins: str | None = None
     cors_origins: str = "http://localhost:3000"
     frontend_url: str | None = None

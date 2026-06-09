@@ -57,3 +57,9 @@ Ce workflow est adapte au backfill des 6 derniers mois, mais ne code aucune limi
 - Aucun scraping.
 - Aucun email automatique.
 - Les dossiers crees depuis reconciliation restent dans le workflow TENNET existant et exigent les preuves avant reclamation.
+
+## Reconciliation V1.1
+
+Le moteur V1.1 cree un `UberReconciliationRun`, analyse les `UberOrderSnapshot` annules, rapproche les `UberFinancialTransaction`, puis classe les resultats en `compensated`, `not_compensated`, `partially_compensated`, `already_claimed`, `needs_evidence`, `manual_review` ou `ignored`.
+
+Aucun dossier TENNET n'est cree pendant l'analyse. La creation d'un `ClaimOrder` reste une action manuelle explicite, et aucun email n'est genere ou envoye par ce workflow.

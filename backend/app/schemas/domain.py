@@ -81,6 +81,7 @@ UberReconciliationStatus = Literal[
     "ignored",
     "manual_review",
 ]
+UberReconciliationRunStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
 UberReportingReportType = Literal["orders_report", "payments_report", "adjustments_report", "combined_report"]
 UberReportingBatchStatus = Literal["uploaded", "parsed", "confirmed", "partially_imported", "failed", "cancelled"]
 UberReportingRowStatus = Literal["valid", "invalid", "warning", "duplicate", "created", "skipped"]
@@ -914,10 +915,50 @@ class UberUnmappedStoreMapRequest(BaseModel):
     restaurant_id: int
 
 
+class UberReconciliationRunRequest(BaseModel):
+    restaurant_id: int | None = None
+    date_from: date | None = None
+    date_to: date | None = None
+    dry_run: bool = False
+
+
+class UberReconciliationRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_by_user_id: int
+    restaurant_id: int | None
+    date_from: date
+    date_to: date
+    status: UberReconciliationRunStatus
+    total_orders_analyzed: int
+    canceled_orders_count: int
+    compensated_count: int
+    not_compensated_count: int
+    partially_compensated_count: int
+    already_claimed_count: int
+    needs_evidence_count: int
+    manual_review_count: int
+    total_claimable_amount: Decimal
+    total_missing_amount: Decimal
+    error_message: str | None
+    created_at: datetime
+    completed_at: datetime | None
+
+
 class UberReconciliationRunResponse(BaseModel):
-    results_created: int
-    results_updated: int
-    ignored_orders: int
+    run_id: int
+    status: UberReconciliationRunStatus
+    total_orders_analyzed: int
+    canceled_orders_count: int
+    compensated_count: int
+    not_compensated_count: int
+    partially_compensated_count: int
+    already_claimed_count: int
+    needs_evidence_count: int
+    manual_review_count: int
+    total_claimable_amount: Decimal
+    total_missing_amount: Decimal
     errors: list[str]
 
 
@@ -925,8 +966,10 @@ class UberReconciliationResultRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    run_id: int | None
     restaurant_id: int
     uber_order_id: str
+    display_id: str | None
     claim_order_id: int | None
     status: UberReconciliationStatus
     reason: str
@@ -934,7 +977,11 @@ class UberReconciliationResultRead(BaseModel):
     paid_amount: Decimal
     refunded_amount: Decimal
     missing_amount: Decimal | None
+    currency: str
     evidence_required: bool
+    confidence_score: Decimal | None
+    matched_transaction_ids_json: list[int] | None
+    matched_snapshot_id: int | None
     created_at: datetime
     updated_at: datetime
 
@@ -943,4 +990,60 @@ class UberReconciliationResultsResponse(BaseModel):
     results: list[UberReconciliationResultRead]
     limit: int
     offset: int
+
+
+class UberReconciliationSnapshotRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    restaurant_id: int
+    uber_store_id: str
+    uber_order_id: str
+    display_id: str | None
+    current_state: str
+    placed_at: datetime | None
+    canceled_at: datetime | None
+    order_total_amount: Decimal | None
+    currency: str
+    imported_from: UberImportedFrom
+    created_at: datetime
+    updated_at: datetime
+
+
+class UberReconciliationTransactionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    restaurant_id: int
+    uber_store_id: str
+    uber_order_id: str | None
+    transaction_type: str
+    amount: Decimal
+    currency: str
+    transaction_date: date
+    payout_reference: str | None
+    imported_from: UberImportedFrom
+    created_at: datetime
+
+
+class UberReconciliationResultDetail(BaseModel):
+    result: UberReconciliationResultRead
+    snapshot: UberReconciliationSnapshotRead | None
+    transactions: list[UberReconciliationTransactionRead]
+    claim_order: ClaimOrderRead | None
+
+
+class UberReconciliationBulkCreateRequest(BaseModel):
+    result_ids: list[int] = Field(min_length=1, max_length=500)
+
+
+class UberReconciliationBulkCreateResponse(BaseModel):
+    created_count: int
+    skipped_count: int
+    errors: list[str]
+    created_order_ids: list[int]
+
+
+class UberReconciliationIgnoreRequest(BaseModel):
+    reason: str = Field(min_length=1)
 

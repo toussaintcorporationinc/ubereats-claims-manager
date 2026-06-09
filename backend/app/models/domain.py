@@ -109,6 +109,7 @@ UBER_RECONCILIATION_STATUSES = (
     "ignored",
     "manual_review",
 )
+UBER_RECONCILIATION_RUN_STATUSES = ("pending", "running", "completed", "failed", "cancelled")
 UBER_REPORTING_IMPORT_REPORT_TYPES = ("orders_report", "payments_report", "adjustments_report", "combined_report")
 UBER_REPORTING_IMPORT_BATCH_STATUSES = ("uploaded", "parsed", "confirmed", "partially_imported", "failed", "cancelled")
 UBER_REPORTING_IMPORT_ROW_STATUSES = ("valid", "invalid", "warning", "duplicate", "created", "skipped")
@@ -187,6 +188,7 @@ class Restaurant(TimestampMixin, Base):
     uber_order_snapshots: Mapped[list["UberOrderSnapshot"]] = relationship(back_populates="restaurant")
     uber_financial_transactions: Mapped[list["UberFinancialTransaction"]] = relationship(back_populates="restaurant")
     uber_reconciliation_results: Mapped[list["UberReconciliationResult"]] = relationship(back_populates="restaurant")
+    uber_reconciliation_runs: Mapped[list["UberReconciliationRun"]] = relationship(back_populates="restaurant")
 
 
 class ClaimOrder(TimestampMixin, Base):
@@ -679,6 +681,42 @@ class UberFinancialTransaction(Base):
     restaurant: Mapped[Restaurant] = relationship(back_populates="uber_financial_transactions")
 
 
+class UberReconciliationRun(Base):
+    __tablename__ = "uber_reconciliation_runs"
+    __table_args__ = (
+        CheckConstraint(
+            check_in_constraint("status", UBER_RECONCILIATION_RUN_STATUSES),
+            name="ck_uber_reconciliation_runs_status",
+        ),
+        Index("ix_uber_reconciliation_runs_created_by_user_id", "created_by_user_id"),
+        Index("ix_uber_reconciliation_runs_restaurant_id", "restaurant_id"),
+        Index("ix_uber_reconciliation_runs_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_by_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    restaurant_id: Mapped[int | None] = mapped_column(ForeignKey("restaurants.id"))
+    date_from: Mapped[date] = mapped_column(Date, nullable=False)
+    date_to: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
+    total_orders_analyzed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    canceled_orders_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    compensated_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    not_compensated_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    partially_compensated_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    already_claimed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    needs_evidence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    manual_review_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_claimable_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    total_missing_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    restaurant: Mapped[Restaurant | None] = relationship(back_populates="uber_reconciliation_runs")
+    results: Mapped[list["UberReconciliationResult"]] = relationship(back_populates="run")
+
+
 class UberReconciliationResult(TimestampMixin, Base):
     __tablename__ = "uber_reconciliation_results"
     __table_args__ = (
@@ -693,8 +731,10 @@ class UberReconciliationResult(TimestampMixin, Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("uber_reconciliation_runs.id"))
     restaurant_id: Mapped[int] = mapped_column(ForeignKey("restaurants.id"), nullable=False)
     uber_order_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_id: Mapped[str | None] = mapped_column(String(255))
     claim_order_id: Mapped[int | None] = mapped_column(ForeignKey("claim_orders.id"))
     status: Mapped[str] = mapped_column(String(50), nullable=False)
     reason: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -702,10 +742,16 @@ class UberReconciliationResult(TimestampMixin, Base):
     paid_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
     refunded_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))
     missing_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
     evidence_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    confidence_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    matched_transaction_ids_json: Mapped[list[int] | None] = mapped_column(JSON)
+    matched_snapshot_id: Mapped[int | None] = mapped_column(ForeignKey("uber_order_snapshots.id"))
 
+    run: Mapped[UberReconciliationRun | None] = relationship(back_populates="results")
     restaurant: Mapped[Restaurant] = relationship(back_populates="uber_reconciliation_results")
     claim_order: Mapped[ClaimOrder | None] = relationship()
+    matched_snapshot: Mapped[UberOrderSnapshot | None] = relationship()
 
 
 class UberReportingImportBatch(TimestampMixin, Base):

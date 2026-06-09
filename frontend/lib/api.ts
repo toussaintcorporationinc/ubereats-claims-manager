@@ -75,6 +75,7 @@ export type UberReconciliationStatus =
   | "already_claimed"
   | "ignored"
   | "manual_review";
+export type UberReconciliationRunStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 export type UberReportingReportType = "orders_report" | "payments_report" | "adjustments_report" | "combined_report";
 export type UberReportingBatchStatus = "uploaded" | "parsed" | "confirmed" | "partially_imported" | "failed" | "cancelled";
 export type UberReportingRowStatus = "valid" | "invalid" | "warning" | "duplicate" | "created" | "skipped";
@@ -655,17 +656,57 @@ export type UberUnmappedStore = {
   suggested_restaurant_matches: Restaurant[];
 };
 
+export type UberReconciliationRunPayload = {
+  restaurant_id?: number | null;
+  date_from?: string | null;
+  date_to?: string | null;
+  dry_run?: boolean;
+};
+
+export type UberReconciliationRun = {
+  id: number;
+  created_by_user_id: number;
+  restaurant_id: number | null;
+  date_from: string;
+  date_to: string;
+  status: UberReconciliationRunStatus;
+  total_orders_analyzed: number;
+  canceled_orders_count: number;
+  compensated_count: number;
+  not_compensated_count: number;
+  partially_compensated_count: number;
+  already_claimed_count: number;
+  needs_evidence_count: number;
+  manual_review_count: number;
+  total_claimable_amount: MoneyValue;
+  total_missing_amount: MoneyValue;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+};
+
 export type UberReconciliationRunResponse = {
-  results_created: number;
-  results_updated: number;
-  ignored_orders: number;
+  run_id: number;
+  status: UberReconciliationRunStatus;
+  total_orders_analyzed: number;
+  canceled_orders_count: number;
+  compensated_count: number;
+  not_compensated_count: number;
+  partially_compensated_count: number;
+  already_claimed_count: number;
+  needs_evidence_count: number;
+  manual_review_count: number;
+  total_claimable_amount: MoneyValue;
+  total_missing_amount: MoneyValue;
   errors: string[];
 };
 
 export type UberReconciliationResult = {
   id: number;
+  run_id: number | null;
   restaurant_id: number;
   uber_order_id: string;
+  display_id: string | null;
   claim_order_id: number | null;
   status: UberReconciliationStatus;
   reason: string;
@@ -673,7 +714,11 @@ export type UberReconciliationResult = {
   paid_amount: MoneyValue;
   refunded_amount: MoneyValue;
   missing_amount: MoneyValue;
+  currency: string;
   evidence_required: boolean;
+  confidence_score: MoneyValue;
+  matched_transaction_ids_json: number[] | null;
+  matched_snapshot_id: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -682,6 +727,20 @@ export type UberReconciliationResultsResponse = {
   results: UberReconciliationResult[];
   limit: number;
   offset: number;
+};
+
+export type UberReconciliationResultDetail = {
+  result: UberReconciliationResult;
+  snapshot: Record<string, unknown> | null;
+  transactions: Record<string, unknown>[];
+  claim_order: ClaimOrder | null;
+};
+
+export type UberReconciliationBulkCreateResponse = {
+  created_count: number;
+  skipped_count: number;
+  errors: string[];
+  created_order_ids: number[];
 };
 
 export type ImportRow = {
@@ -1211,12 +1270,37 @@ export const api = {
       `/v1/uber/reporting/unmapped-stores/${encodeURIComponent(uberStoreId)}/map`,
       { restaurant_id: restaurantId },
     ),
-  getUberReconciliationResults: (filters: { status?: UberReconciliationStatus | ""; limit?: number; offset?: number } = {}) =>
+  getUberReconciliationRuns: () => request<UberReconciliationRun[]>("/v1/uber/reconciliation/runs"),
+  getUberReconciliationRun: (runId: number) => request<UberReconciliationRun>(`/v1/uber/reconciliation/runs/${runId}`),
+  getUberReconciliationResults: (
+    filters: {
+      run_id?: number;
+      restaurant_id?: number | "";
+      status?: UberReconciliationStatus | "";
+      date_from?: string;
+      date_to?: string;
+      min_missing_amount?: string;
+      evidence_required?: boolean;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) =>
     request<UberReconciliationResultsResponse>(`/v1/uber/reconciliation/results${buildQuery(filters)}`),
-  runUberReconciliation: () =>
-    postJson<UberReconciliationRunResponse, Record<string, never>>("/v1/uber/reconciliation/run", {}),
+  getUberReconciliationResult: (resultId: number) =>
+    request<UberReconciliationResultDetail>(`/v1/uber/reconciliation/results/${resultId}`),
+  runUberReconciliation: (payload: UberReconciliationRunPayload = {}) =>
+    postJson<UberReconciliationRunResponse, UberReconciliationRunPayload>("/v1/uber/reconciliation/run", payload),
   createClaimOrderFromUberResult: (resultId: number) =>
     postJson<ClaimOrder, Record<string, never>>(`/v1/uber/reconciliation/results/${resultId}/claim-order`, {}),
+  bulkCreateClaimOrdersFromUberResults: (resultIds: number[]) =>
+    postJson<UberReconciliationBulkCreateResponse, { result_ids: number[] }>(
+      "/v1/uber/reconciliation/results/bulk-create-claim-orders",
+      { result_ids: resultIds },
+    ),
+  ignoreUberReconciliationResult: (resultId: number, reason: string) =>
+    postJson<UberReconciliationResultsResponse, { reason: string }>(`/v1/uber/reconciliation/results/${resultId}/ignore`, {
+      reason,
+    }),
   previewOrderImport: (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
