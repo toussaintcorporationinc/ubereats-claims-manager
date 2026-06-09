@@ -1,0 +1,14 @@
+Bonjour,
+
+Nous demandons une verification de paiement pour le dossier Uber Eats {uber_order_number} du restaurant {restaurant_name}.
+
+Montant concerne : {order_amount} {currency}
+Motif / contexte : {refusal_reason}
+
+Preuves rattachees dans TENNET :
+{evidence_list}
+
+Merci de confirmer si le paiement est prevu, deja verse, ou toujours bloque, avec la reference de versement si disponible.
+
+Cordialement,
+{signature}

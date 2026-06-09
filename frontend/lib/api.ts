@@ -50,7 +50,14 @@ export type EmailDraftType =
   | "customer_refund_order_not_received"
   | "customer_refund_missing_item"
   | "customer_refund_order_error_adjustment"
-  | "customer_refund_generic";
+  | "customer_refund_generic"
+  | "appeal_generic_refusal"
+  | "appeal_missing_evidence_reply"
+  | "appeal_order_prepared_before_cancellation"
+  | "appeal_order_not_received_delivery_proof"
+  | "appeal_missing_item_preparation_proof"
+  | "appeal_escalation"
+  | "appeal_payment_verification";
 export type ImportBatchStatus = "uploaded" | "parsed" | "confirmed" | "partially_imported" | "failed" | "cancelled";
 export type ImportRowStatus = "valid" | "invalid" | "duplicate" | "unauthorized" | "created" | "skipped";
 export type EmailProviderDraftStatus = "provider_draft_created" | "send_requested" | "sent" | "failed";
@@ -161,7 +168,8 @@ export type RecoveryStage =
   | "payment_confirmed"
   | "refused"
   | "ignored"
-  | "manual_review";
+  | "manual_review"
+  | "under_appeal";
 export type RecoveryCaseType = "claim_order" | "reconciliation_result" | "customer_refund_dispute";
 export type RecoveryActionType =
   | "upload_evidence"
@@ -170,7 +178,68 @@ export type RecoveryActionType =
   | "create_gmail_draft"
   | "process_response"
   | "followup"
+  | "review_refusal"
+  | "create_appeal_draft"
+  | "request_more_evidence"
+  | "escalation"
   | "manual_review";
+
+export type EvidenceImportSourceType = "multi_file_upload" | "zip_upload" | "mobile_upload" | "server_folder_import";
+export type EvidenceImportBatchStatus =
+  | "uploaded"
+  | "extracting"
+  | "stored"
+  | "analyzing"
+  | "analyzed"
+  | "partially_analyzed"
+  | "failed"
+  | "cancelled";
+export type EvidenceImportedFileStatus = "stored" | "analysis_pending" | "analyzed" | "failed" | "ignored";
+export type EvidenceAnalysisProvider = "fake" | "local_ocr" | "openai_vision";
+export type EvidenceAnalysisStatus = "success" | "partial" | "failed" | "manual_review";
+export type EvidenceAnalysisType = EvidenceType | "unknown";
+export type EvidenceMatchCandidateType = "claim_order" | "evidence_task" | "customer_refund_dispute" | "reconciliation_result";
+export type EvidenceMatchStatus = "proposed" | "auto_attached" | "accepted" | "rejected" | "manual_review";
+export type EvidenceAttachmentDecisionType = "attached" | "rejected" | "ignored" | "deferred";
+export type AppealCaseType = "claim_order" | "customer_refund_dispute" | "reconciliation_result";
+export type AppealWorkflowStatus =
+  | "active"
+  | "appeal_needed"
+  | "evidence_needed"
+  | "draft_needed"
+  | "gmail_draft_needed"
+  | "appeal_sent"
+  | "response_received"
+  | "escalated"
+  | "payment_to_verify"
+  | "payment_confirmed"
+  | "accepted"
+  | "paused"
+  | "manually_closed";
+export type AppealNextActionType =
+  | "review_refusal"
+  | "request_more_evidence"
+  | "create_appeal_draft"
+  | "create_gmail_draft"
+  | "send_manual_appeal"
+  | "escalation"
+  | "payment_verification"
+  | "manual_review";
+export type AppealType =
+  | "first_appeal"
+  | "second_appeal"
+  | "escalation"
+  | "payment_verification"
+  | "evidence_reply"
+  | "manager_review";
+export type AppealAttemptStatus =
+  | "planned"
+  | "draft_created"
+  | "gmail_draft_created"
+  | "sent"
+  | "response_received"
+  | "superseded"
+  | "cancelled";
 
 export type Restaurant = {
   id: number;
@@ -951,6 +1020,11 @@ export type RecoveryTotals = {
   recovered_count: number;
   refused_count: number;
   manual_review_count: number;
+  active_appeals_count: number;
+  appeal_needed_count: number;
+  escalations_needed_count: number;
+  refused_under_appeal_amount: MoneyValue;
+  manually_closed_amount: MoneyValue;
   recovery_rate: MoneyValue;
   review_coverage_rate: MoneyValue;
 };
@@ -1021,6 +1095,230 @@ export type RecoveryActionsResponse = {
   actions: RecoveryAction[];
   limit: number;
   offset: number;
+};
+
+export type EvidenceImportBatch = {
+  id: number;
+  uploaded_by_user_id: number;
+  restaurant_id: number | null;
+  original_filename: string | null;
+  source_type: EvidenceImportSourceType;
+  status: EvidenceImportBatchStatus;
+  total_files: number;
+  stored_files_count: number;
+  analyzed_files_count: number;
+  auto_matched_count: number;
+  needs_review_count: number;
+  failed_files_count: number;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+};
+
+export type EvidenceImportedFile = {
+  id: number;
+  batch_id: number;
+  uploaded_by_user_id: number;
+  original_filename: string;
+  internal_filename: string;
+  storage_backend: string;
+  mime_type: string | null;
+  file_size: number;
+  checksum_sha256: string;
+  page_count: number | null;
+  image_width: number | null;
+  image_height: number | null;
+  status: EvidenceImportedFileStatus;
+  created_at: string;
+  updated_at: string;
+  preview_url: string;
+};
+
+export type EvidenceAnalysisResult = {
+  id: number;
+  imported_file_id: number;
+  provider: EvidenceAnalysisProvider;
+  model_name: string | null;
+  status: EvidenceAnalysisStatus;
+  extracted_text: string | null;
+  detected_evidence_type: EvidenceAnalysisType;
+  detected_restaurant_name: string | null;
+  detected_uber_order_number: string | null;
+  detected_display_id: string | null;
+  detected_order_date: string | null;
+  detected_order_amount: MoneyValue;
+  detected_currency: string | null;
+  detected_keywords_json: string[] | null;
+  classification_confidence: MoneyValue;
+  extraction_confidence: MoneyValue;
+  matching_confidence: MoneyValue;
+  raw_result_json: Record<string, unknown> | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EvidenceMatchCandidate = {
+  id: number;
+  imported_file_id: number;
+  analysis_result_id: number;
+  candidate_type: EvidenceMatchCandidateType;
+  candidate_id: number;
+  restaurant_id: number | null;
+  match_reason: string;
+  match_score: MoneyValue;
+  status: EvidenceMatchStatus;
+  created_at: string;
+  updated_at: string;
+  reviewed_by_user_id: number | null;
+  reviewed_at: string | null;
+};
+
+export type EvidenceImportedFileDetail = {
+  file: EvidenceImportedFile;
+  analysis_results: EvidenceAnalysisResult[];
+  candidates: EvidenceMatchCandidate[];
+};
+
+export type EvidenceImportsResponse = {
+  batches: EvidenceImportBatch[];
+  limit: number;
+  offset: number;
+};
+
+export type EvidenceImportFilesResponse = {
+  files: EvidenceImportedFile[];
+  limit: number;
+  offset: number;
+};
+
+export type EvidenceImportAnalyzeResponse = {
+  batch_id: number;
+  status: EvidenceImportBatchStatus;
+  analyzed_files_count: number;
+  auto_matched_count: number;
+  needs_review_count: number;
+  failed_files_count: number;
+  errors: string[];
+};
+
+export type EvidenceAttachResponse = {
+  decision: {
+    id: number;
+    imported_file_id: number;
+    evidence_file_id: number | null;
+    candidate_type: EvidenceMatchCandidateType;
+    candidate_id: number;
+    decision: EvidenceAttachmentDecisionType;
+    decided_by_user_id: number;
+    reason: string | null;
+    created_at: string;
+  };
+  evidence_file: EvidenceFile | null;
+  validation: ClaimValidationResponse | null;
+};
+
+export type EvidenceBulkAcceptResponse = {
+  accepted_count: number;
+  skipped_count: number;
+  errors: string[];
+};
+
+export type AppealWorkflow = {
+  id: number;
+  case_type: AppealCaseType;
+  case_id: number;
+  restaurant_id: number;
+  claim_order_id: number | null;
+  customer_refund_dispute_id: number | null;
+  reconciliation_result_id: number | null;
+  status: AppealWorkflowStatus;
+  current_level: number;
+  refusal_count: number;
+  appeal_attempt_count: number;
+  last_refusal_at: string | null;
+  last_appeal_sent_at: string | null;
+  next_action_at: string | null;
+  next_action_type: AppealNextActionType | null;
+  opened_by_user_id: number | null;
+  manually_closed_by_user_id: number | null;
+  manually_closed_at: string | null;
+  manual_close_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AppealAttempt = {
+  id: number;
+  workflow_id: number;
+  attempt_number: number;
+  appeal_type: AppealType;
+  status: AppealAttemptStatus;
+  based_on_refusal_message_id: number | null;
+  email_draft_id: number | null;
+  provider_draft_id: number | null;
+  sent_email_thread_id: number | null;
+  argument_summary: string | null;
+  new_evidence_summary: string | null;
+  created_by_user_id: number | null;
+  sent_by_user_id: number | null;
+  created_at: string;
+  sent_at: string | null;
+  completed_at: string | null;
+};
+
+export type RefusalAnalysis = {
+  id: number;
+  workflow_id: number;
+  inbound_message_id: number | null;
+  review_id: number | null;
+  refusal_source: string;
+  refusal_reason: string;
+  refusal_text_excerpt: string | null;
+  recommended_next_action: string;
+  required_evidence_types_json: string[] | null;
+  confidence: MoneyValue;
+  created_at: string;
+};
+
+export type AppealWorkflowSummary = {
+  id: number;
+  case_type: AppealCaseType;
+  case_id: number;
+  restaurant_id: number;
+  restaurant_name: string;
+  uber_order_number: string | null;
+  amount: MoneyValue;
+  currency: string;
+  status: AppealWorkflowStatus;
+  next_action_type: AppealNextActionType | null;
+  next_action_at: string | null;
+  refusal_count: number;
+  appeal_attempt_count: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AppealsResponse = {
+  workflows: AppealWorkflowSummary[];
+  limit: number;
+  offset: number;
+};
+
+export type AppealDetailResponse = {
+  workflow: AppealWorkflow;
+  case_summary: Record<string, unknown>;
+  attempts: AppealAttempt[];
+  refusal_analyses: RefusalAnalysis[];
+  evidence_tasks: EvidenceRequestTaskSummary[];
+  email_history: EmailDraft[];
+};
+
+export type AppealRecalculateResponse = {
+  created_workflows: number;
+  existing_workflows: number;
+  errors: string[];
 };
 
 export type UberStatus = {
@@ -1829,6 +2127,98 @@ export const api = {
     downloadBlob(`/v1/recovery/export/summary.xlsx${buildQuery(filters)}`),
   downloadRecoveryCasesCsv: (filters: RecoveryFilters = {}) =>
     downloadBlob(`/v1/recovery/export/cases.csv${buildQuery(filters)}`),
+  createEvidenceImport: (files: File[], restaurantId?: number | null) => {
+    const formData = new FormData();
+    files.forEach((file) => formData.append("files", file));
+    if (restaurantId) {
+      formData.append("restaurant_id", String(restaurantId));
+    }
+    return request<EvidenceImportBatch>("/v1/evidence-imports", {
+      method: "POST",
+      body: formData,
+    });
+  },
+  createEvidenceZipImport: (file: File, restaurantId?: number | null) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (restaurantId) {
+      formData.append("restaurant_id", String(restaurantId));
+    }
+    return request<EvidenceImportBatch>("/v1/evidence-imports/zip", {
+      method: "POST",
+      body: formData,
+    });
+  },
+  getEvidenceImports: (filters: { limit?: number; offset?: number } = {}) =>
+    request<EvidenceImportsResponse>(`/v1/evidence-imports${buildQuery(filters)}`),
+  getEvidenceImport: (batchId: number) => request<EvidenceImportBatch>(`/v1/evidence-imports/${batchId}`),
+  getEvidenceImportFiles: (
+    batchId: number,
+    filters: {
+      status?: EvidenceImportedFileStatus | "";
+      detected_evidence_type?: EvidenceAnalysisType | "";
+      needs_review?: boolean;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => request<EvidenceImportFilesResponse>(`/v1/evidence-imports/${batchId}/files${buildQuery(filters)}`),
+  analyzeEvidenceImport: (batchId: number, payload: { provider: EvidenceAnalysisProvider; limit?: number }) =>
+    postJson<EvidenceImportAnalyzeResponse, { provider: EvidenceAnalysisProvider; limit?: number }>(
+      `/v1/evidence-imports/${batchId}/analyze`,
+      payload,
+    ),
+  bulkAcceptEvidenceImport: (batchId: number, payload: { min_score?: string | number } = {}) =>
+    postJson<EvidenceBulkAcceptResponse, { min_score?: string | number }>(
+      `/v1/evidence-imports/${batchId}/bulk-accept-high-confidence`,
+      payload,
+    ),
+  getEvidenceImportedFile: (fileId: number) =>
+    request<EvidenceImportedFileDetail>(`/v1/evidence-imported-files/${fileId}`),
+  previewEvidenceImportedFile: (fileId: number) => downloadBlob(`/v1/evidence-imported-files/${fileId}/preview`),
+  attachEvidenceImportedFile: (
+    fileId: number,
+    payload: { candidate_type: EvidenceMatchCandidateType; candidate_id: number; evidence_type: EvidenceType },
+  ) =>
+    postJson<EvidenceAttachResponse, { candidate_type: EvidenceMatchCandidateType; candidate_id: number; evidence_type: EvidenceType }>(
+      `/v1/evidence-imported-files/${fileId}/attach`,
+      payload,
+    ),
+  acceptEvidenceMatchCandidate: (candidateId: number) =>
+    postJson<EvidenceAttachResponse, Record<string, never>>(`/v1/evidence-match-candidates/${candidateId}/accept`, {}),
+  rejectEvidenceMatchCandidate: (candidateId: number, reason: string) =>
+    postJson<EvidenceMatchCandidate, { reason: string }>(`/v1/evidence-match-candidates/${candidateId}/reject`, { reason }),
+  ignoreEvidenceImportedFile: (fileId: number, reason: string) =>
+    postJson<EvidenceAttachResponse["decision"], { reason: string }>(`/v1/evidence-imported-files/${fileId}/ignore`, {
+      reason,
+    }),
+  getAppeals: (
+    filters: {
+      restaurant_id?: number | "";
+      status?: AppealWorkflowStatus | "";
+      case_type?: AppealCaseType | "";
+      next_action_type?: AppealNextActionType | "";
+      min_refusal_count?: number;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => request<AppealsResponse>(`/v1/appeals${buildQuery(filters)}`),
+  getAppeal: (workflowId: number) => request<AppealDetailResponse>(`/v1/appeals/${workflowId}`),
+  recalculateAppeals: (payload: { restaurant_id?: number | null } = {}) =>
+    postJson<AppealRecalculateResponse, { restaurant_id?: number | null }>("/v1/appeals/recalculate", payload),
+  analyzeAppealRefusal: (workflowId: number) =>
+    postJson<RefusalAnalysis, Record<string, never>>(`/v1/appeals/${workflowId}/analyze-refusal`, {}),
+  createAppealDraft: (workflowId: number, payload: { appeal_type: AppealType }) =>
+    postJson<AppealAttempt, { appeal_type: AppealType }>(`/v1/appeals/${workflowId}/create-draft`, payload),
+  createAppealGmailDraft: (workflowId: number) =>
+    postJson<AppealAttempt, Record<string, never>>(`/v1/appeals/${workflowId}/create-gmail-draft`, {}),
+  markAppealSent: (workflowId: number) =>
+    postJson<AppealAttempt, Record<string, never>>(`/v1/appeals/${workflowId}/mark-sent`, {}),
+  pauseAppeal: (workflowId: number, payload: { reason: string }) =>
+    postJson<AppealWorkflow, { reason: string }>(`/v1/appeals/${workflowId}/pause`, payload),
+  manualCloseAppeal: (workflowId: number, payload: { reason: string }) =>
+    postJson<AppealWorkflow, { reason: string }>(`/v1/appeals/${workflowId}/manual-close`, payload),
+  reopenAppeal: (workflowId: number) =>
+    postJson<AppealWorkflow, Record<string, never>>(`/v1/appeals/${workflowId}/reopen`, {}),
   getUberStatus: () => request<UberStatus>("/v1/uber/status"),
   getUberStoreMappings: () => request<UberStoreMapping[]>("/v1/uber/store-mappings"),
   createUberStoreMapping: (payload: UberStoreMappingCreatePayload) =>

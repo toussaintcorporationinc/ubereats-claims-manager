@@ -70,6 +70,19 @@ The receipt is recommended but not blocking in V1.
 
 The raw mobile token is shown only once. TENNET stores only the token hash.
 
+## Bulk evidence import
+
+1. Open `/evidence-imports/new`.
+2. Select a restaurant if the batch is restaurant-specific.
+3. Upload several proof files or one ZIP.
+4. Open the created batch.
+5. Run the analysis.
+6. Review each imported file, detected type and match candidates.
+7. Accept a candidate only when the match is clear.
+8. Ignore files that are not useful for a claim.
+
+TENNET can attach an imported file to an order, an evidence task, a customer refund dispute or a reconciliation result. It does not invent proof and does not force ambiguous matches.
+
 ## Claim validation
 
 1. Open the order detail page.
@@ -115,6 +128,19 @@ The application reads and links replies. It does not answer automatically.
 
 The decision updates the order and creates an audit log.
 
+## Persistent appeals after refusal
+
+1. When a claim or customer refund dispute is refused, open `/appeals`.
+2. Open the workflow detail.
+3. Review the refusal analysis and required evidence.
+4. Create an internal appeal draft.
+5. Create a Gmail draft only if Gmail is configured and the content is ready.
+6. Send manually through the approved Gmail workflow.
+7. Mark the appeal as sent in TENNET.
+8. Pause, manually close or reopen the workflow when appropriate.
+
+A refusal does not close the case automatically. Appeals are limited, traceable and never sent automatically.
+
 ## Customer refund deductions
 
 1. Open `/customer-refunds`.
@@ -139,7 +165,7 @@ TENNET does not promise reimbursement. It helps ensure no detected deduction is 
 4. Open `/recovery/actions` to work through evidence, drafts, responses, follow-ups and manual reviews.
 5. Export summary XLSX or cases CSV if your role allows it.
 
-The cockpit does not send emails, create automatic follow-ups or make decisions without the user.
+The cockpit also highlights active appeals, escalations and refused amounts still under appeal. It does not send emails, create automatic follow-ups or make decisions without the user.
 
 ## Controlled follow-ups
 

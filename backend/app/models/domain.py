@@ -66,6 +66,13 @@ EMAIL_DRAFT_TYPES = (
     "customer_refund_missing_item",
     "customer_refund_order_error_adjustment",
     "customer_refund_generic",
+    "appeal_generic_refusal",
+    "appeal_missing_evidence_reply",
+    "appeal_order_prepared_before_cancellation",
+    "appeal_order_not_received_delivery_proof",
+    "appeal_missing_item_preparation_proof",
+    "appeal_escalation",
+    "appeal_payment_verification",
 )
 
 EMAIL_DRAFT_STATUSES = ("created", "draft", "ready", "archived")
@@ -172,6 +179,88 @@ UBER_RECONCILIATION_RUN_STATUSES = ("pending", "running", "completed", "failed",
 UBER_REPORTING_IMPORT_REPORT_TYPES = ("orders_report", "payments_report", "adjustments_report", "combined_report")
 UBER_REPORTING_IMPORT_BATCH_STATUSES = ("uploaded", "parsed", "confirmed", "partially_imported", "failed", "cancelled")
 UBER_REPORTING_IMPORT_ROW_STATUSES = ("valid", "invalid", "warning", "duplicate", "created", "skipped")
+EVIDENCE_IMPORT_SOURCE_TYPES = ("multi_file_upload", "zip_upload", "mobile_upload", "server_folder_import")
+EVIDENCE_IMPORT_BATCH_STATUSES = (
+    "uploaded",
+    "extracting",
+    "stored",
+    "analyzing",
+    "analyzed",
+    "partially_analyzed",
+    "failed",
+    "cancelled",
+)
+EVIDENCE_IMPORTED_FILE_STATUSES = ("stored", "analysis_pending", "analyzed", "failed", "ignored")
+EVIDENCE_ANALYSIS_PROVIDERS = ("local_ocr", "openai_vision", "fake")
+EVIDENCE_ANALYSIS_STATUSES = ("success", "partial", "failed", "manual_review")
+EVIDENCE_ANALYSIS_TYPES = (*EVIDENCE_TYPES, "unknown")
+EVIDENCE_MATCH_CANDIDATE_TYPES = ("claim_order", "evidence_task", "customer_refund_dispute", "reconciliation_result")
+EVIDENCE_MATCH_STATUSES = ("proposed", "auto_attached", "accepted", "rejected", "manual_review")
+EVIDENCE_MATCH_REASONS = (
+    "exact_order_number",
+    "display_id_match",
+    "amount_date_restaurant_match",
+    "restaurant_date_amount_match",
+    "evidence_task_type_match",
+    "filename_hint",
+    "manual_selection",
+    "low_confidence",
+    "ambiguous_candidates",
+)
+EVIDENCE_ATTACHMENT_DECISIONS = ("attached", "rejected", "ignored", "deferred")
+APPEAL_CASE_TYPES = ("claim_order", "customer_refund_dispute", "reconciliation_result")
+APPEAL_WORKFLOW_STATUSES = (
+    "active",
+    "appeal_needed",
+    "evidence_needed",
+    "draft_needed",
+    "gmail_draft_needed",
+    "appeal_sent",
+    "response_received",
+    "escalated",
+    "payment_to_verify",
+    "payment_confirmed",
+    "accepted",
+    "paused",
+    "manually_closed",
+)
+APPEAL_NEXT_ACTION_TYPES = (
+    "review_refusal",
+    "request_more_evidence",
+    "create_appeal_draft",
+    "create_gmail_draft",
+    "send_manual_appeal",
+    "escalation",
+    "payment_verification",
+    "manual_review",
+)
+APPEAL_TYPES = (
+    "first_appeal",
+    "second_appeal",
+    "escalation",
+    "payment_verification",
+    "evidence_reply",
+    "manager_review",
+)
+APPEAL_ATTEMPT_STATUSES = (
+    "planned",
+    "draft_created",
+    "gmail_draft_created",
+    "sent",
+    "response_received",
+    "superseded",
+    "cancelled",
+)
+REFUSAL_SOURCES = ("claim_response_review", "customer_refund_review", "inbound_message", "manual")
+REFUSAL_NEXT_ACTIONS = (
+    "provide_missing_evidence",
+    "clarify_order_prepared",
+    "clarify_delivery_proof",
+    "challenge_generic_refusal",
+    "request_escalation",
+    "payment_verification",
+    "manual_review",
+)
 
 
 def utc_now() -> datetime:
@@ -250,6 +339,8 @@ class Restaurant(TimestampMixin, Base):
     uber_reconciliation_runs: Mapped[list["UberReconciliationRun"]] = relationship(back_populates="restaurant")
     evidence_request_tasks: Mapped[list["EvidenceRequestTask"]] = relationship(back_populates="restaurant")
     customer_refund_disputes: Mapped[list["UberCustomerRefundDispute"]] = relationship(back_populates="restaurant")
+    evidence_import_batches: Mapped[list["EvidenceImportBatch"]] = relationship(back_populates="restaurant")
+    appeal_workflows: Mapped[list["AppealWorkflow"]] = relationship(back_populates="restaurant")
 
 
 class ClaimOrder(TimestampMixin, Base):
@@ -292,6 +383,7 @@ class ClaimOrder(TimestampMixin, Base):
     followup_tasks: Mapped[list["FollowUpTask"]] = relationship(back_populates="order")
     evidence_request_tasks: Mapped[list["EvidenceRequestTask"]] = relationship(back_populates="order")
     customer_refund_disputes: Mapped[list["UberCustomerRefundDispute"]] = relationship(back_populates="claim_order")
+    appeal_workflows: Mapped[list["AppealWorkflow"]] = relationship(back_populates="claim_order")
 
 
 class EvidenceFile(Base):
@@ -317,6 +409,7 @@ class EvidenceFile(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     order: Mapped[ClaimOrder] = relationship(back_populates="evidence_files")
+    attachment_decisions: Mapped[list["EvidenceAttachmentDecision"]] = relationship(back_populates="evidence_file")
 
     @property
     def download_url(self) -> str | None:
@@ -1035,6 +1128,262 @@ class EvidenceUploadLink(TimestampMixin, Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     task: Mapped[EvidenceRequestTask] = relationship(back_populates="upload_links")
+
+
+class EvidenceImportBatch(TimestampMixin, Base):
+    __tablename__ = "evidence_import_batches"
+    __table_args__ = (
+        CheckConstraint(check_in_constraint("source_type", EVIDENCE_IMPORT_SOURCE_TYPES), name="ck_evidence_import_batches_source_type"),
+        CheckConstraint(check_in_constraint("status", EVIDENCE_IMPORT_BATCH_STATUSES), name="ck_evidence_import_batches_status"),
+        Index("ix_evidence_import_batches_uploaded_by_user_id", "uploaded_by_user_id"),
+        Index("ix_evidence_import_batches_restaurant_id", "restaurant_id"),
+        Index("ix_evidence_import_batches_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    uploaded_by_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    restaurant_id: Mapped[int | None] = mapped_column(ForeignKey("restaurants.id"))
+    original_filename: Mapped[str | None] = mapped_column(String(255))
+    source_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="uploaded")
+    total_files: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    stored_files_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    analyzed_files_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    auto_matched_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    needs_review_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_files_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    restaurant: Mapped[Restaurant | None] = relationship(back_populates="evidence_import_batches")
+    files: Mapped[list["EvidenceImportedFile"]] = relationship(back_populates="batch", cascade="all, delete-orphan")
+
+
+class EvidenceImportedFile(TimestampMixin, Base):
+    __tablename__ = "evidence_imported_files"
+    __table_args__ = (
+        CheckConstraint(check_in_constraint("status", EVIDENCE_IMPORTED_FILE_STATUSES), name="ck_evidence_imported_files_status"),
+        Index("ix_evidence_imported_files_batch_id", "batch_id"),
+        Index("ix_evidence_imported_files_uploaded_by_user_id", "uploaded_by_user_id"),
+        Index("ix_evidence_imported_files_status", "status"),
+        Index("ix_evidence_imported_files_checksum_sha256", "checksum_sha256"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("evidence_import_batches.id"), nullable=False)
+    uploaded_by_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    internal_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_backend: Mapped[str] = mapped_column(String(50), nullable=False, default="local")
+    storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    mime_type: Mapped[str | None] = mapped_column(String(100))
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    page_count: Mapped[int | None] = mapped_column(Integer)
+    image_width: Mapped[int | None] = mapped_column(Integer)
+    image_height: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="stored")
+
+    batch: Mapped[EvidenceImportBatch] = relationship(back_populates="files")
+    analysis_results: Mapped[list["EvidenceAnalysisResult"]] = relationship(back_populates="imported_file", cascade="all, delete-orphan")
+    match_candidates: Mapped[list["EvidenceMatchCandidate"]] = relationship(back_populates="imported_file", cascade="all, delete-orphan")
+    attachment_decisions: Mapped[list["EvidenceAttachmentDecision"]] = relationship(back_populates="imported_file", cascade="all, delete-orphan")
+
+    @property
+    def preview_url(self) -> str:
+        return f"/v1/evidence-imported-files/{self.id}/preview"
+
+
+class EvidenceAnalysisResult(TimestampMixin, Base):
+    __tablename__ = "evidence_analysis_results"
+    __table_args__ = (
+        CheckConstraint(check_in_constraint("provider", EVIDENCE_ANALYSIS_PROVIDERS), name="ck_evidence_analysis_results_provider"),
+        CheckConstraint(check_in_constraint("status", EVIDENCE_ANALYSIS_STATUSES), name="ck_evidence_analysis_results_status"),
+        CheckConstraint(check_in_constraint("detected_evidence_type", EVIDENCE_ANALYSIS_TYPES), name="ck_evidence_analysis_results_type"),
+        Index("ix_evidence_analysis_results_imported_file_id", "imported_file_id"),
+        Index("ix_evidence_analysis_results_status", "status"),
+        Index("ix_evidence_analysis_results_detected_type", "detected_evidence_type"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    imported_file_id: Mapped[int] = mapped_column(ForeignKey("evidence_imported_files.id"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)
+    model_name: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    extracted_text: Mapped[str | None] = mapped_column(Text)
+    detected_evidence_type: Mapped[str] = mapped_column(String(50), nullable=False, default="unknown")
+    detected_restaurant_name: Mapped[str | None] = mapped_column(String(255))
+    detected_uber_order_number: Mapped[str | None] = mapped_column(String(255))
+    detected_display_id: Mapped[str | None] = mapped_column(String(255))
+    detected_order_date: Mapped[date | None] = mapped_column(Date)
+    detected_order_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    detected_currency: Mapped[str | None] = mapped_column(String(3))
+    detected_keywords_json: Mapped[list[str] | None] = mapped_column(JSON)
+    classification_confidence: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("0"))
+    extraction_confidence: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("0"))
+    matching_confidence: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("0"))
+    raw_result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    imported_file: Mapped[EvidenceImportedFile] = relationship(back_populates="analysis_results")
+    match_candidates: Mapped[list["EvidenceMatchCandidate"]] = relationship(back_populates="analysis_result", cascade="all, delete-orphan")
+
+
+class EvidenceMatchCandidate(TimestampMixin, Base):
+    __tablename__ = "evidence_match_candidates"
+    __table_args__ = (
+        CheckConstraint(check_in_constraint("candidate_type", EVIDENCE_MATCH_CANDIDATE_TYPES), name="ck_evidence_match_candidates_type"),
+        CheckConstraint(check_in_constraint("status", EVIDENCE_MATCH_STATUSES), name="ck_evidence_match_candidates_status"),
+        CheckConstraint(check_in_constraint("match_reason", EVIDENCE_MATCH_REASONS), name="ck_evidence_match_candidates_reason"),
+        Index("ix_evidence_match_candidates_imported_file_id", "imported_file_id"),
+        Index("ix_evidence_match_candidates_analysis_result_id", "analysis_result_id"),
+        Index("ix_evidence_match_candidates_candidate", "candidate_type", "candidate_id"),
+        Index("ix_evidence_match_candidates_restaurant_id", "restaurant_id"),
+        Index("ix_evidence_match_candidates_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    imported_file_id: Mapped[int] = mapped_column(ForeignKey("evidence_imported_files.id"), nullable=False)
+    analysis_result_id: Mapped[int] = mapped_column(ForeignKey("evidence_analysis_results.id"), nullable=False)
+    candidate_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    candidate_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    restaurant_id: Mapped[int | None] = mapped_column(ForeignKey("restaurants.id"))
+    match_reason: Mapped[str] = mapped_column(String(100), nullable=False)
+    match_score: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("0"))
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="proposed")
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    imported_file: Mapped[EvidenceImportedFile] = relationship(back_populates="match_candidates")
+    analysis_result: Mapped[EvidenceAnalysisResult] = relationship(back_populates="match_candidates")
+    restaurant: Mapped[Restaurant | None] = relationship()
+
+
+class EvidenceAttachmentDecision(Base):
+    __tablename__ = "evidence_attachment_decisions"
+    __table_args__ = (
+        CheckConstraint(check_in_constraint("candidate_type", EVIDENCE_MATCH_CANDIDATE_TYPES), name="ck_evidence_attachment_decisions_type"),
+        CheckConstraint(check_in_constraint("decision", EVIDENCE_ATTACHMENT_DECISIONS), name="ck_evidence_attachment_decisions_decision"),
+        Index("ix_evidence_attachment_decisions_imported_file_id", "imported_file_id"),
+        Index("ix_evidence_attachment_decisions_evidence_file_id", "evidence_file_id"),
+        Index("ix_evidence_attachment_decisions_candidate", "candidate_type", "candidate_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    imported_file_id: Mapped[int] = mapped_column(ForeignKey("evidence_imported_files.id"), nullable=False)
+    evidence_file_id: Mapped[int | None] = mapped_column(ForeignKey("evidence_files.id"))
+    candidate_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    candidate_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    decision: Mapped[str] = mapped_column(String(50), nullable=False)
+    decided_by_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    imported_file: Mapped[EvidenceImportedFile] = relationship(back_populates="attachment_decisions")
+    evidence_file: Mapped[EvidenceFile | None] = relationship(back_populates="attachment_decisions")
+
+
+class AppealWorkflow(TimestampMixin, Base):
+    __tablename__ = "appeal_workflows"
+    __table_args__ = (
+        UniqueConstraint("case_type", "case_id", name="uq_appeal_workflows_case"),
+        CheckConstraint(check_in_constraint("case_type", APPEAL_CASE_TYPES), name="ck_appeal_workflows_case_type"),
+        CheckConstraint(check_in_constraint("status", APPEAL_WORKFLOW_STATUSES), name="ck_appeal_workflows_status"),
+        CheckConstraint(check_in_constraint("next_action_type", APPEAL_NEXT_ACTION_TYPES), name="ck_appeal_workflows_next_action_type"),
+        Index("ix_appeal_workflows_restaurant_id", "restaurant_id"),
+        Index("ix_appeal_workflows_status", "status"),
+        Index("ix_appeal_workflows_next_action_type", "next_action_type"),
+        Index("ix_appeal_workflows_claim_order_id", "claim_order_id"),
+        Index("ix_appeal_workflows_customer_refund_dispute_id", "customer_refund_dispute_id"),
+        Index("ix_appeal_workflows_reconciliation_result_id", "reconciliation_result_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    case_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    case_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    restaurant_id: Mapped[int] = mapped_column(ForeignKey("restaurants.id"), nullable=False)
+    claim_order_id: Mapped[int | None] = mapped_column(ForeignKey("claim_orders.id"))
+    customer_refund_dispute_id: Mapped[int | None] = mapped_column(ForeignKey("uber_customer_refund_disputes.id"))
+    reconciliation_result_id: Mapped[int | None] = mapped_column(ForeignKey("uber_reconciliation_results.id"))
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
+    current_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    refusal_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    appeal_attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_refusal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_appeal_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_action_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_action_type: Mapped[str | None] = mapped_column(String(50))
+    opened_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    manually_closed_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    manually_closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    manual_close_reason: Mapped[str | None] = mapped_column(Text)
+
+    restaurant: Mapped[Restaurant] = relationship(back_populates="appeal_workflows")
+    claim_order: Mapped[ClaimOrder | None] = relationship(back_populates="appeal_workflows")
+    customer_refund_dispute: Mapped[UberCustomerRefundDispute | None] = relationship()
+    reconciliation_result: Mapped[UberReconciliationResult | None] = relationship()
+    attempts: Mapped[list["AppealAttempt"]] = relationship(back_populates="workflow", cascade="all, delete-orphan")
+    refusal_analyses: Mapped[list["RefusalAnalysis"]] = relationship(back_populates="workflow", cascade="all, delete-orphan")
+
+
+class AppealAttempt(Base):
+    __tablename__ = "appeal_attempts"
+    __table_args__ = (
+        CheckConstraint(check_in_constraint("appeal_type", APPEAL_TYPES), name="ck_appeal_attempts_type"),
+        CheckConstraint(check_in_constraint("status", APPEAL_ATTEMPT_STATUSES), name="ck_appeal_attempts_status"),
+        UniqueConstraint("workflow_id", "attempt_number", name="uq_appeal_attempts_number"),
+        Index("ix_appeal_attempts_workflow_id", "workflow_id"),
+        Index("ix_appeal_attempts_status", "status"),
+        Index("ix_appeal_attempts_email_draft_id", "email_draft_id"),
+        Index("ix_appeal_attempts_provider_draft_id", "provider_draft_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workflow_id: Mapped[int] = mapped_column(ForeignKey("appeal_workflows.id"), nullable=False)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    appeal_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="planned")
+    based_on_refusal_message_id: Mapped[int | None] = mapped_column(ForeignKey("inbound_email_messages.id"))
+    email_draft_id: Mapped[int | None] = mapped_column(ForeignKey("email_drafts.id"))
+    provider_draft_id: Mapped[int | None] = mapped_column(ForeignKey("email_provider_drafts.id"))
+    sent_email_thread_id: Mapped[int | None] = mapped_column(ForeignKey("email_threads.id"))
+    argument_summary: Mapped[str | None] = mapped_column(Text)
+    new_evidence_summary: Mapped[str | None] = mapped_column(Text)
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    sent_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    workflow: Mapped[AppealWorkflow] = relationship(back_populates="attempts")
+    email_draft: Mapped[EmailDraft | None] = relationship(foreign_keys=[email_draft_id])
+    provider_draft: Mapped[EmailProviderDraft | None] = relationship(foreign_keys=[provider_draft_id])
+    sent_email_thread: Mapped[EmailThread | None] = relationship(foreign_keys=[sent_email_thread_id])
+
+
+class RefusalAnalysis(Base):
+    __tablename__ = "refusal_analyses"
+    __table_args__ = (
+        CheckConstraint(check_in_constraint("refusal_source", REFUSAL_SOURCES), name="ck_refusal_analyses_source"),
+        CheckConstraint(check_in_constraint("recommended_next_action", REFUSAL_NEXT_ACTIONS), name="ck_refusal_analyses_next_action"),
+        Index("ix_refusal_analyses_workflow_id", "workflow_id"),
+        Index("ix_refusal_analyses_inbound_message_id", "inbound_message_id"),
+        Index("ix_refusal_analyses_review_id", "review_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workflow_id: Mapped[int] = mapped_column(ForeignKey("appeal_workflows.id"), nullable=False)
+    inbound_message_id: Mapped[int | None] = mapped_column(ForeignKey("inbound_email_messages.id"))
+    review_id: Mapped[int | None] = mapped_column(Integer)
+    refusal_source: Mapped[str] = mapped_column(String(50), nullable=False)
+    refusal_reason: Mapped[str] = mapped_column(String(255), nullable=False)
+    refusal_text_excerpt: Mapped[str | None] = mapped_column(Text)
+    recommended_next_action: Mapped[str] = mapped_column(String(50), nullable=False)
+    required_evidence_types_json: Mapped[list[str] | None] = mapped_column(JSON)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("0"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    workflow: Mapped[AppealWorkflow] = relationship(back_populates="refusal_analyses")
 
 
 class UberReportingImportBatch(TimestampMixin, Base):

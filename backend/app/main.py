@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from app.core.config import get_settings
 from app.core.rate_limit import is_rate_limited
 from app.routes import (
+    appeals,
     auth,
     customer_refunds,
     dashboard,
@@ -16,6 +17,7 @@ from app.routes import (
     email,
     evidence_tasks,
     evidence,
+    evidence_imports,
     followups,
     health,
     imports,
@@ -84,6 +86,7 @@ async def production_hardening_middleware(request: Request, call_next):
 
 app.include_router(health.router)
 app.include_router(auth.router)
+app.include_router(appeals.router)
 app.include_router(customer_refunds.router)
 app.include_router(customer_refunds.reviews_router)
 app.include_router(restaurants.router)
@@ -91,6 +94,7 @@ app.include_router(orders.router)
 app.include_router(recovery.router)
 app.include_router(reports.router)
 app.include_router(evidence.router)
+app.include_router(evidence_imports.router)
 app.include_router(evidence_tasks.router)
 app.include_router(drafts.router)
 app.include_router(email.router)

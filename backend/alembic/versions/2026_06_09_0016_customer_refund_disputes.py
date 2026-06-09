@@ -35,12 +35,16 @@ NEW_EMAIL_DRAFT_TYPE_CHECK = (
 )
 
 
+def _batch_recreate_mode() -> str:
+    return "always" if op.get_bind().dialect.name == "sqlite" else "auto"
+
+
 def upgrade() -> None:
-    with op.batch_alter_table("evidence_files", recreate="always") as batch_op:
+    with op.batch_alter_table("evidence_files", recreate=_batch_recreate_mode()) as batch_op:
         batch_op.drop_constraint("ck_evidence_files_type", type_="check")
         batch_op.create_check_constraint("ck_evidence_files_type", NEW_EVIDENCE_CHECK)
 
-    with op.batch_alter_table("email_drafts", recreate="always") as batch_op:
+    with op.batch_alter_table("email_drafts", recreate=_batch_recreate_mode()) as batch_op:
         batch_op.drop_constraint("ck_email_drafts_type", type_="check")
         batch_op.create_check_constraint("ck_email_drafts_type", NEW_EMAIL_DRAFT_TYPE_CHECK)
 
@@ -136,7 +140,7 @@ def upgrade() -> None:
     op.create_index("ix_customer_refund_requirements_dispute_id", "customer_refund_evidence_requirements", ["dispute_id"])
     op.create_index("ix_customer_refund_requirements_status", "customer_refund_evidence_requirements", ["status"])
 
-    with op.batch_alter_table("evidence_request_tasks", recreate="always") as batch_op:
+    with op.batch_alter_table("evidence_request_tasks", recreate=_batch_recreate_mode()) as batch_op:
         batch_op.drop_constraint("ck_evidence_request_tasks_required_type", type_="check")
         batch_op.add_column(sa.Column("customer_refund_dispute_id", sa.Integer(), nullable=True))
         batch_op.create_foreign_key(
@@ -159,7 +163,7 @@ def downgrade() -> None:
         "UPDATE evidence_request_tasks SET required_evidence_type = 'other' WHERE required_evidence_type NOT IN "
         "('receipt', 'cancellation_proof', 'preparation_proof', 'waste_photo', 'uber_screenshot', 'other')"
     )
-    with op.batch_alter_table("evidence_request_tasks", recreate="always") as batch_op:
+    with op.batch_alter_table("evidence_request_tasks", recreate=_batch_recreate_mode()) as batch_op:
         batch_op.drop_constraint("fk_evidence_request_tasks_customer_refund_dispute_id", type_="foreignkey")
         batch_op.drop_constraint("ck_evidence_request_tasks_required_type", type_="check")
         batch_op.drop_column("customer_refund_dispute_id")
@@ -178,7 +182,7 @@ def downgrade() -> None:
     op.drop_table("uber_customer_refund_disputes")
 
     op.execute("UPDATE email_drafts SET draft_type = 'proof_reply' WHERE draft_type LIKE 'customer_refund_%'")
-    with op.batch_alter_table("email_drafts", recreate="always") as batch_op:
+    with op.batch_alter_table("email_drafts", recreate=_batch_recreate_mode()) as batch_op:
         batch_op.drop_constraint("ck_email_drafts_type", type_="check")
         batch_op.create_check_constraint("ck_email_drafts_type", OLD_EMAIL_DRAFT_TYPE_CHECK)
 
@@ -186,6 +190,6 @@ def downgrade() -> None:
         "UPDATE evidence_files SET evidence_type = 'other' WHERE evidence_type NOT IN "
         "('receipt', 'cancellation_proof', 'preparation_proof', 'waste_photo', 'uber_screenshot', 'other')"
     )
-    with op.batch_alter_table("evidence_files", recreate="always") as batch_op:
+    with op.batch_alter_table("evidence_files", recreate=_batch_recreate_mode()) as batch_op:
         batch_op.drop_constraint("ck_evidence_files_type", type_="check")
         batch_op.create_check_constraint("ck_evidence_files_type", OLD_EVIDENCE_CHECK)

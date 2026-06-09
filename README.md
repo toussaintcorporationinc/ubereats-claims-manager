@@ -28,12 +28,14 @@ Le backend expose maintenant les premiers objets metier :
 - service de generation de brouillons internes d'email ;
 - upload local securise des fichiers de preuve ;
 - file de demandes de preuves et upload mobile par lien tokenise ;
+- import massif de preuves existantes avec analyse controlee et rattachement manuel ;
 - import massif CSV/XLSX des commandes annulees ;
 - detection et suivi des deductions Uber / remboursements clients depuis transactions importees ;
 - creation de vrais brouillons Gmail via OAuth ;
 - envoi manuel approuve de brouillons Gmail, sans automatisation ;
 - lecture et rattachement manuel des reponses Gmail entrantes ;
 - traitement manuel des reponses Uber et mise a jour des statuts de reclamation ;
+- workflow d'appels persistants apres refus Uber ;
 - relances controlees J+2/J+5/J+10/J+15 sous forme de taches et brouillons, sans envoi automatique ;
 - reporting commercial avec exports CSV/XLSX ;
 - dashboard de synthese.
@@ -63,6 +65,19 @@ Les endpoints principaux sont :
 - `POST /v1/evidence-tasks/{id}/upload`
 - `POST /v1/evidence-tasks/{id}/upload-link`
 - `GET|POST /v1/evidence-upload-links/{token}`
+- `POST /v1/evidence-imports`
+- `POST /v1/evidence-imports/zip`
+- `GET /v1/evidence-imports`
+- `GET /v1/evidence-imports/{id}`
+- `GET /v1/evidence-imports/{id}/files`
+- `POST /v1/evidence-imports/{id}/analyze`
+- `POST /v1/evidence-imports/{id}/bulk-accept-high-confidence`
+- `GET /v1/evidence-imported-files/{id}`
+- `GET /v1/evidence-imported-files/{id}/preview`
+- `POST /v1/evidence-imported-files/{id}/attach`
+- `POST /v1/evidence-imported-files/{id}/ignore`
+- `POST /v1/evidence-match-candidates/{id}/accept`
+- `POST /v1/evidence-match-candidates/{id}/reject`
 - `POST /v1/customer-refunds/detect`
 - `GET /v1/customer-refunds`
 - `GET /v1/customer-refunds/{id}`
@@ -79,6 +94,16 @@ Les endpoints principaux sont :
 - `GET /v1/recovery/actions`
 - `GET /v1/recovery/export/summary.xlsx`
 - `GET /v1/recovery/export/cases.csv`
+- `GET /v1/appeals`
+- `GET /v1/appeals/{id}`
+- `POST /v1/appeals/recalculate`
+- `POST /v1/appeals/{id}/analyze-refusal`
+- `POST /v1/appeals/{id}/create-draft`
+- `POST /v1/appeals/{id}/create-gmail-draft`
+- `POST /v1/appeals/{id}/mark-sent`
+- `POST /v1/appeals/{id}/pause`
+- `POST /v1/appeals/{id}/manual-close`
+- `POST /v1/appeals/{id}/reopen`
 - `GET|POST /v1/orders/{id}/drafts`
 - `GET /v1/drafts`
 - `GET /v1/email/gmail/status`
@@ -126,6 +151,8 @@ Les preuves peuvent etre ajoutees par upload local securise depuis le detail d'u
 
 Les preuves manquantes peuvent aussi etre pilotees depuis `/evidence-tasks`. TENNET recalcule les demandes de preuves a partir des dossiers incomplets et des resultats de reconciliation Uber qui exigent des justificatifs. Un owner ou manager peut creer un lien mobile tokenise pour une demande precise. Le token brut est retourne une seule fois, seul son hash est stocke, et l'upload public reste limite a la preuve demandee. Aucun email n'est envoye automatiquement.
 
+Les preuves existantes peuvent etre importees en masse depuis `/evidence-imports`. TENNET stocke les fichiers, analyse localement ou via fournisseur desactive par defaut, puis propose des rattachements vers commandes, taches de preuve, deductions Uber ou resultats de reconciliation. L'attachement automatique reste desactive par defaut et aucun rattachement faible n'est force.
+
 Les deductions Uber et remboursements clients peuvent etre detectes depuis les transactions financieres importees. TENNET identifie les refunds, chargebacks, ajustements negatifs et motifs comme commande non recue ou article manquant, cree des exigences de preuves, puis laisse un owner ou manager creer le dossier et les brouillons. Les decisions Uber sur ces deductions sont traitees manuellement avec historique de review, montant recupere, refus, paiement a verifier ou preuves demandees. Aucune contestation n'est envoyee automatiquement.
 
 Les commandes peuvent aussi etre importees en masse depuis `/imports/new` avec un fichier CSV ou XLSX. Le backend analyse les lignes, detecte erreurs, doublons et restaurants non autorises, puis cree uniquement les lignes valides lors de la confirmation.
@@ -139,6 +166,8 @@ Un owner ou manager peut ensuite traiter manuellement une reponse Uber rattachee
 Les relances controlees se recalculent depuis `/followups`. La politique V1 propose `followup_1` a J+2, `followup_2` a J+5, `escalation` a J+10 et `manual_review` a J+15 ou quand la limite de relances est atteinte. Les taches creent des brouillons internes puis, si Gmail est configure, des brouillons Gmail. Aucun envoi automatique n'est implemente ; l'envoi reste manuel et confirme via le workflow Gmail existant.
 
 Le cockpit recuperation est disponible depuis `/recovery`. Il unifie commandes annulees non compensees, resultats de reconciliation Uber, deductions clients, preuves manquantes, relances et outcomes. Il affiche les montants detectes, contestables, en attente de preuve, envoyes, recuperes, refuses et a revue manuelle. TENNET ne garantit pas le remboursement ; il garantit le suivi et la revue systematique des pertes detectees.
+
+Les appels persistants sont disponibles depuis `/appeals`. Un refus Uber cree une action de revue ou d'appel au lieu de cloturer automatiquement le dossier. Un owner ou manager peut analyser le refus, creer un brouillon interne, creer un brouillon Gmail controle, marquer l'appel envoye manuellement, mettre en pause ou cloturer manuellement. Aucun appel n'est envoye automatiquement.
 
 Les rapports commerciaux sont disponibles depuis `/reports`. Ils permettent de suivre les montants reclames, recuperes, en attente ou refuses, les taux de reussite, les performances par restaurant, les relances, les reponses Uber traitees et les deductions clients. Les exports CSV/XLSX sont reserves aux roles `owner` et `manager`, respectent les restaurants autorises et n'incluent pas les noms clients par defaut.
 
@@ -156,6 +185,8 @@ Gmail reste desactive par defaut avec `EMAIL_PROVIDER_ENABLED=false`. Pour teste
 Les delais de relance sont configurables via `FOLLOWUP_1_DELAY_DAYS`, `FOLLOWUP_2_DELAY_DAYS`, `ESCALATION_DELAY_DAYS`, `MANUAL_REVIEW_AFTER_DAYS` et `MAX_FOLLOWUPS_PER_ORDER`. `FOLLOWUP_AUTOMATIC_SEND_ENABLED` reste `false` par defaut et ne declenche aucun envoi dans cette V1.
 Les exports utilisent `EXPORT_MAX_ROWS` pour limiter le volume et `REPORT_DEFAULT_LOOKBACK_DAYS` comme fenetre indicative de reporting.
 Les demandes de preuves utilisent `EVIDENCE_TASK_HIGH_AMOUNT`, `EVIDENCE_TASK_URGENT_AMOUNT`, `EVIDENCE_UPLOAD_LINK_EXPIRY_HOURS` et `EVIDENCE_UPLOAD_LINK_MAX_USES`.
+L'import massif de preuves utilise `BULK_EVIDENCE_MAX_FILES_PER_BATCH`, `BULK_EVIDENCE_MAX_ZIP_SIZE_MB`, `BULK_EVIDENCE_MAX_FILE_SIZE_MB` et `BULK_EVIDENCE_ALLOWED_EXTENSIONS`. L'analyse de preuves utilise `AI_EVIDENCE_ANALYSIS_ENABLED=false`, `AI_EVIDENCE_AUTO_ATTACH_ENABLED=false`, `AI_EVIDENCE_HIGH_CONFIDENCE_THRESHOLD`, `AI_EVIDENCE_MEDIUM_CONFIDENCE_THRESHOLD`, `OCR_LOCAL_ENABLED`, `OPENAI_API_KEY` et `OPENAI_EVIDENCE_MODEL`.
+Les appels persistants utilisent `APPEAL_AUTO_SEND_ENABLED=false`, `APPEAL_MIN_DAYS_BETWEEN_ATTEMPTS`, `APPEAL_MAX_ATTEMPTS_BEFORE_ESCALATION`, `APPEAL_MAX_ATTEMPTS_BEFORE_MANUAL_REVIEW`, `APPEAL_REQUIRE_NEW_ARGUMENT_AFTER_REFUSAL` et `APPEAL_ALLOW_SAME_TEMPLATE_RESEND`.
 
 2. Lancer les services :
 
@@ -254,6 +285,7 @@ Documentation CI et developpement : `docs/CI.md`.
 Documentation securite et roles : `docs/SECURITY.md`.
 Documentation production : `docs/DEPLOYMENT.md`, `docs/OPERATIONS.md`, `docs/BACKUP_RESTORE.md` et `docs/PRODUCTION_CHECKLIST.md`.
 Documentation go-live V1 : `docs/GO_LIVE_RUNBOOK.md`, `docs/ACCEPTANCE_TEST_PLAN.md`, `docs/USER_GUIDE.md`, `docs/ADMIN_GUIDE.md`, `docs/GMAIL_PRODUCTION_VALIDATION.md`, `docs/ROLLBACK_PLAN.md`, `docs/RELEASE_NOTES_V1.md` et `docs/KNOWN_LIMITATIONS_V1.md`.
+Documentation V1.1 : `docs/BULK_EVIDENCE_IMPORT.md`, `docs/AI_EVIDENCE_ANALYSIS.md`, `docs/PERSISTENT_APPEALS.md`, `docs/CUSTOMER_REFUND_DISPUTES.md`, `docs/RECOVERY_COCKPIT.md` et `docs/UBER_RECONCILIATION_RULES.md`.
 
 ## Production
 

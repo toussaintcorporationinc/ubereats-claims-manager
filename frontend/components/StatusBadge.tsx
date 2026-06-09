@@ -15,6 +15,9 @@ const positiveStatuses = new Set([
   "success",
   "reviewed",
   "completed",
+  "analyzed",
+  "auto_attached",
+  "accepted",
 ]);
 const warningStatuses = new Set([
   "draft",
@@ -39,6 +42,15 @@ const warningStatuses = new Set([
   "draft_created",
   "provider_draft_created",
   "payment_verification",
+  "appeal_needed",
+  "evidence_needed",
+  "draft_needed",
+  "gmail_draft_needed",
+  "appeal_sent",
+  "escalated",
+  "under_appeal",
+  "analysis_pending",
+  "manual_review",
   "high",
   "normal",
 ]);

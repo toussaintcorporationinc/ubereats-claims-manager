@@ -89,6 +89,39 @@ Regles appliquees :
 - chaque creation de tache, creation de lien, revocation, upload et completion est auditee ;
 - la page publique n'expose jamais de token Gmail, JWT, secret, mot de passe ou donnees d'un autre dossier.
 
+## Import massif et analyse de preuves
+
+L'import massif de preuves est reserve aux utilisateurs connectes et autorises.
+
+Variables attendues :
+
+- `BULK_EVIDENCE_MAX_FILES_PER_BATCH`
+- `BULK_EVIDENCE_MAX_ZIP_SIZE_MB`
+- `BULK_EVIDENCE_MAX_FILE_SIZE_MB`
+- `BULK_EVIDENCE_ALLOWED_EXTENSIONS`
+- `AI_EVIDENCE_ANALYSIS_ENABLED=false`
+- `AI_EVIDENCE_AUTO_ATTACH_ENABLED=false`
+- `AI_EVIDENCE_HIGH_CONFIDENCE_THRESHOLD`
+- `AI_EVIDENCE_MEDIUM_CONFIDENCE_THRESHOLD`
+- `OCR_LOCAL_ENABLED`
+- `OPENAI_API_KEY`
+- `OPENAI_EVIDENCE_MODEL`
+
+Regles appliquees :
+
+- `owner` peut importer et rattacher pour tous les restaurants ;
+- `manager` est limite a ses restaurants assignes ;
+- `staff` ne gere pas les imports en masse ;
+- les extensions et tailles sont controlees avant stockage ;
+- les ZIP avec chemin absolu, `..` ou archive imbriquee sont refuses ;
+- un checksum SHA256 est stocke pour chaque fichier ;
+- le chemin disque brut n'est pas expose ;
+- OpenAI vision est refuse tant que `AI_EVIDENCE_ANALYSIS_ENABLED=false` ;
+- aucun secret, token, mot de passe ou variable d'environnement ne doit etre envoye a un fournisseur d'analyse ;
+- l'attachement automatique reste desactive par defaut ;
+- les candidats ambigus restent en revue manuelle ;
+- chaque analyse, candidat, decision d'attachement, rejet ou ignore cree une trace auditable.
+
 ## Imports CSV/XLSX
 
 Les imports de commandes sont proteges par JWT et ne doivent contenir aucune donnee client reelle dans le code ou les exemples.
@@ -173,6 +206,31 @@ Regles appliquees :
 - une reponse inbound non traitee dirige vers `manual_review` ;
 - `FOLLOWUP_AUTOMATIC_SEND_ENABLED` ne declenche aucun envoi automatique ;
 - chaque recalcul, creation de brouillon, skip et completion est audite.
+
+## Appels persistants apres refus
+
+Un refus Uber ne cloture pas un dossier automatiquement. Il cree ou alimente un workflow d'appel controle.
+
+Variables attendues :
+
+- `APPEAL_AUTO_SEND_ENABLED=false`
+- `APPEAL_MIN_DAYS_BETWEEN_ATTEMPTS`
+- `APPEAL_MAX_ATTEMPTS_BEFORE_ESCALATION`
+- `APPEAL_MAX_ATTEMPTS_BEFORE_MANUAL_REVIEW`
+- `APPEAL_REQUIRE_NEW_ARGUMENT_AFTER_REFUSAL`
+- `APPEAL_ALLOW_SAME_TEMPLATE_RESEND`
+
+Regles appliquees :
+
+- `owner` peut gerer tous les appels et cloturer/reouvrir manuellement ;
+- `manager` gere uniquement ses restaurants assignes ;
+- `staff` ne cree pas de brouillon d'appel et ne marque pas d'appel envoye ;
+- `APPEAL_AUTO_SEND_ENABLED` ne declenche aucun envoi automatique en V1.1 ;
+- les tentatives sont limitees et espacees par cooldown ;
+- une meme template non traitee ne peut pas etre recreree en boucle ;
+- apres trop de refus, le workflow passe en escalade ou revue manuelle ;
+- les brouillons d'appel utilisent uniquement les donnees existantes ;
+- les audits ne stockent ni token Gmail, ni secret, ni mot de passe.
 
 ## Reporting et exports commerciaux
 

@@ -39,6 +39,8 @@ Quand un resultat eligible cree un `ClaimOrder` avec `evidence_required=true`, T
 
 Ces taches demandent les preuves bloquantes manquantes et renvoient le dossier dans le workflow standard de validation. Aucune preuve n'est inventee depuis les donnees Uber et aucune reclamation n'est envoyee automatiquement.
 
+Les preuves deja disponibles peuvent aussi etre traitees depuis `/evidence-imports`. TENNET propose alors un rattachement au resultat de reconciliation ou au dossier cree, mais laisse les cas ambigus en revue manuelle.
+
 ## Limites
 
 Les exports Uber peuvent changer de format. TENNET ne doit jamais inventer un montant, un paiement ou une preuve. En cas de doute, le resultat reste en revue manuelle.
@@ -65,4 +67,5 @@ Regles :
 - un resultat `compensated` est assimile a une etape de paiement confirme pour le cockpit ;
 - un resultat `already_claimed`, `manual_review` ou ambigu reste en revue humaine ;
 - aucun `ClaimOrder`, brouillon, email ou relance n'est cree automatiquement depuis le cockpit ;
+- les refus sous appel apparaissent comme `under_appeal` tant que le workflow d'appel reste actif ;
 - les exports recovery ne doivent pas contenir de token, secret ou chemin disque brut de preuve.

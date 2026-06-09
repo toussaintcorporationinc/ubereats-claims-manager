@@ -74,6 +74,23 @@ Regles :
 - la page publique n'exige pas de JWT ;
 - la page publique ne permet d'ajouter que le type de preuve demande.
 
+## Import massif de preuves
+
+La page `/evidence-imports` permet a un owner ou manager d'importer des fichiers existants en vrac ou via ZIP.
+
+TENNET :
+
+- stocke les fichiers dans le stockage evidence ;
+- calcule un checksum SHA256 ;
+- refuse les fichiers trop lourds, extensions interdites ou ZIP dangereux ;
+- analyse les fichiers avec un fournisseur controle ;
+- propose des candidats vers `ClaimOrder`, `EvidenceRequestTask`, `UberCustomerRefundDispute` ou `UberReconciliationResult` ;
+- cree une preuve rattachee uniquement apres acceptation manuelle ou seuil haut explicitement valide ;
+- relance la validation du dossier apres rattachement ;
+- complete la tache preuve si le type correspond.
+
+L'analyse OpenAI reste desactivee par defaut. Le fournisseur `fake` permet les tests et la recette sans appel externe.
+
 ## Statuts
 
 - `pending` : preuve attendue ;

@@ -24,6 +24,11 @@ TENNET ne garantit pas le remboursement. TENNET garantit le suivi, la revue syst
 - `pending_amount` : montant contestable restant apres recuperations et refus.
 - `recovery_rate` : montant recupere / montant envoye.
 - `review_coverage_rate` : part des pertes detectees ayant recu une decision ou une revue.
+- `active_appeals_count` : workflows d'appel ouverts.
+- `appeal_needed_count` : appels demandant une action.
+- `escalations_needed_count` : appels arrives au niveau escalade.
+- `refused_under_appeal_amount` : montant refuse encore sous appel actif.
+- `manually_closed_amount` : montant cloture manuellement.
 
 ## Categories
 
@@ -37,6 +42,7 @@ Categories de perte :
 - `order_error_adjustment`
 - `chargeback`
 - `manual_review`
+- `under_appeal`
 
 Etapes de recuperation :
 

@@ -15,6 +15,7 @@ from app.models import (
 from app.models.domain import utc_now
 from app.schemas.domain import CustomerRefundDisputeReviewCreate
 from app.services.audit import add_audit_log
+from app.services.appeal_workflow_service import sync_customer_refund_review
 from app.services.customer_refund_dispute_service import recalculate_dispute_evidence
 
 PROTECTED_DISPUTE_STATUSES = {"payment_confirmed", "ignored"}
@@ -103,6 +104,7 @@ def create_customer_refund_review(
     dispute.updated_at = utc_now()
 
     db.flush()
+    sync_customer_refund_review(db, dispute=dispute, review=review, user=user)
     add_review_audit_logs(
         db,
         review=review,

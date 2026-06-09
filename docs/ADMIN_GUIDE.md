@@ -129,6 +129,44 @@ Recommended production defaults:
 - revoke links manually if sent to the wrong recipient;
 - never paste a mobile upload token into support tickets or logs.
 
+## Bulk evidence and analysis administration
+
+Owners and managers can use `/evidence-imports` to process existing proof files.
+
+Operational settings:
+
+- `BULK_EVIDENCE_MAX_FILES_PER_BATCH` limits files per batch;
+- `BULK_EVIDENCE_MAX_ZIP_SIZE_MB` limits ZIP uploads;
+- `BULK_EVIDENCE_MAX_FILE_SIZE_MB` limits each imported file;
+- `BULK_EVIDENCE_ALLOWED_EXTENSIONS` lists accepted extensions;
+- `AI_EVIDENCE_ANALYSIS_ENABLED=false` disables external AI analysis by default;
+- `AI_EVIDENCE_AUTO_ATTACH_ENABLED=false` keeps attachment decisions manual;
+- `AI_EVIDENCE_HIGH_CONFIDENCE_THRESHOLD` and `AI_EVIDENCE_MEDIUM_CONFIDENCE_THRESHOLD` control review thresholds;
+- `OCR_LOCAL_ENABLED` controls local OCR availability.
+
+OpenAI credentials are optional and must remain in environment variables only. CI and default production must not call the real OpenAI API.
+
+## Appeal workflow administration
+
+Owners and managers can use `/appeals` to manage refusals.
+
+Operational settings:
+
+- `APPEAL_AUTO_SEND_ENABLED=false` keeps automatic sending disabled;
+- `APPEAL_MIN_DAYS_BETWEEN_ATTEMPTS` controls cooldown;
+- `APPEAL_MAX_ATTEMPTS_BEFORE_ESCALATION` controls escalation;
+- `APPEAL_MAX_ATTEMPTS_BEFORE_MANUAL_REVIEW` stops repeated attempts;
+- `APPEAL_REQUIRE_NEW_ARGUMENT_AFTER_REFUSAL` documents the need for a new argument;
+- `APPEAL_ALLOW_SAME_TEMPLATE_RESEND` prevents duplicate drafts when false.
+
+Recommended operating policy:
+
+- review appeal queue daily;
+- collect missing evidence before creating appeal drafts;
+- do not mark an appeal sent unless the manual send happened;
+- manually close only when the owner decides the case should stop;
+- keep refusal reasons and notes factual.
+
 ## Recovery cockpit administration
 
 Owners and managers can use `/recovery`, `/recovery/cases` and `/recovery/actions`.
@@ -146,6 +184,7 @@ Operational review cadence:
 
 - review `/recovery/actions` daily;
 - review high-value missing evidence first;
+- review active appeals and escalations daily;
 - confirm recovered amounts only after payment evidence or accounting confirmation;
 - document refusals and manual review notes.
 

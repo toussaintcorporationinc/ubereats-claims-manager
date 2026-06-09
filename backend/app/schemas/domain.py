@@ -59,6 +59,13 @@ EmailDraftType = Literal[
     "customer_refund_missing_item",
     "customer_refund_order_error_adjustment",
     "customer_refund_generic",
+    "appeal_generic_refusal",
+    "appeal_missing_evidence_reply",
+    "appeal_order_prepared_before_cancellation",
+    "appeal_order_not_received_delivery_proof",
+    "appeal_missing_item_preparation_proof",
+    "appeal_escalation",
+    "appeal_payment_verification",
 ]
 EmailDraftStatus = Literal["created", "draft", "ready", "archived"]
 UserRole = Literal["owner", "manager", "staff"]
@@ -174,6 +181,7 @@ RecoveryStage = Literal[
     "refused",
     "ignored",
     "manual_review",
+    "under_appeal",
 ]
 RecoveryCaseType = Literal["claim_order", "reconciliation_result", "customer_refund_dispute"]
 RecoveryActionType = Literal[
@@ -183,6 +191,99 @@ RecoveryActionType = Literal[
     "create_gmail_draft",
     "process_response",
     "followup",
+    "review_refusal",
+    "create_appeal_draft",
+    "request_more_evidence",
+    "escalation",
+    "manual_review",
+]
+EvidenceImportSourceType = Literal["multi_file_upload", "zip_upload", "mobile_upload", "server_folder_import"]
+EvidenceImportBatchStatus = Literal[
+    "uploaded",
+    "extracting",
+    "stored",
+    "analyzing",
+    "analyzed",
+    "partially_analyzed",
+    "failed",
+    "cancelled",
+]
+EvidenceImportedFileStatus = Literal["stored", "analysis_pending", "analyzed", "failed", "ignored"]
+EvidenceAnalysisProvider = Literal["local_ocr", "openai_vision", "fake"]
+EvidenceAnalysisStatus = Literal["success", "partial", "failed", "manual_review"]
+EvidenceAnalysisType = Literal[
+    "receipt",
+    "cancellation_proof",
+    "preparation_proof",
+    "waste_photo",
+    "uber_screenshot",
+    "delivery_proof",
+    "packaging_photo",
+    "sealed_bag_photo",
+    "courier_statement",
+    "gps_or_route_proof",
+    "customer_contact_proof",
+    "order_details_screenshot",
+    "other",
+    "unknown",
+]
+EvidenceMatchCandidateType = Literal["claim_order", "evidence_task", "customer_refund_dispute", "reconciliation_result"]
+EvidenceMatchStatus = Literal["proposed", "auto_attached", "accepted", "rejected", "manual_review"]
+EvidenceMatchReason = Literal[
+    "exact_order_number",
+    "display_id_match",
+    "amount_date_restaurant_match",
+    "restaurant_date_amount_match",
+    "evidence_task_type_match",
+    "filename_hint",
+    "manual_selection",
+    "low_confidence",
+    "ambiguous_candidates",
+]
+EvidenceAttachmentDecisionType = Literal["attached", "rejected", "ignored", "deferred"]
+AppealCaseType = Literal["claim_order", "customer_refund_dispute", "reconciliation_result"]
+AppealWorkflowStatus = Literal[
+    "active",
+    "appeal_needed",
+    "evidence_needed",
+    "draft_needed",
+    "gmail_draft_needed",
+    "appeal_sent",
+    "response_received",
+    "escalated",
+    "payment_to_verify",
+    "payment_confirmed",
+    "accepted",
+    "paused",
+    "manually_closed",
+]
+AppealNextActionType = Literal[
+    "review_refusal",
+    "request_more_evidence",
+    "create_appeal_draft",
+    "create_gmail_draft",
+    "send_manual_appeal",
+    "escalation",
+    "payment_verification",
+    "manual_review",
+]
+AppealType = Literal[
+    "first_appeal",
+    "second_appeal",
+    "escalation",
+    "payment_verification",
+    "evidence_reply",
+    "manager_review",
+]
+AppealAttemptStatus = Literal["planned", "draft_created", "gmail_draft_created", "sent", "response_received", "superseded", "cancelled"]
+RefusalSource = Literal["claim_response_review", "customer_refund_review", "inbound_message", "manual"]
+RefusalNextAction = Literal[
+    "provide_missing_evidence",
+    "clarify_order_prepared",
+    "clarify_delivery_proof",
+    "challenge_generic_refusal",
+    "request_escalation",
+    "payment_verification",
     "manual_review",
 ]
 
@@ -1471,6 +1572,11 @@ class RecoveryTotals(BaseModel):
     recovered_count: int = 0
     refused_count: int = 0
     manual_review_count: int = 0
+    active_appeals_count: int = 0
+    appeal_needed_count: int = 0
+    escalations_needed_count: int = 0
+    refused_under_appeal_amount: Decimal = Decimal("0")
+    manually_closed_amount: Decimal = Decimal("0")
     recovery_rate: Decimal = Decimal("0")
     review_coverage_rate: Decimal = Decimal("0")
 
@@ -1538,4 +1644,285 @@ class RecoveryActionsResponse(BaseModel):
     actions: list[RecoveryAction]
     limit: int
     offset: int
+
+
+class EvidenceImportBatchRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    uploaded_by_user_id: int
+    restaurant_id: int | None
+    original_filename: str | None
+    source_type: EvidenceImportSourceType
+    status: EvidenceImportBatchStatus
+    total_files: int
+    stored_files_count: int
+    analyzed_files_count: int
+    auto_matched_count: int
+    needs_review_count: int
+    failed_files_count: int
+    error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+
+
+class EvidenceImportedFileRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    batch_id: int
+    uploaded_by_user_id: int
+    original_filename: str
+    internal_filename: str
+    storage_backend: str
+    mime_type: str | None
+    file_size: int
+    checksum_sha256: str
+    page_count: int | None
+    image_width: int | None
+    image_height: int | None
+    status: EvidenceImportedFileStatus
+    created_at: datetime
+    updated_at: datetime
+    preview_url: str
+
+
+class EvidenceAnalysisResultRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    imported_file_id: int
+    provider: EvidenceAnalysisProvider
+    model_name: str | None
+    status: EvidenceAnalysisStatus
+    extracted_text: str | None
+    detected_evidence_type: EvidenceAnalysisType
+    detected_restaurant_name: str | None
+    detected_uber_order_number: str | None
+    detected_display_id: str | None
+    detected_order_date: date | None
+    detected_order_amount: Decimal | None
+    detected_currency: str | None
+    detected_keywords_json: list[str] | None
+    classification_confidence: Decimal
+    extraction_confidence: Decimal
+    matching_confidence: Decimal
+    raw_result_json: dict[str, Any] | None
+    error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class EvidenceMatchCandidateRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    imported_file_id: int
+    analysis_result_id: int
+    candidate_type: EvidenceMatchCandidateType
+    candidate_id: int
+    restaurant_id: int | None
+    match_reason: EvidenceMatchReason
+    match_score: Decimal
+    status: EvidenceMatchStatus
+    created_at: datetime
+    updated_at: datetime
+    reviewed_by_user_id: int | None
+    reviewed_at: datetime | None
+
+
+class EvidenceImportedFileDetail(BaseModel):
+    file: EvidenceImportedFileRead
+    analysis_results: list[EvidenceAnalysisResultRead]
+    candidates: list[EvidenceMatchCandidateRead]
+
+
+class EvidenceImportsResponse(BaseModel):
+    batches: list[EvidenceImportBatchRead]
+    limit: int
+    offset: int
+
+
+class EvidenceImportFilesResponse(BaseModel):
+    files: list[EvidenceImportedFileRead]
+    limit: int
+    offset: int
+
+
+class EvidenceImportAnalyzeRequest(BaseModel):
+    provider: EvidenceAnalysisProvider = "fake"
+    limit: int = Field(default=50, ge=1, le=500)
+
+
+class EvidenceImportAnalyzeResponse(BaseModel):
+    batch_id: int
+    status: EvidenceImportBatchStatus
+    analyzed_files_count: int
+    auto_matched_count: int
+    needs_review_count: int
+    failed_files_count: int
+    errors: list[str]
+
+
+class EvidenceImportedFileAttachRequest(BaseModel):
+    candidate_type: EvidenceMatchCandidateType
+    candidate_id: int
+    evidence_type: EvidenceType
+
+
+class EvidenceAttachmentDecisionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    imported_file_id: int
+    evidence_file_id: int | None
+    candidate_type: EvidenceMatchCandidateType
+    candidate_id: int
+    decision: EvidenceAttachmentDecisionType
+    decided_by_user_id: int
+    reason: str | None
+    created_at: datetime
+
+
+class EvidenceAttachResponse(BaseModel):
+    decision: EvidenceAttachmentDecisionRead
+    evidence_file: EvidenceFileRead | None
+    validation: ClaimValidationResponse | None = None
+
+
+class EvidenceCandidateRejectRequest(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+class EvidenceImportedFileIgnoreRequest(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+class EvidenceBulkAcceptRequest(BaseModel):
+    min_score: Decimal = Decimal("0.90")
+
+
+class EvidenceBulkAcceptResponse(BaseModel):
+    accepted_count: int
+    skipped_count: int
+    errors: list[str]
+
+
+class AppealWorkflowRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    case_type: AppealCaseType
+    case_id: int
+    restaurant_id: int
+    claim_order_id: int | None
+    customer_refund_dispute_id: int | None
+    reconciliation_result_id: int | None
+    status: AppealWorkflowStatus
+    current_level: int
+    refusal_count: int
+    appeal_attempt_count: int
+    last_refusal_at: datetime | None
+    last_appeal_sent_at: datetime | None
+    next_action_at: datetime | None
+    next_action_type: AppealNextActionType | None
+    opened_by_user_id: int | None
+    manually_closed_by_user_id: int | None
+    manually_closed_at: datetime | None
+    manual_close_reason: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AppealAttemptRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    workflow_id: int
+    attempt_number: int
+    appeal_type: AppealType
+    status: AppealAttemptStatus
+    based_on_refusal_message_id: int | None
+    email_draft_id: int | None
+    provider_draft_id: int | None
+    sent_email_thread_id: int | None
+    argument_summary: str | None
+    new_evidence_summary: str | None
+    created_by_user_id: int | None
+    sent_by_user_id: int | None
+    created_at: datetime
+    sent_at: datetime | None
+    completed_at: datetime | None
+
+
+class RefusalAnalysisRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    workflow_id: int
+    inbound_message_id: int | None
+    review_id: int | None
+    refusal_source: RefusalSource
+    refusal_reason: str
+    refusal_text_excerpt: str | None
+    recommended_next_action: RefusalNextAction
+    required_evidence_types_json: list[str] | None
+    confidence: Decimal
+    created_at: datetime
+
+
+class AppealWorkflowSummary(BaseModel):
+    id: int
+    case_type: AppealCaseType
+    case_id: int
+    restaurant_id: int
+    restaurant_name: str
+    uber_order_number: str | None
+    amount: Decimal
+    currency: str
+    status: AppealWorkflowStatus
+    next_action_type: AppealNextActionType | None
+    next_action_at: datetime | None
+    refusal_count: int
+    appeal_attempt_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class AppealsResponse(BaseModel):
+    workflows: list[AppealWorkflowSummary]
+    limit: int
+    offset: int
+
+
+class AppealDetailResponse(BaseModel):
+    workflow: AppealWorkflowRead
+    case_summary: dict[str, Any]
+    attempts: list[AppealAttemptRead]
+    refusal_analyses: list[RefusalAnalysisRead]
+    evidence_tasks: list[EvidenceRequestTaskSummary]
+    email_history: list[EmailDraftRead]
+
+
+class AppealRecalculateRequest(BaseModel):
+    restaurant_id: int | None = None
+
+
+class AppealRecalculateResponse(BaseModel):
+    created_workflows: int
+    existing_workflows: int
+    errors: list[str]
+
+
+class AppealCreateDraftRequest(BaseModel):
+    appeal_type: AppealType = "first_appeal"
+
+
+class AppealPauseRequest(BaseModel):
+    reason: str = Field(min_length=1)
+
+
+class AppealManualCloseRequest(BaseModel):
+    reason: str = Field(min_length=1)
 

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import can_access_restaurant, get_accessible_restaurant_ids
 from app.models import (
+    AppealWorkflow,
     ClaimOrder,
     EvidenceRequestTask,
     FollowUpTask,
@@ -32,6 +33,18 @@ REFUSED_STAGES = {"refused"}
 SENT_STAGES = {"sent", "waiting_uber_response", "response_received", "followup_1_sent", "followup_2_sent", "escalation_sent"}
 MISSING_EVIDENCE_STAGES = {"needs_evidence", "missing_evidence"}
 MANUAL_REVIEW_STAGES = {"manual_review"}
+ACTIVE_APPEAL_STATUSES = {
+    "active",
+    "appeal_needed",
+    "evidence_needed",
+    "draft_needed",
+    "gmail_draft_needed",
+    "appeal_sent",
+    "response_received",
+    "escalated",
+    "payment_to_verify",
+    "paused",
+}
 
 
 @dataclass(frozen=True)
@@ -92,6 +105,7 @@ class RecoveryCockpitService:
         if self.user.role in {"owner", "manager"}:
             actions.extend(self.customer_refund_actions())
             actions.extend(self.followup_actions())
+            actions.extend(self.appeal_actions())
         actions.sort(key=lambda item: (priority_rank(item.priority), normalized_datetime(item.due_at)), reverse=True)
         if limit is None:
             return actions
@@ -111,9 +125,20 @@ class RecoveryCockpitService:
         for order in orders:
             amount = money(order.order_amount)
             stage = claim_order_stage(order.status)
+            appeal = active_appeal_for_case(self.db, "claim_order", order.id)
+            closed_appeal = closed_appeal_for_case(self.db, "claim_order", order.id) if appeal is None else None
+            if appeal is not None and stage == "refused":
+                stage = "under_appeal"
+            elif closed_appeal is not None and stage == "refused":
+                stage = "manual_review"
             recovered = recovered_amount(order.recovered_amount, stage, amount)
             refused = amount if stage in REFUSED_STAGES else Decimal("0")
             claimable = claimable_amount(amount, stage, recovered, refused)
+            case_status = appeal.status if appeal is not None and stage == "under_appeal" else order.status
+            case_url = f"/appeals/{appeal.id}" if appeal is not None and stage == "under_appeal" else f"/orders/{order.id}"
+            if closed_appeal is not None:
+                case_status = closed_appeal.status
+                case_url = f"/appeals/{closed_appeal.id}"
             cases.append(
                 RecoveryCase(
                     case_type="claim_order",
@@ -126,11 +151,11 @@ class RecoveryCockpitService:
                     detected_amount=amount,
                     claimable_amount=claimable,
                     recovered_amount=recovered,
-                    status=order.status,
+                    status=case_status,
                     evidence_status="missing" if order.status == "missing_evidence" else None,
-                    next_action=next_action_for_stage(stage),
+                    next_action=appeal.next_action_type if appeal is not None and stage == "under_appeal" else next_action_for_stage(stage),
                     created_at=order.created_at,
-                    link_url=f"/orders/{order.id}",
+                    link_url=case_url,
                 )
             )
         return cases
@@ -145,8 +170,25 @@ class RecoveryCockpitService:
         for result in results:
             amount = money(result.missing_amount if result.missing_amount is not None else result.order_amount)
             stage = reconciliation_stage(result.status, result.evidence_required)
+            appeal = active_appeal_for_case(self.db, "reconciliation_result", result.id)
+            closed_appeal = closed_appeal_for_case(self.db, "reconciliation_result", result.id) if appeal is None else None
+            if appeal is not None and stage in {"manual_review", "refused"}:
+                stage = "under_appeal"
+            elif closed_appeal is not None and stage in {"manual_review", "refused"}:
+                stage = "manual_review"
             recovered = Decimal("0")
             claimable = amount if result.status in {"not_compensated", "partially_compensated", "needs_evidence"} else Decimal("0")
+            if stage == "under_appeal":
+                claimable = amount
+            case_status = appeal.status if appeal is not None and stage == "under_appeal" else result.status
+            case_url = (
+                f"/appeals/{appeal.id}"
+                if appeal is not None and stage == "under_appeal"
+                else f"/uber/reconciliation/results/{result.id}"
+            )
+            if closed_appeal is not None:
+                case_status = closed_appeal.status
+                case_url = f"/appeals/{closed_appeal.id}"
             cases.append(
                 RecoveryCase(
                     case_type="reconciliation_result",
@@ -159,11 +201,11 @@ class RecoveryCockpitService:
                     detected_amount=amount,
                     claimable_amount=quantize_decimal(claimable),
                     recovered_amount=recovered,
-                    status=result.status,
+                    status=case_status,
                     evidence_status="missing" if result.evidence_required else None,
-                    next_action=next_action_for_stage(stage),
+                    next_action=appeal.next_action_type if appeal is not None and stage == "under_appeal" else next_action_for_stage(stage),
                     created_at=result.created_at,
-                    link_url=f"/uber/reconciliation/results/{result.id}",
+                    link_url=case_url,
                 )
             )
         return cases
@@ -178,8 +220,23 @@ class RecoveryCockpitService:
         for dispute in disputes:
             amount = money(dispute.customer_refund_amount)
             stage = customer_refund_stage(dispute.status)
+            appeal = active_appeal_for_case(self.db, "customer_refund_dispute", dispute.id)
+            closed_appeal = closed_appeal_for_case(self.db, "customer_refund_dispute", dispute.id) if appeal is None else None
+            if appeal is not None and stage == "refused":
+                stage = "under_appeal"
+            elif closed_appeal is not None and stage == "refused":
+                stage = "manual_review"
             recovered = recovered_amount(dispute.recovered_amount, stage, amount)
             refused = amount if stage in REFUSED_STAGES else Decimal("0")
+            case_status = appeal.status if appeal is not None and stage == "under_appeal" else dispute.status
+            case_url = (
+                f"/appeals/{appeal.id}"
+                if appeal is not None and stage == "under_appeal"
+                else f"/customer-refunds/{dispute.id}"
+            )
+            if closed_appeal is not None:
+                case_status = closed_appeal.status
+                case_url = f"/appeals/{closed_appeal.id}"
             cases.append(
                 RecoveryCase(
                     case_type="customer_refund_dispute",
@@ -192,11 +249,11 @@ class RecoveryCockpitService:
                     detected_amount=amount,
                     claimable_amount=claimable_amount(amount, stage, recovered, refused),
                     recovered_amount=recovered,
-                    status=dispute.status,
+                    status=case_status,
                     evidence_status=dispute.evidence_status,
-                    next_action=next_action_for_stage(stage),
+                    next_action=appeal.next_action_type if appeal is not None and stage == "under_appeal" else next_action_for_stage(stage),
                     created_at=dispute.created_at,
-                    link_url=f"/customer-refunds/{dispute.id}",
+                    link_url=case_url,
                 )
             )
         return cases
@@ -265,6 +322,28 @@ class RecoveryCockpitService:
             for task in tasks
         ]
 
+    def appeal_actions(self) -> list[RecoveryAction]:
+        statement = select(AppealWorkflow).where(AppealWorkflow.status.in_(ACTIVE_APPEAL_STATUSES))
+        statement = self.apply_restaurant_filter(statement, AppealWorkflow)
+        workflows = self.db.scalars(statement).all()
+        actions: list[RecoveryAction] = []
+        for workflow in workflows:
+            action_type = appeal_action_type(workflow)
+            actions.append(
+                RecoveryAction(
+                    action_type=action_type,
+                    case_type="appeal_workflow",
+                    case_id=workflow.id,
+                    restaurant_name=workflow.restaurant.name if workflow.restaurant else f"#{workflow.restaurant_id}",
+                    priority="high" if action_type in {"review_refusal", "request_more_evidence", "escalation"} else "normal",
+                    amount=appeal_workflow_amount(workflow),
+                    due_at=workflow.next_action_at,
+                    label=appeal_action_label(action_type),
+                    url=f"/appeals/{workflow.id}",
+                )
+            )
+        return actions
+
     def apply_restaurant_filter(self, statement, model):
         accessible_ids = get_accessible_restaurant_ids(self.db, self.user)
         restaurant_column = model.restaurant_id
@@ -300,6 +379,8 @@ def build_totals(cases: list[RecoveryCase]) -> RecoveryTotals:
     sent_amount = sum_decimal(case.detected_amount for case in cases if case.recovery_stage in SENT_STAGES)
     recovered = sum_decimal(case.recovered_amount for case in cases)
     refused = sum_decimal(case.detected_amount for case in cases if case.recovery_stage in REFUSED_STAGES)
+    refused_under_appeal = sum_decimal(case.detected_amount for case in cases if case.recovery_stage == "under_appeal")
+    manually_closed = sum_decimal(case.detected_amount for case in cases if case.status == "manually_closed")
     pending = max(claimable_amount_total - recovered - refused, Decimal("0"))
     reviewed_count = len([case for case in cases if case.recovery_stage not in {"detected", "needs_evidence", "evidence_ready", "draft_created", "gmail_draft_created", "sent"}])
     return RecoveryTotals(
@@ -319,6 +400,11 @@ def build_totals(cases: list[RecoveryCase]) -> RecoveryTotals:
         recovered_count=len([case for case in cases if case.recovered_amount > 0 or case.recovery_stage in RECOVERED_STAGES]),
         refused_count=len([case for case in cases if case.recovery_stage in REFUSED_STAGES]),
         manual_review_count=len([case for case in cases if case.recovery_stage in MANUAL_REVIEW_STAGES]),
+        active_appeals_count=len([case for case in cases if case.recovery_stage == "under_appeal"]),
+        appeal_needed_count=len([case for case in cases if case.next_action in {"review_refusal", "create_appeal_draft", "send_manual_appeal"}]),
+        escalations_needed_count=len([case for case in cases if case.next_action == "escalation"]),
+        refused_under_appeal_amount=refused_under_appeal,
+        manually_closed_amount=manually_closed,
         recovery_rate=ratio(recovered, sent_amount),
         review_coverage_rate=ratio(Decimal(reviewed_count), Decimal(len(cases))),
     )
@@ -449,6 +535,8 @@ def customer_refund_action(dispute: UberCustomerRefundDispute) -> tuple[str, str
 
 
 def claimable_amount(amount: Decimal, stage: str, recovered: Decimal, refused: Decimal) -> Decimal:
+    if stage == "under_appeal":
+        return quantize_decimal(max(amount - recovered, Decimal("0")))
     if stage in FINAL_CASE_STAGES:
         return Decimal("0")
     return quantize_decimal(max(amount - recovered - refused, Decimal("0")))
@@ -502,3 +590,52 @@ def is_due(value) -> bool:
     if value is None:
         return False
     return normalized_datetime(value) <= utc_now()
+
+
+def active_appeal_for_case(db: Session, case_type: str, case_id: int) -> AppealWorkflow | None:
+    return db.scalar(
+        select(AppealWorkflow).where(
+            AppealWorkflow.case_type == case_type,
+            AppealWorkflow.case_id == case_id,
+            AppealWorkflow.status.in_(ACTIVE_APPEAL_STATUSES),
+        )
+    )
+
+
+def closed_appeal_for_case(db: Session, case_type: str, case_id: int) -> AppealWorkflow | None:
+    return db.scalar(
+        select(AppealWorkflow).where(
+            AppealWorkflow.case_type == case_type,
+            AppealWorkflow.case_id == case_id,
+            AppealWorkflow.status == "manually_closed",
+        )
+    )
+
+
+def appeal_action_type(workflow: AppealWorkflow) -> str:
+    if workflow.next_action_type in {"review_refusal", "request_more_evidence", "create_appeal_draft", "escalation", "manual_review"}:
+        return workflow.next_action_type
+    if workflow.next_action_type == "create_gmail_draft":
+        return "create_gmail_draft"
+    return "review_refusal"
+
+
+def appeal_action_label(action_type: str) -> str:
+    return {
+        "review_refusal": "Revoir le refus Uber",
+        "request_more_evidence": "Ajouter les preuves demandees",
+        "create_appeal_draft": "Creer brouillon d'appel",
+        "create_gmail_draft": "Creer brouillon Gmail d'appel",
+        "escalation": "Preparer escalade",
+        "manual_review": "Revue manuelle appel",
+    }.get(action_type, "Traiter appel")
+
+
+def appeal_workflow_amount(workflow: AppealWorkflow) -> Decimal:
+    if workflow.claim_order is not None:
+        return money(workflow.claim_order.order_amount)
+    if workflow.customer_refund_dispute is not None:
+        return money(workflow.customer_refund_dispute.customer_refund_amount)
+    if workflow.reconciliation_result is not None:
+        return money(workflow.reconciliation_result.missing_amount or workflow.reconciliation_result.order_amount)
+    return Decimal("0")
