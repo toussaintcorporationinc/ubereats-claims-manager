@@ -37,7 +37,7 @@ Retour attendu :
 ```json
 {
   "app": "TENNET",
-  "version": "1.1.0-rc1-tennet",
+  "version": "1.1.0-rc2-tennet",
   "environment": "production",
   "commit": "unknown"
 }

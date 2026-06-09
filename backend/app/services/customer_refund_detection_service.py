@@ -21,14 +21,101 @@ from app.services.customer_refund_dispute_service import ensure_evidence_require
 
 NEGATIVE_TRANSACTION_TYPES = {
     "refund",
+    "customer_refund",
     "chargeback",
     "adjustment_negative",
+    "adjustment negative",
     "deduction",
     "clawback",
     "eater_refund",
     "order_error",
+    "order error",
     "order_error_adjustment",
+    "order error adjustment",
 }
+
+CLASSIFICATION_RULES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    (
+        "order_not_received",
+        "customer_reported_not_received",
+        (
+            "not received",
+            "order not received",
+            "never received",
+            "customer did not receive",
+            "eater did not receive",
+            "non recu",
+            "commande non recue",
+            "client non livre",
+            "livraison non recue",
+            "pas recu",
+        ),
+    ),
+    (
+        "missing_item",
+        "customer_reported_missing_item",
+        (
+            "missing item",
+            "missing items",
+            "item missing",
+            "missing article",
+            "article missing",
+            "article manquant",
+            "articles manquants",
+            "element manquant",
+            "produit manquant",
+            "produits manquants",
+            "il manque",
+            "manque un article",
+        ),
+    ),
+    (
+        "incorrect_item",
+        "customer_reported_wrong_item",
+        (
+            "wrong item",
+            "incorrect item",
+            "wrong order",
+            "mauvaise commande",
+            "mauvais article",
+            "article incorrect",
+            "produit incorrect",
+        ),
+    ),
+    (
+        "quality_issue",
+        "customer_reported_quality_issue",
+        (
+            "quality",
+            "qualite",
+            "food issue",
+            "probleme qualite",
+        ),
+    ),
+    (
+        "order_error_adjustment",
+        "uber_adjustment_order_error",
+        (
+            "order error",
+            "adjustment",
+            "ajustement",
+            "erreur de commande",
+            "ajustement negatif",
+            "adjustment negative",
+            "adjustment_negative",
+        ),
+    ),
+    (
+        "chargeback",
+        "refund_without_sufficient_proof",
+        ("chargeback", "clawback"),
+    ),
+    (
+        "customer_refund",
+        "refund_without_sufficient_proof",
+        ("refund", "remboursement", "eater refund", "eater_refund", "customer refund"),
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -169,29 +256,10 @@ def is_disputable_transaction(transaction: UberFinancialTransaction) -> bool:
 
 
 def classify_transaction(transaction: UberFinancialTransaction) -> tuple[str, str]:
-    text = normalize_text(
-        " ".join(
-            [
-                transaction.transaction_type or "",
-                transaction.payout_reference or "",
-                json.dumps(transaction.raw_payload_json or {}, ensure_ascii=False),
-            ]
-        )
-    )
-    if contains_any(text, ("not received", "commande non recue", "non recu")):
-        return "order_not_received", "customer_reported_not_received"
-    if contains_any(text, ("missing item", "article manquant", "element manquant")):
-        return "missing_item", "customer_reported_missing_item"
-    if contains_any(text, ("wrong item", "incorrect item", "mauvaise commande")):
-        return "incorrect_item", "customer_reported_wrong_item"
-    if contains_any(text, ("quality", "qualite")):
-        return "quality_issue", "customer_reported_quality_issue"
-    if contains_any(text, ("chargeback",)):
-        return "chargeback", "refund_without_sufficient_proof"
-    if contains_any(text, ("order_error", "order error", "erreur de commande", "adjustment_negative")):
-        return "order_error_adjustment", "uber_adjustment_order_error"
-    if contains_any(text, ("refund", "remboursement", "eater_refund")):
-        return "customer_refund", "refund_without_sufficient_proof"
+    text = build_transaction_search_text(transaction)
+    for dispute_type, reason, needles in CLASSIFICATION_RULES:
+        if contains_any(text, needles):
+            return dispute_type, reason
     return "unknown", "unknown_reason"
 
 
@@ -236,8 +304,36 @@ def build_detection_note(transaction: UberFinancialTransaction, dispute_type: st
 
 def normalize_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value.strip().lower())
-    return "".join(character for character in normalized if not unicodedata.combining(character))
+    ascii_text = "".join(character for character in normalized if not unicodedata.combining(character))
+    return " ".join(ascii_text.replace("_", " ").split())
 
 
 def contains_any(text: str, needles: tuple[str, ...]) -> bool:
-    return any(needle in text for needle in needles)
+    return any(normalize_text(needle) in text for needle in needles)
+
+
+def build_transaction_search_text(transaction: UberFinancialTransaction) -> str:
+    values = [
+        transaction.transaction_type or "",
+        transaction.payout_reference or "",
+        *flatten_payload_text(transaction.raw_payload_json or {}),
+        json.dumps(transaction.raw_payload_json or {}, ensure_ascii=False),
+    ]
+    return normalize_text(" ".join(str(value) for value in values if value not in {None, ""}))
+
+
+def flatten_payload_text(value: object) -> list[str]:
+    if isinstance(value, dict):
+        pieces: list[str] = []
+        for key, nested_value in value.items():
+            pieces.append(str(key))
+            pieces.extend(flatten_payload_text(nested_value))
+        return pieces
+    if isinstance(value, list):
+        pieces = []
+        for item in value:
+            pieces.extend(flatten_payload_text(item))
+        return pieces
+    if value is None:
+        return []
+    return [str(value)]

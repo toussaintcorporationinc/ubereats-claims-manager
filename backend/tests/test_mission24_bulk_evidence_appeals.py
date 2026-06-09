@@ -16,10 +16,14 @@ from app.models import (
     AppealWorkflow,
     AuditLog,
     CustomerRefundDisputeReview,
+    EmailAccount,
+    EmailProviderDraft,
     EvidenceFile,
     EvidenceRequestTask,
     UberCustomerRefundDispute,
+    User,
 )
+from app.models.domain import utc_now
 
 
 @pytest.fixture()
@@ -88,6 +92,23 @@ def post_refused_review(client: TestClient, order_id: int, refusal_reason: str =
     )
     assert response.status_code == 201
     return response.json()
+
+
+def connect_owner_gmail_account(db_session: Session) -> None:
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+    db_session.add(
+        EmailAccount(
+            user_id=owner.id,
+            provider="gmail",
+            email_address="owner@example.com",
+            access_token_encrypted="fake-access-token",
+            refresh_token_encrypted="fake-refresh-token",
+            scopes="https://www.googleapis.com/auth/gmail.compose",
+            connected_at=utc_now(),
+        )
+    )
+    db_session.commit()
 
 
 def test_health_public_works(unauthenticated_client: TestClient) -> None:
@@ -228,12 +249,73 @@ def test_refused_customer_refund_review_creates_appeal_workflow(configured_clien
     assert db_session.scalar(select(CustomerRefundDisputeReview).where(CustomerRefundDisputeReview.dispute_id == dispute.id)) is not None
 
 
-def test_appeal_draft_gmail_draft_and_mark_sent_are_controlled(configured_client: TestClient, db_session: Session) -> None:
+def test_appeal_gmail_draft_refuses_when_provider_disabled(configured_client: TestClient, db_session: Session) -> None:
+    restaurant = create_restaurant(configured_client)
+    order = create_order(configured_client, restaurant["id"], "UBER-APPEAL-GMAIL-OFF")
+    post_refused_review(configured_client, order["id"], "Merci de fournir une preuve")
+    workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order["id"]))
+    assert workflow is not None
+
+    draft_response = configured_client.post(f"/v1/appeals/{workflow.id}/create-draft", json={"appeal_type": "evidence_reply"})
+    assert draft_response.status_code == 201
+    attempt = db_session.scalar(select(AppealAttempt).where(AppealAttempt.workflow_id == workflow.id))
+    assert attempt is not None
+    before_status = workflow.status
+    before_attempt_status = attempt.status
+
+    gmail_response = configured_client.post(f"/v1/appeals/{workflow.id}/create-gmail-draft")
+
+    assert gmail_response.status_code == 503
+    assert gmail_response.json()["detail"] == "email_provider_disabled"
+    db_session.refresh(workflow)
+    db_session.refresh(attempt)
+    assert workflow.status == before_status
+    assert attempt.status == before_attempt_status
+    assert attempt.provider_draft_id is None
+    assert db_session.scalar(select(EmailProviderDraft)) is None
+
+
+def test_appeal_gmail_draft_refuses_without_connected_account(
+    configured_client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMAIL_PROVIDER_ENABLED", "true")
+    get_settings.cache_clear()
+    restaurant = create_restaurant(configured_client)
+    order = create_order(configured_client, restaurant["id"], "UBER-APPEAL-NO-GMAIL")
+    post_refused_review(configured_client, order["id"], "Merci de fournir une preuve")
+    workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order["id"]))
+    assert workflow is not None
+    draft_response = configured_client.post(f"/v1/appeals/{workflow.id}/create-draft", json={"appeal_type": "evidence_reply"})
+    assert draft_response.status_code == 201
+    attempt = db_session.scalar(select(AppealAttempt).where(AppealAttempt.workflow_id == workflow.id))
+    assert attempt is not None
+
+    gmail_response = configured_client.post(f"/v1/appeals/{workflow.id}/create-gmail-draft")
+
+    assert gmail_response.status_code == 409
+    assert gmail_response.json()["detail"] == "gmail_account_not_connected"
+    db_session.refresh(attempt)
+    assert attempt.status == "draft_created"
+    assert attempt.provider_draft_id is None
+    assert db_session.scalar(select(EmailProviderDraft)) is None
+    get_settings.cache_clear()
+
+
+def test_appeal_draft_gmail_draft_and_mark_sent_are_controlled(
+    configured_client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMAIL_PROVIDER_ENABLED", "true")
+    get_settings.cache_clear()
     restaurant = create_restaurant(configured_client)
     order = create_order(configured_client, restaurant["id"], "UBER-APPEAL-DRAFT")
     post_refused_review(configured_client, order["id"], "Merci de fournir une preuve")
     workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order["id"]))
     assert workflow is not None
+    connect_owner_gmail_account(db_session)
 
     draft_response = configured_client.post(f"/v1/appeals/{workflow.id}/create-draft", json={"appeal_type": "evidence_reply"})
     assert draft_response.status_code == 201
@@ -250,6 +332,7 @@ def test_appeal_draft_gmail_draft_and_mark_sent_are_controlled(configured_client
 
     duplicate_response = configured_client.post(f"/v1/appeals/{workflow.id}/create-draft", json={"appeal_type": "evidence_reply"})
     assert duplicate_response.status_code == 409
+    get_settings.cache_clear()
 
 
 def test_payment_confirmed_syncs_workflow_to_terminal(configured_client: TestClient, db_session: Session) -> None:

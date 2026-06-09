@@ -228,6 +228,7 @@ class UberReconciliationService:
             reason = "canceled_partial_payment"
             confidence = Decimal("0.85")
 
+        financial_status = result_status
         evidence_required = result_status in {"not_compensated", "partially_compensated"}
         claim_order_id = None
         if existing_claim is not None:
@@ -246,6 +247,7 @@ class UberReconciliationService:
             result_status,
             reason,
             is_cancelled=True,
+            financial_status=financial_status,
             claim_order_id=claim_order_id,
             paid_amount=paid_amount,
             refunded_amount=refunded_amount,
@@ -325,6 +327,7 @@ class UberReconciliationService:
                 restaurant_id=snapshot.restaurant_id,
                 uber_order_id=snapshot.uber_order_id,
                 status=payload["status"],
+                financial_status=payload["financial_status"],
                 reason=payload["reason"],
             )
             db.add(result)
@@ -334,6 +337,7 @@ class UberReconciliationService:
         result.display_id = snapshot.display_id
         result.claim_order_id = payload["claim_order_id"]
         result.status = payload["status"]
+        result.financial_status = payload["financial_status"]
         result.reason = payload["reason"]
         result.order_amount = snapshot.order_total_amount
         result.paid_amount = payload["paid_amount"]
@@ -469,10 +473,12 @@ class UberReconciliationService:
         evidence_required: bool = False,
         confidence_score: Decimal | None = None,
         transactions: list[UberFinancialTransaction] | None = None,
+        financial_status: str | None = None,
     ) -> dict[str, Any]:
         return {
             "snapshot": snapshot,
             "status": status_value,
+            "financial_status": financial_status or ("not_cancelled" if reason == "not_cancelled" else status_value),
             "reason": reason,
             "is_cancelled": is_cancelled,
             "claim_order_id": claim_order_id,

@@ -357,7 +357,7 @@ Exemples fictifs disponibles :
 
 ## V1.1 Release Candidate
 
-`VERSION` vaut `1.1.0-rc1-tennet`.
+`VERSION` vaut `1.1.0-rc2-tennet`.
 
 La RC V1.1 ajoute la recette staging pour les imports Uber Reporting, la reconciliation 6 mois, les deductions Uber, les demandes de preuves, l'import massif de preuves, le matching controle, les appels persistants et le cockpit recuperation.
 

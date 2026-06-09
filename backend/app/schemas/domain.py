@@ -116,6 +116,13 @@ UberReconciliationStatus = Literal[
     "ignored",
     "manual_review",
 ]
+UberReconciliationFinancialStatus = Literal[
+    "compensated",
+    "not_compensated",
+    "partially_compensated",
+    "manual_review",
+    "not_cancelled",
+]
 UberReconciliationRunStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
 UberReportingReportType = Literal["orders_report", "payments_report", "adjustments_report", "combined_report"]
 UberReportingBatchStatus = Literal["uploaded", "parsed", "confirmed", "partially_imported", "failed", "cancelled"]
@@ -1187,6 +1194,7 @@ class UberReconciliationResultRead(BaseModel):
     display_id: str | None
     claim_order_id: int | None
     status: UberReconciliationStatus
+    financial_status: UberReconciliationFinancialStatus | None
     reason: str
     order_amount: Decimal | None
     paid_amount: Decimal

@@ -108,6 +108,12 @@ export type UberReconciliationStatus =
   | "already_claimed"
   | "ignored"
   | "manual_review";
+export type UberReconciliationFinancialStatus =
+  | "compensated"
+  | "not_compensated"
+  | "partially_compensated"
+  | "manual_review"
+  | "not_cancelled";
 export type UberReconciliationRunStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
 export type UberReportingReportType = "orders_report" | "payments_report" | "adjustments_report" | "combined_report";
 export type UberReportingBatchStatus = "uploaded" | "parsed" | "confirmed" | "partially_imported" | "failed" | "cancelled";
@@ -1474,6 +1480,7 @@ export type UberReconciliationResult = {
   display_id: string | null;
   claim_order_id: number | null;
   status: UberReconciliationStatus;
+  financial_status: UberReconciliationFinancialStatus | null;
   reason: string;
   order_amount: MoneyValue;
   paid_amount: MoneyValue;

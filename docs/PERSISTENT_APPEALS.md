@@ -59,6 +59,15 @@ Un refus Uber ne cloture pas automatiquement un dossier dans TENNET. Il ouvre un
 - pas de brouillon identique non traite si `APPEAL_ALLOW_SAME_TEMPLATE_RESEND=false` ;
 - `APPEAL_AUTO_SEND_ENABLED=false` par defaut et aucun envoi automatique n'est implemente.
 
+## TENNET V1.1 RC2 fixes
+
+`POST /v1/appeals/{workflow_id}/create-gmail-draft` refuse maintenant :
+
+- `email_provider_disabled` si `EMAIL_PROVIDER_ENABLED=false` ;
+- `gmail_account_not_connected` si aucun compte Gmail actif n'est connecte.
+
+Aucun `EmailProviderDraft` n'est cree et aucun `AppealAttempt` ne passe a `gmail_draft_created` dans ces deux cas.
+
 ## Permissions
 
 - `owner` gere tous les workflows et peut cloturer/reouvrir manuellement ;

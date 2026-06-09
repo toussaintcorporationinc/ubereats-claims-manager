@@ -3,7 +3,7 @@ set -euo pipefail
 
 API_URL="${API_URL:-http://localhost:8000}"
 FRONTEND_URL="${FRONTEND_URL:-http://localhost:3000}"
-EXPECTED_VERSION="${EXPECTED_VERSION:-1.1.0-rc1-tennet}"
+EXPECTED_VERSION="${EXPECTED_VERSION:-1.1.0-rc2-tennet}"
 
 request_public() {
   local label="$1"

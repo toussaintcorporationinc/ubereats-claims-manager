@@ -7,7 +7,7 @@ import EmptyState from "@/components/EmptyState";
 import LoadingState from "@/components/LoadingState";
 import StatCard from "@/components/StatCard";
 import StatusBadge from "@/components/StatusBadge";
-import { api, formatCurrency, formatDate, type AppealDetailResponse, type AppealType } from "@/lib/api";
+import { api, formatCurrency, formatDate, type AppealDetailResponse, type AppealType, type GmailConnectionStatus } from "@/lib/api";
 
 type PageProps = { params: Promise<{ id: string }> };
 
@@ -22,9 +22,12 @@ export default function AppealDetailPage({ params }: PageProps) {
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState<string | null>(null);
+  const [gmailStatus, setGmailStatus] = useState<GmailConnectionStatus | null>(null);
 
   const loadData = useCallback(async () => {
-    setDetail(await api.getAppeal(workflowId));
+    const [appealDetail, emailStatus] = await Promise.all([api.getAppeal(workflowId), api.getGmailStatus().catch(() => null)]);
+    setDetail(appealDetail);
+    setGmailStatus(emailStatus);
   }, [workflowId]);
 
   useEffect(() => {
@@ -53,6 +56,8 @@ export default function AppealDetailPage({ params }: PageProps) {
   const workflow = detail?.workflow;
   const amount = detail?.case_summary.amount as string | number | null | undefined;
   const currency = (detail?.case_summary.currency as string | undefined) ?? "EUR";
+  const gmailDisabled = gmailStatus?.enabled === false;
+  const gmailNotConnected = gmailStatus?.enabled === true && gmailStatus.connected === false;
 
   return (
     <section className="page-section">
@@ -109,13 +114,20 @@ export default function AppealDetailPage({ params }: PageProps) {
               <button type="button" className="button" disabled={Boolean(working)} onClick={() => runAction("draft", () => api.createAppealDraft(workflow.id, { appeal_type: appealType }))}>
                 Creer brouillon appel
               </button>
-              <button type="button" className="secondary-button" disabled={Boolean(working)} onClick={() => runAction("gmail", () => api.createAppealGmailDraft(workflow.id))}>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={Boolean(working) || gmailDisabled || gmailNotConnected}
+                onClick={() => runAction("gmail", () => api.createAppealGmailDraft(workflow.id))}
+              >
                 Creer brouillon Gmail
               </button>
               <button type="button" className="secondary-button" disabled={Boolean(working)} onClick={() => runAction("sent", () => api.markAppealSent(workflow.id))}>
                 Marquer envoye
               </button>
             </div>
+            {gmailDisabled ? <p className="muted-text">Gmail est desactive sur cet environnement.</p> : null}
+            {gmailNotConnected ? <p className="muted-text">Compte Gmail non connecte.</p> : null}
             <div className="inline-form">
               <label htmlFor="manual_reason">Raison pause / cloture</label>
               <input id="manual_reason" value={manualReason} onChange={(event) => setManualReason(event.target.value)} />
