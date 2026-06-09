@@ -256,3 +256,19 @@ Un `AuditLog` est cree pour :
 - pas de reponse automatique aux messages Gmail entrants ;
 - pas de classification IA des reponses Uber ;
 - pas d'integration OpenAI.
+
+## Uber Eats Connector
+
+La fondation Uber Mission 18 respecte les regles suivantes :
+
+- aucun scraping de tablette Uber Eats ;
+- aucune automatisation de navigateur Uber Eats Manager avec mot de passe ;
+- aucun stockage d'identifiant Uber Eats en clair ;
+- aucun appel API Uber reel tant que l'approbation et les credentials officiels ne sont pas disponibles ;
+- les champs `client_id_encrypted`, `client_secret_encrypted` et `access_token_encrypted` sont reserves a une integration officielle future et ne sont jamais retournes au frontend ;
+- les imports CSV/XLSX Uber Eats Manager sont le fallback controle ;
+- `owner` seul configure les mappings stores ;
+- `manager` voit et exploite uniquement ses restaurants assignes ;
+- `staff` n'a pas acces au connecteur Uber ;
+- la reconciliation ne cree pas de reclamation envoyee automatiquement ;
+- un dossier cree depuis reconciliation reste soumis aux preuves obligatoires TENNET.

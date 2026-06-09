@@ -14,6 +14,11 @@ from app.models.domain import (
     ImportRow,
     InboundEmailMessage,
     Restaurant,
+    UberFinancialTransaction,
+    UberIntegrationAccount,
+    UberOrderSnapshot,
+    UberReconciliationResult,
+    UberStoreMapping,
     User,
     UserRestaurantAccess,
 )
@@ -34,6 +39,11 @@ __all__ = [
     "ImportRow",
     "InboundEmailMessage",
     "Restaurant",
+    "UberFinancialTransaction",
+    "UberIntegrationAccount",
+    "UberOrderSnapshot",
+    "UberReconciliationResult",
+    "UberStoreMapping",
     "User",
     "UserRestaurantAccess",
 ]

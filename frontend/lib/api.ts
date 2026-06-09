@@ -66,6 +66,15 @@ export type FollowUpTaskStatus =
   | "completed"
   | "skipped"
   | "cancelled";
+export type UberIntegrationStatus = "not_configured" | "pending_approval" | "connected" | "disconnected" | "disabled";
+export type UberReconciliationStatus =
+  | "compensated"
+  | "not_compensated"
+  | "partially_compensated"
+  | "needs_evidence"
+  | "already_claimed"
+  | "ignored"
+  | "manual_review";
 
 export type Restaurant = {
   id: number;
@@ -541,6 +550,72 @@ export type FollowUpRecalculateResponse = {
   skipped_orders: number;
   manual_review_orders: number;
   errors: string[];
+};
+
+export type UberStatus = {
+  provider: "uber_eats";
+  status: UberIntegrationStatus;
+  official_api_enabled: boolean;
+  approval_required: boolean;
+  scopes: string | null;
+  store_mappings_count: number;
+};
+
+export type UberStoreMapping = {
+  id: number;
+  restaurant_id: number;
+  uber_store_id: string;
+  uber_store_name: string;
+  merchant_store_id: string | null;
+  external_reference_id: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UberStoreMappingCreatePayload = {
+  restaurant_id: number;
+  uber_store_id: string;
+  uber_store_name: string;
+  merchant_store_id?: string | null;
+  external_reference_id?: string | null;
+  active: boolean;
+};
+
+export type UberReportingImportResponse = {
+  snapshots_created: number;
+  transactions_created: number;
+  rows_skipped: number;
+  errors: string[];
+};
+
+export type UberReconciliationRunResponse = {
+  results_created: number;
+  results_updated: number;
+  ignored_orders: number;
+  errors: string[];
+};
+
+export type UberReconciliationResult = {
+  id: number;
+  restaurant_id: number;
+  uber_order_id: string;
+  claim_order_id: number | null;
+  status: UberReconciliationStatus;
+  reason: string;
+  order_amount: MoneyValue;
+  paid_amount: MoneyValue;
+  refunded_amount: MoneyValue;
+  missing_amount: MoneyValue;
+  evidence_required: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UberReconciliationResultsResponse = {
+  results: UberReconciliationResult[];
+  limit: number;
+  offset: number;
 };
 
 export type ImportRow = {
@@ -1031,6 +1106,29 @@ export const api = {
     postJson<FollowUpTask, { skip_reason: string }>(`/v1/followups/${taskId}/skip`, payload),
   completeFollowupTask: (taskId: number) =>
     postJson<FollowUpTask, Record<string, never>>(`/v1/followups/${taskId}/complete`, {}),
+  getUberStatus: () => request<UberStatus>("/v1/uber/status"),
+  getUberStoreMappings: () => request<UberStoreMapping[]>("/v1/uber/store-mappings"),
+  createUberStoreMapping: (payload: UberStoreMappingCreatePayload) =>
+    postJson<UberStoreMapping, UberStoreMappingCreatePayload>("/v1/uber/store-mappings", payload),
+  updateUberStoreMapping: (id: number, payload: Partial<UberStoreMappingCreatePayload>) =>
+    request<UberStoreMapping>(`/v1/uber/store-mappings/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  importUberReporting: (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return request<UberReportingImportResponse>("/v1/uber/reporting/import", {
+      method: "POST",
+      body: formData,
+    });
+  },
+  getUberReconciliationResults: (filters: { status?: UberReconciliationStatus | ""; limit?: number; offset?: number } = {}) =>
+    request<UberReconciliationResultsResponse>(`/v1/uber/reconciliation/results${buildQuery(filters)}`),
+  runUberReconciliation: () =>
+    postJson<UberReconciliationRunResponse, Record<string, never>>("/v1/uber/reconciliation/run", {}),
+  createClaimOrderFromUberResult: (resultId: number) =>
+    postJson<ClaimOrder, Record<string, never>>(`/v1/uber/reconciliation/results/${resultId}/claim-order`, {}),
   previewOrderImport: (file: File) => {
     const formData = new FormData();
     formData.append("file", file);

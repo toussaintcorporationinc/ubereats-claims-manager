@@ -70,6 +70,17 @@ FollowUpTaskStatus = Literal[
     "skipped",
     "cancelled",
 ]
+UberIntegrationStatus = Literal["not_configured", "pending_approval", "connected", "disconnected", "disabled"]
+UberImportedFrom = Literal["api_orders", "api_reporting", "manager_export"]
+UberReconciliationStatus = Literal[
+    "compensated",
+    "not_compensated",
+    "partially_compensated",
+    "needs_evidence",
+    "already_claimed",
+    "ignored",
+    "manual_review",
+]
 
 
 class UserRead(BaseModel):
@@ -780,4 +791,82 @@ class EmailProviderDraftRead(BaseModel):
     updated_at: datetime
     error_message: str | None
     last_error: str | None
+
+
+class UberStatusRead(BaseModel):
+    provider: Literal["uber_eats"]
+    status: UberIntegrationStatus
+    official_api_enabled: bool = False
+    approval_required: bool = True
+    scopes: str | None = None
+    store_mappings_count: int = 0
+
+
+class UberStoreMappingCreate(BaseModel):
+    restaurant_id: int
+    uber_store_id: str = Field(min_length=1)
+    uber_store_name: str = Field(min_length=1)
+    merchant_store_id: str | None = None
+    external_reference_id: str | None = None
+    active: bool = True
+
+
+class UberStoreMappingUpdate(BaseModel):
+    uber_store_id: str | None = Field(default=None, min_length=1)
+    uber_store_name: str | None = Field(default=None, min_length=1)
+    merchant_store_id: str | None = None
+    external_reference_id: str | None = None
+    active: bool | None = None
+
+
+class UberStoreMappingRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    restaurant_id: int
+    uber_store_id: str
+    uber_store_name: str
+    merchant_store_id: str | None
+    external_reference_id: str | None
+    active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class UberReportingImportResponse(BaseModel):
+    snapshots_created: int
+    transactions_created: int
+    rows_skipped: int
+    errors: list[str]
+
+
+class UberReconciliationRunResponse(BaseModel):
+    results_created: int
+    results_updated: int
+    ignored_orders: int
+    errors: list[str]
+
+
+class UberReconciliationResultRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    restaurant_id: int
+    uber_order_id: str
+    claim_order_id: int | None
+    status: UberReconciliationStatus
+    reason: str
+    order_amount: Decimal | None
+    paid_amount: Decimal
+    refunded_amount: Decimal
+    missing_amount: Decimal | None
+    evidence_required: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class UberReconciliationResultsResponse(BaseModel):
+    results: list[UberReconciliationResultRead]
+    limit: int
+    offset: int
 

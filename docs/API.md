@@ -1143,6 +1143,27 @@ Retourne :
 
 `owner` obtient une vue globale. `manager` et `staff` obtiennent une vue filtree sur leurs restaurants assignes.
 
+## Uber Connector
+
+Mission 18 expose une fondation de connecteur Uber Eats sans appel API Uber reel.
+
+- `GET /v1/uber/status` : retourne l'etat d'integration, l'obligation d'approbation Uber et le nombre de mappings.
+- `GET /v1/uber/store-mappings` : liste les mappings visibles `restaurant_id` -> `uber_store_id`.
+- `POST /v1/uber/store-mappings` : cree un mapping. Owner uniquement.
+- `PATCH /v1/uber/store-mappings/{id}` : modifie un mapping. Owner uniquement.
+- `POST /v1/uber/reporting/import` : importe un rapport CSV/XLSX Uber Eats Manager fictif ou generique.
+- `GET /v1/uber/reconciliation/results` : liste les resultats visibles.
+- `POST /v1/uber/reconciliation/run` : calcule les statuts `compensated`, `not_compensated`, `partially_compensated`, `already_claimed` ou `manual_review`.
+- `POST /v1/uber/reconciliation/results/{id}/claim-order` : cree un dossier TENNET depuis un resultat eligible, sans doublon.
+
+Permissions :
+
+- `owner` : configuration mappings, imports, reconciliation globale.
+- `manager` : lecture/import/reconciliation sur restaurants assignes.
+- `staff` : pas d'acces au connecteur Uber.
+
+Les endpoints ne retournent aucun secret Uber et ne stockent aucun mot de passe Uber.
+
 ## Hors perimetre V1 actuelle
 
 - pas d'integration OpenAI API ;
