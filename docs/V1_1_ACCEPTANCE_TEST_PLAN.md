@@ -26,6 +26,7 @@ TENNET does not guarantee reimbursement. It provides detection, tracking, review
    - already claimed order;
    - manual-review order.
 4. Verify `total_missing_amount` and result reasons.
+5. Verify `financial_status` remains `partially_compensated` for a partial payment even if the operational status later becomes `already_claimed`.
 
 ## Scenario 3 - Claim Order Creation
 
@@ -68,6 +69,14 @@ TENNET does not guarantee reimbursement. It provides detection, tracking, review
 5. Create a claim order from an eligible dispute.
 6. Complete evidence.
 7. Create an internal draft without sending.
+
+## TENNET V1.1 RC2 fixes
+
+- Detect `order_not_received` from "Commande non recue", "commande non reçue", "Order not received" and similar text.
+- Detect `missing_item` from "Article manquant", "missing item" and similar text.
+- Detect `incorrect_item`, `quality_issue` and `order_error_adjustment` from multilingual reason text.
+- Refuse appeal Gmail draft creation when Gmail is disabled or not connected.
+- Display operational `status`, `financial_status` and `missing_amount` in reconciliation result review.
 
 ## Scenario 7 - Recovery Cockpit
 

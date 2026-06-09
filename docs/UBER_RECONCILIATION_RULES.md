@@ -29,6 +29,15 @@ Une commande est analysee comme annulee si `canceled_at` est renseigne ou si le 
 - `manual_review` : montant absent, statut ambigu, type transaction inconnu critique, conflit ou dossier existant cloture/refuse.
 - `ignored` : resultat ignore manuellement.
 
+## TENNET V1.1 RC2 fixes
+
+Chaque `UberReconciliationResult` conserve maintenant deux lectures :
+
+- `status` : statut operationnel du workflow (`already_claimed`, `ignored`, etc.) ;
+- `financial_status` : resultat financier calcule (`compensated`, `not_compensated`, `partially_compensated`, `manual_review`, `not_cancelled`).
+
+Si un dossier TENNET est cree pour une commande partiellement compensee, un nouveau run peut afficher `status=already_claimed`, mais `financial_status=partially_compensated`, `paid_amount` et `missing_amount` restent visibles pour la recette et le cockpit.
+
 ## Creation de dossiers
 
 L'analyse ne cree jamais de `ClaimOrder` automatiquement. L'utilisateur doit creer un dossier individuellement ou par selection groupée.

@@ -1,8 +1,14 @@
 # TENNET V1.1 Release Candidate
 
-Version: `1.1.0-rc1-tennet`
+Version: `1.1.0-rc2-tennet`
 
 TENNET V1.1 RC prepares the product for a staging acceptance cycle focused on Uber data imports, financial reconciliation, customer refund disputes, bulk evidence handling and persistent appeals.
+
+## TENNET V1.1 RC2 fixes
+
+- Improved detection for `order_not_received`, `missing_item`, `incorrect_item`, `quality_issue` and order-error adjustments from multilingual transaction text.
+- Appeal Gmail draft creation now refuses clearly when Gmail is disabled or when no Gmail account is connected.
+- Uber reconciliation results now keep `financial_status`, so a partially compensated order remains financially visible even when the operational status becomes `already_claimed`.
 
 ## Included
 

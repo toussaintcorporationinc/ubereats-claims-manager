@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-V1_1_VERSION = "1.1.0-rc1-tennet"
+V1_1_VERSION = "1.1.0-rc2-tennet"
 
 
 def read(path: str) -> str:

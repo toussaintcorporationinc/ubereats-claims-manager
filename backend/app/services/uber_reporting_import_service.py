@@ -246,7 +246,10 @@ def normalize_report_row(
     row: dict[str, Any],
     report_type: str,
 ) -> tuple[dict[str, Any], list[str], list[str]]:
-    normalized: dict[str, Any] = {"currency": get_column_value(row, "currency") or "EUR"}
+    normalized: dict[str, Any] = {
+        "currency": get_column_value(row, "currency") or "EUR",
+        "raw_data": safe_json({key: value for key, value in row.items() if value not in {None, ""}}),
+    }
     errors: list[str] = []
     warnings: list[str] = []
     for field in ORDER_FIELDS | TRANSACTION_FIELDS:

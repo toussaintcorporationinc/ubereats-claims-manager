@@ -232,10 +232,59 @@ def test_reconciliation_detects_not_compensated_partially_and_compensated(
         result.uber_order_id: result.status
         for result in db_session.scalars(select(UberReconciliationResult)).all()
     }
+    financial_statuses = {
+        result.uber_order_id: result.financial_status
+        for result in db_session.scalars(select(UberReconciliationResult)).all()
+    }
     assert statuses["UBER-NONE"] == "not_compensated"
     assert statuses["UBER-PART"] == "partially_compensated"
     assert statuses["UBER-PAID"] == "compensated"
+    assert financial_statuses["UBER-NONE"] == "not_compensated"
+    assert financial_statuses["UBER-PART"] == "partially_compensated"
+    assert financial_statuses["UBER-PAID"] == "compensated"
     assert db_session.scalar(select(UberFinancialTransaction).where(UberFinancialTransaction.uber_order_id == "UBER-PAID"))
+
+
+def test_partially_compensated_financial_status_survives_existing_claim_order(
+    unauthenticated_client: TestClient,
+    db_session: Session,
+) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Restaurant Uber Partial Claimed")
+    create_store_mapping(unauthenticated_client, owner_token, restaurant["id"], "store-part-claimed")
+    upload_report(
+        unauthenticated_client,
+        owner_token,
+        "\n".join(
+            [
+                "uber_store_id,uber_order_id,current_state,order_total_amount,currency,canceled_at,transaction_type,amount,transaction_date",
+                "store-part-claimed,UBER-PART-CLAIMED,canceled,24.90,EUR,2026-06-01,,,",
+                "store-part-claimed,UBER-PART-CLAIMED,canceled,24.90,EUR,2026-06-01,compensation,10.00,2026-06-02",
+            ]
+        ),
+    )
+    first_run = unauthenticated_client.post("/v1/uber/reconciliation/run", headers=auth_headers(owner_token))
+    assert first_run.status_code == 200
+    result = db_session.scalar(
+        select(UberReconciliationResult).where(UberReconciliationResult.uber_order_id == "UBER-PART-CLAIMED")
+    )
+    assert result is not None
+    assert result.status == "partially_compensated"
+    assert result.financial_status == "partially_compensated"
+    assert result.missing_amount == Decimal("14.90")
+
+    claim_response = unauthenticated_client.post(
+        f"/v1/uber/reconciliation/results/{result.id}/claim-order",
+        headers=auth_headers(owner_token),
+    )
+    assert claim_response.status_code == 201
+    second_run = unauthenticated_client.post("/v1/uber/reconciliation/run", headers=auth_headers(owner_token))
+    assert second_run.status_code == 200
+    db_session.refresh(result)
+
+    assert result.status == "already_claimed"
+    assert result.financial_status == "partially_compensated"
+    assert result.missing_amount == Decimal("14.90")
 
 
 def test_create_claim_order_from_non_compensated_result_without_duplicate(

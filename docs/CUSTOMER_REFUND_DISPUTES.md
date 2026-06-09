@@ -20,6 +20,23 @@ Types geres :
 
 TENNET utilise les montants negatifs et les champs importes comme `transaction_type` ou `raw_payload_json`. En cas de doute, il laisse la dispute en revue manuelle.
 
+## TENNET V1.1 RC2 fixes
+
+La detection analyse maintenant un texte normalise sans accents construit depuis `transaction_type`, `raw_payload_json`, description, line item, reason et notes quand ces champs sont disponibles.
+
+Priorite de classification :
+
+1. `order_not_received`
+2. `missing_item`
+3. `incorrect_item`
+4. `quality_issue`
+5. `order_error_adjustment`
+6. `chargeback`
+7. `customer_refund`
+8. `unknown` / `manual_review`
+
+Les motifs ambigus restent en revue manuelle. TENNET ne doit jamais inventer une raison absente.
+
 ## Preuves necessaires
 
 Regles V1.1 :

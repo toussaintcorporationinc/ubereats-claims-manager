@@ -62,7 +62,7 @@ docker compose --env-file .env.staging -f docker-compose.staging.yml exec backen
 ```bash
 API_URL=https://staging-api.leboxerfrancais.com \
 FRONTEND_URL=https://staging-app.leboxerfrancais.com \
-EXPECTED_VERSION=1.1.0-rc1-tennet \
+EXPECTED_VERSION=1.1.0-rc2-tennet \
 ./scripts/smoke_test_v1_1.sh
 ```
 

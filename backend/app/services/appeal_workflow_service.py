@@ -16,6 +16,7 @@ from app.models import (
     ClaimOrder,
     ClaimResponseReview,
     CustomerRefundDisputeReview,
+    EmailAccount,
     EmailDraft,
     EmailProviderDraft,
     EvidenceRequestTask,
@@ -431,12 +432,27 @@ def create_appeal_gmail_draft(
     if attempt.provider_draft_id is not None:
         raise AppealWorkflowError("A Gmail draft is already linked to this appeal attempt", 409)
 
+    settings = get_settings()
+    if not settings.email_provider_enabled:
+        raise AppealWorkflowError("email_provider_disabled", 503)
+    gmail_account = db.scalar(
+        select(EmailAccount.id)
+        .where(
+            EmailAccount.user_id == user.id,
+            EmailAccount.provider == "gmail",
+            EmailAccount.disconnected_at.is_(None),
+        )
+        .order_by(EmailAccount.id.desc())
+    )
+    if gmail_account is None:
+        raise AppealWorkflowError("gmail_account_not_connected", 409)
+
     provider_draft = EmailProviderDraft(
         email_draft_id=attempt.email_draft.id,
         provider="gmail",
         provider_draft_id=f"tennet-appeal-{workflow.id}-{attempt.id}",
         provider_thread_id=None,
-        to_email=to_email or get_settings().default_uber_eats_support_email,
+        to_email=to_email or settings.default_uber_eats_support_email,
         subject=attempt.email_draft.subject,
         status="provider_draft_created",
         created_by_user_id=user.id,

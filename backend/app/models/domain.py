@@ -175,6 +175,13 @@ UBER_RECONCILIATION_STATUSES = (
     "ignored",
     "manual_review",
 )
+UBER_RECONCILIATION_FINANCIAL_STATUSES = (
+    "compensated",
+    "not_compensated",
+    "partially_compensated",
+    "manual_review",
+    "not_cancelled",
+)
 UBER_RECONCILIATION_RUN_STATUSES = ("pending", "running", "completed", "failed", "cancelled")
 UBER_REPORTING_IMPORT_REPORT_TYPES = ("orders_report", "payments_report", "adjustments_report", "combined_report")
 UBER_REPORTING_IMPORT_BATCH_STATUSES = ("uploaded", "parsed", "confirmed", "partially_imported", "failed", "cancelled")
@@ -1013,8 +1020,13 @@ class UberReconciliationResult(TimestampMixin, Base):
             check_in_constraint("status", UBER_RECONCILIATION_STATUSES),
             name="ck_uber_reconciliation_results_status",
         ),
+        CheckConstraint(
+            f"financial_status IS NULL OR {check_in_constraint('financial_status', UBER_RECONCILIATION_FINANCIAL_STATUSES)}",
+            name="ck_uber_reconciliation_results_financial_status",
+        ),
         Index("ix_uber_reconciliation_results_restaurant_id", "restaurant_id"),
         Index("ix_uber_reconciliation_results_status", "status"),
+        Index("ix_uber_reconciliation_results_financial_status", "financial_status"),
         Index("ix_uber_reconciliation_results_claim_order_id", "claim_order_id"),
     )
 
@@ -1025,6 +1037,7 @@ class UberReconciliationResult(TimestampMixin, Base):
     display_id: Mapped[str | None] = mapped_column(String(255))
     claim_order_id: Mapped[int | None] = mapped_column(ForeignKey("claim_orders.id"))
     status: Mapped[str] = mapped_column(String(50), nullable=False)
+    financial_status: Mapped[str | None] = mapped_column(String(50))
     reason: Mapped[str] = mapped_column(String(255), nullable=False)
     order_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     paid_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0"))

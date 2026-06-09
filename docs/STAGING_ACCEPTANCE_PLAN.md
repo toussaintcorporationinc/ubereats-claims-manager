@@ -4,7 +4,7 @@ Use this plan to validate TENNET V1.1 RC on staging before any production releas
 
 ## Entry Criteria
 
-- `VERSION` is `1.1.0-rc1-tennet`.
+- `VERSION` is `1.1.0-rc2-tennet`.
 - Staging URLs respond on `/health`, `/ready` and `/version`.
 - `EMAIL_PROVIDER_ENABLED=false` unless Gmail staging is intentionally tested.
 - `GMAIL_INBOUND_SYNC_ENABLED=false` unless Gmail staging is intentionally tested.
@@ -46,6 +46,13 @@ Map stores:
 - Mark appeal sent only after manual confirmation in the app.
 - Verify recovery cockpit totals and actions.
 - Export recovery/reporting files and verify no secrets or raw storage paths appear.
+
+## TENNET V1.1 RC2 fixes
+
+- Verify "commande non recue", "commande non reçue" and "Order not received" classify as `order_not_received`.
+- Verify "article manquant" and "missing item" classify as `missing_item`.
+- Verify appeal Gmail draft creation is disabled with the message "Gmail est desactive sur cet environnement" when `EMAIL_PROVIDER_ENABLED=false`.
+- Verify a partial compensation remains visible through `financial_status=partially_compensated` after creating a TENNET dossier.
 
 ## Exit Criteria
 

@@ -17,6 +17,7 @@ from app.models import (
     UberOrderSnapshot,
 )
 from app.models.domain import utc_now
+from app.services.customer_refund_detection_service import classify_transaction
 
 
 @pytest.fixture()
@@ -202,6 +203,56 @@ def test_not_received_and_missing_item_classification(configured_client: TestCli
     assert response.status_code == 200
     disputes = db_session.scalars(select(UberCustomerRefundDispute)).all()
     assert {dispute.dispute_type for dispute in disputes} == {"order_not_received", "missing_item"}
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_type"),
+    [
+        ("Commande non recue", "order_not_received"),
+        ("Commande non reçue", "order_not_received"),
+        ("Order not received", "order_not_received"),
+        ("Article manquant", "missing_item"),
+        ("missing item", "missing_item"),
+        ("mauvaise commande", "incorrect_item"),
+        ("problème qualité", "quality_issue"),
+        ("ajustement negatif erreur de commande", "order_error_adjustment"),
+    ],
+)
+def test_customer_refund_classification_variants(text: str, expected_type: str) -> None:
+    transaction = UberFinancialTransaction(
+        restaurant_id=1,
+        uber_store_id="store-refund",
+        uber_order_id="UBER-CLASSIFICATION",
+        transaction_type="refund",
+        amount="-12.50",
+        currency="EUR",
+        transaction_date=utc_now().date(),
+        raw_payload_json={"description": text, "line_item": text, "notes": text},
+        imported_from="api_reporting",
+    )
+
+    dispute_type, _reason = classify_transaction(transaction)
+
+    assert dispute_type == expected_type
+
+
+def test_unknown_customer_refund_classification_stays_manual_review() -> None:
+    transaction = UberFinancialTransaction(
+        restaurant_id=1,
+        uber_store_id="store-refund",
+        uber_order_id="UBER-UNKNOWN",
+        transaction_type="mystery",
+        amount="-12.50",
+        currency="EUR",
+        transaction_date=utc_now().date(),
+        raw_payload_json={"description": "unclear deduction"},
+        imported_from="api_reporting",
+    )
+
+    dispute_type, reason = classify_transaction(transaction)
+
+    assert dispute_type == "unknown"
+    assert reason == "unknown_reason"
 
 
 def test_unknown_transaction_goes_manual_review(configured_client: TestClient, db_session: Session) -> None:

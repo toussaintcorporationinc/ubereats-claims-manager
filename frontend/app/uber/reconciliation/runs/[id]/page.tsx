@@ -155,6 +155,7 @@ export default function UberReconciliationRunDetailPage() {
                 <th></th>
                 <th>Commande Uber</th>
                 <th>Statut</th>
+                <th>Financier</th>
                 <th>Montant</th>
                 <th>Paye</th>
                 <th>Manquant</th>
@@ -179,6 +180,9 @@ export default function UberReconciliationRunDetailPage() {
                     <td>{result.display_id || result.uber_order_id}</td>
                     <td>
                       <StatusBadge status={result.status} />
+                    </td>
+                    <td>
+                      <StatusBadge status={result.financial_status ?? result.status} />
                     </td>
                     <td>{formatCurrency(result.order_amount, result.currency)}</td>
                     <td>{formatCurrency(result.paid_amount, result.currency)}</td>
