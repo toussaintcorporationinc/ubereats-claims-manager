@@ -24,6 +24,13 @@ Ce document cadre les regles de brouillons email internes, de brouillons Gmail e
 - `customer_refund_missing_item`
 - `customer_refund_order_error_adjustment`
 - `customer_refund_generic`
+- `appeal_generic_refusal`
+- `appeal_missing_evidence_reply`
+- `appeal_order_prepared_before_cancellation`
+- `appeal_order_not_received_delivery_proof`
+- `appeal_missing_item_preparation_proof`
+- `appeal_escalation`
+- `appeal_payment_verification`
 
 Les brouillons sont crees depuis des templates locaux dans `backend/app/templates/emails`.
 
@@ -60,6 +67,21 @@ Regles :
 - seules les preuves existantes et accessibles via le service de stockage sont jointes ;
 - la taille totale des pieces jointes est limitee par `EMAIL_MAX_ATTACHMENT_TOTAL_MB` ;
 - chaque creation cree un `EmailProviderDraft` et un `AuditLog`.
+
+## Appels apres refus V1.1
+
+Un refus Uber cree une action de revue/appel. Il ne cloture pas automatiquement le dossier.
+
+Regles :
+
+- le workflow d'appel est cree depuis un refus de reclamation ou de deduction Uber ;
+- l'analyse de refus est deterministe en V1.1 et n'appelle pas OpenAI ;
+- un brouillon interne d'appel est cree uniquement apres action `owner` ou `manager` ;
+- un brouillon Gmail d'appel peut etre cree ensuite, mais aucun email n'est envoye automatiquement ;
+- l'envoi d'un appel reste une action manuelle et tracee via `mark-sent` ou le workflow Gmail existant ;
+- les tentatives sont limitees par `APPEAL_MAX_ATTEMPTS_BEFORE_MANUAL_REVIEW` et espacees par `APPEAL_MIN_DAYS_BETWEEN_ATTEMPTS` ;
+- `APPEAL_AUTO_SEND_ENABLED=false` par defaut et ne declenche aucun envoi en V1.1 ;
+- un owner peut cloturer ou reouvrir manuellement un workflow.
 
 ## Reponses Gmail inbound V1
 

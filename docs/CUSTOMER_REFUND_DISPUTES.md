@@ -48,6 +48,8 @@ Une preuve manquante bloque la creation du brouillon de contestation. Les preuve
 11. Traiter manuellement la decision Uber dans le detail de la deduction.
 12. Consulter `/recovery` pour suivre le montant detecte, contestable, envoye, recupere, refuse ou en revue manuelle.
 
+Si la decision Uber est un refus, TENNET cree un workflow d'appel dans `/appeals`. Le refus ne cloture pas automatiquement la deduction. Un owner ou manager peut creer un brouillon d'appel, puis un brouillon Gmail si necessaire, sans envoi automatique.
+
 ## Traitement manuel des outcomes
 
 Un `owner` ou `manager` peut creer une `CustomerRefundDisputeReview`.
@@ -93,6 +95,7 @@ TENNET cree un `AuditLog` pour :
 - dispute ignoree.
 - review de decision creee ;
 - statut de deduction ou dossier lie modifie par review.
+- workflow d'appel cree ou mis a jour apres refus.
 
 ## Limites
 

@@ -1482,6 +1482,91 @@ Exports :
 
 Les exports sont reserves a `owner` et `manager`, respectent les restaurants autorises et ne contiennent jamais tokens, secrets, mots de passe, chemins disque bruts ou donnees Gmail sensibles.
 
+## Bulk Evidence Import
+
+Les imports de preuves permettent de stocker, analyser et rattacher en masse des justificatifs existants.
+
+Endpoints :
+
+- `POST /v1/evidence-imports` : upload multi-fichiers.
+- `POST /v1/evidence-imports/zip` : upload ZIP avec extraction controlee.
+- `GET /v1/evidence-imports` : liste les batches visibles.
+- `GET /v1/evidence-imports/{batch_id}` : detail batch.
+- `GET /v1/evidence-imports/{batch_id}/files` : fichiers du batch, filtre optionnel `status`.
+- `POST /v1/evidence-imports/{batch_id}/analyze` : analyse les fichiers avec `provider=fake`, `local_ocr` ou `openai_vision`.
+- `POST /v1/evidence-imports/{batch_id}/bulk-accept-high-confidence` : accepte les candidats fiables selon seuil.
+- `GET /v1/evidence-imported-files/{file_id}` : detail fichier, analyses et candidats.
+- `GET /v1/evidence-imported-files/{file_id}/preview` : telechargement protege du fichier importe.
+- `POST /v1/evidence-imported-files/{file_id}/attach` : rattachement manuel vers commande, tache, deduction ou reconciliation.
+- `POST /v1/evidence-imported-files/{file_id}/ignore` : ignore un fichier avec raison.
+- `POST /v1/evidence-match-candidates/{candidate_id}/accept` : accepte un candidat propose.
+- `POST /v1/evidence-match-candidates/{candidate_id}/reject` : rejette un candidat propose.
+
+`POST /v1/evidence-imports/{batch_id}/analyze` body :
+
+```json
+{
+  "provider": "fake",
+  "limit": 100
+}
+```
+
+`POST /v1/evidence-imported-files/{file_id}/attach` body :
+
+```json
+{
+  "candidate_type": "claim_order",
+  "candidate_id": 123,
+  "evidence_type": "receipt"
+}
+```
+
+Regles :
+
+- `owner` et `manager` uniquement ;
+- aucun rattachement automatique si `AI_EVIDENCE_AUTO_ATTACH_ENABLED=false` ;
+- les chemins ZIP dangereux sont refuses ;
+- OpenAI vision retourne une erreur si `AI_EVIDENCE_ANALYSIS_ENABLED=false` ;
+- chaque analyse, rattachement, rejet ou ignore est audite.
+
+## Persistent Appeals
+
+Les appels persistants evitent qu'un refus Uber cloture automatiquement un dossier.
+
+Endpoints :
+
+- `GET /v1/appeals`
+- `GET /v1/appeals/{workflow_id}`
+- `POST /v1/appeals/recalculate`
+- `POST /v1/appeals/{workflow_id}/analyze-refusal`
+- `POST /v1/appeals/{workflow_id}/create-draft`
+- `POST /v1/appeals/{workflow_id}/create-gmail-draft`
+- `POST /v1/appeals/{workflow_id}/mark-sent`
+- `POST /v1/appeals/{workflow_id}/pause`
+- `POST /v1/appeals/{workflow_id}/manual-close`
+- `POST /v1/appeals/{workflow_id}/reopen`
+
+`POST /v1/appeals/{workflow_id}/create-draft` body :
+
+```json
+{
+  "appeal_type": "evidence_reply"
+}
+```
+
+Regles :
+
+- un `ClaimResponseReview` ou `CustomerRefundDisputeReview` refuse cree un `AppealWorkflow` ;
+- le service analyse le motif et recommande une action ;
+- un brouillon interne peut etre cree depuis template local ;
+- un brouillon Gmail peut etre prepare, sans envoi automatique ;
+- `mark-sent` enregistre uniquement l'envoi manuel deja effectue dans le workflow controle ;
+- cooldown et limite de tentatives evitent les boucles ;
+- `owner` peut cloturer ou reouvrir manuellement ;
+- `staff` ne gere pas les appels.
+
+Le cockpit recovery expose aussi `active_appeals_count`, `appeal_needed_count`, `escalations_needed_count`, `refused_under_appeal_amount` et `manually_closed_amount`.
+
 ## Dashboard
 
 - `GET /v1/dashboard/summary`

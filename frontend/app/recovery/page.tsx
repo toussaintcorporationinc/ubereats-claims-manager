@@ -163,6 +163,9 @@ export default function RecoveryPage() {
             <StatCard label="Taux recuperation" value={formatPercent(summary.totals.recovery_rate)} />
             <StatCard label="Couverture revue" value={formatPercent(summary.totals.review_coverage_rate)} />
             <StatCard label="Revue manuelle" value={summary.totals.manual_review_count} />
+            <StatCard label="Appels actifs" value={summary.totals.active_appeals_count} />
+            <StatCard label="Refus sous appel" value={formatCurrency(summary.totals.refused_under_appeal_amount)} />
+            <StatCard label="Escalades" value={summary.totals.escalations_needed_count} />
           </div>
 
           <div className="grid-two">

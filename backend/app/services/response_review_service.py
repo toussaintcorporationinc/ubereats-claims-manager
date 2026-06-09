@@ -7,6 +7,7 @@ from app.models import ClaimOrder, ClaimResponseReview, EmailAccount, InboundEma
 from app.models.domain import utc_now
 from app.schemas.domain import ClaimResponseReviewCreate
 from app.services.audit import add_audit_log
+from app.services.appeal_workflow_service import sync_claim_response_review
 
 PROTECTED_ORDER_STATUSES = {"payment_confirmed", "closed"}
 REVIEW_STATUS_TRANSITIONS = {
@@ -70,6 +71,7 @@ def create_response_review(
         inbound_message.updated_at = utc_now()
 
     db.flush()
+    sync_claim_response_review(db, order=order, review=review, user=user)
     add_audit_log(
         db,
         entity_type="claim_response_review",

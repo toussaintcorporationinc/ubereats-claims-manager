@@ -1,0 +1,18 @@
+Bonjour,
+
+Nous demandons une escalade du dossier Uber Eats {uber_order_number} pour le restaurant {restaurant_name}.
+
+Montant concerne : {order_amount} {currency}
+Motif du refus indique : {refusal_reason}
+
+Historique TENNET :
+- Nombre de refus enregistres : {refusal_count}
+- Nombre d'appels deja envoyes : {appeal_attempt_count}
+
+Preuves rattachees dans TENNET :
+{evidence_list}
+
+Merci de transmettre ce dossier a un niveau de revue superieur et de communiquer le motif detaille de decision.
+
+Cordialement,
+{signature}

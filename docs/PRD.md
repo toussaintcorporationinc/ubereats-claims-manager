@@ -33,9 +33,11 @@ La V1 pose la base applicative et les premiers objets metier :
 - traitement manuel des reponses Uber pour accepter, refuser, demander des preuves ou confirmer un paiement ;
 - workflow de relances controlees pour dossiers non resolus ;
 - file de demandes de preuves et upload mobile par lien tokenise ;
+- import massif de preuves existantes, analyse controlee et rattachement manuel ;
 - detection et contestation controlee des remboursements clients, chargebacks et ajustements negatifs Uber ;
 - traitement manuel des outcomes de deductions Uber ;
 - cockpit unifie de recuperation d'argent ;
+- appels persistants apres refus Uber ;
 - reporting commercial et exports CSV/XLSX ;
 - journalisation des creations importantes ;
 - authentification et roles utilisateurs ;
@@ -95,17 +97,25 @@ La V1 pose la base applicative et les premiers objets metier :
 42. L'utilisateur peut uploader la preuve depuis la tache ou creer un lien mobile tokenise.
 43. Le lien mobile permet uniquement l'upload de la preuve demandee, expire automatiquement et ne stocke que le hash du token.
 44. Apres upload, TENNET rattache la preuve, complete la tache, audite l'action et relance la validation du dossier.
-45. Un owner ou manager ouvre `/customer-refunds` pour detecter les deductions Uber depuis les transactions financieres importees.
-46. TENNET classe les deductions en commande non recue, article manquant, mauvaise commande, probleme qualite, remboursement client, ajustement negatif ou revue manuelle.
-47. TENNET cree les exigences de preuves selon le type de deduction et, si un dossier existe, les taches de preuves associees.
-48. L'utilisateur cree manuellement un dossier TENNET depuis une deduction eligible.
-49. Une fois les preuves completees, l'utilisateur cree un brouillon interne, puis eventuellement un brouillon Gmail.
-50. Quand Uber repond ou quand une decision est connue, un owner ou manager traite manuellement la deduction : `accepted`, `payment_to_verify`, `payment_confirmed`, `refused`, `evidence_requested`, `information_requested`, `followup_needed`, `ignored` ou `manual_review`.
-51. TENNET conserve un `CustomerRefundDisputeReview`, met a jour le statut de la deduction et du dossier lie si present, puis cree un `AuditLog`.
-52. Un owner ou manager ouvre `/recovery` pour visualiser les pertes detectees, contestables, bloquees par preuve, envoyees, recuperees, refusees et en revue manuelle.
-53. Il ouvre `/recovery/cases` pour filtrer les cas par restaurant, categorie, etape, montant ou preuve requise.
-54. Il ouvre `/recovery/actions` pour traiter la file de travail : preuves, dossiers, brouillons, reponses, relances et revues manuelles.
-55. Aucun email, aucune relance et aucune contestation Uber ne sont envoyes automatiquement.
+45. Un owner ou manager ouvre `/evidence-imports/new` pour importer des preuves existantes en vrac ou via ZIP.
+46. TENNET stocke les fichiers, refuse les chemins ZIP dangereux, analyse les metadonnees et propose des candidats de rattachement.
+47. L'utilisateur accepte ou rejette les candidats vers commande, tache de preuve, deduction Uber ou resultat de reconciliation.
+48. Apres acceptation, TENNET cree le `EvidenceFile`, complete les taches correspondantes si possible, audite l'action et relance la validation.
+49. Un owner ou manager ouvre `/customer-refunds` pour detecter les deductions Uber depuis les transactions financieres importees.
+50. TENNET classe les deductions en commande non recue, article manquant, mauvaise commande, probleme qualite, remboursement client, ajustement negatif ou revue manuelle.
+51. TENNET cree les exigences de preuves selon le type de deduction et, si un dossier existe, les taches de preuves associees.
+52. L'utilisateur cree manuellement un dossier TENNET depuis une deduction eligible.
+53. Une fois les preuves completees, l'utilisateur cree un brouillon interne, puis eventuellement un brouillon Gmail.
+54. Quand Uber repond ou quand une decision est connue, un owner ou manager traite manuellement la deduction : `accepted`, `payment_to_verify`, `payment_confirmed`, `refused`, `evidence_requested`, `information_requested`, `followup_needed`, `ignored` ou `manual_review`.
+55. TENNET conserve un `CustomerRefundDisputeReview`, met a jour le statut de la deduction et du dossier lie si present, puis cree un `AuditLog`.
+56. Si la decision est un refus, TENNET cree ou met a jour un `AppealWorkflow`.
+57. Un owner ou manager ouvre `/appeals`, analyse le refus, cree un brouillon d'appel interne, puis eventuellement un brouillon Gmail.
+58. L'appel est marque envoye seulement apres action humaine ; les tentatives sont limitees, espacees et auditees.
+59. Un owner peut mettre en pause, cloturer manuellement ou reouvrir un workflow d'appel.
+60. Un owner ou manager ouvre `/recovery` pour visualiser les pertes detectees, contestables, bloquees par preuve, envoyees, recuperees, refusees et sous appel.
+61. Il ouvre `/recovery/cases` pour filtrer les cas par restaurant, categorie, etape, montant ou preuve requise.
+62. Il ouvre `/recovery/actions` pour traiter la file de travail : preuves, dossiers, brouillons, reponses, relances, appels et revues manuelles.
+63. Aucun email, aucune relance, aucun appel et aucune contestation Uber ne sont envoyes automatiquement.
 
 ## Modeles metier V1
 
@@ -114,10 +124,18 @@ La V1 pose la base applicative et les premiers objets metier :
 - `EvidenceFile` : fichier de preuve local attache a une commande avec metadonnees, checksum et acces securise ;
 - `EvidenceRequestTask` : demande de preuve manquante, priorisee, auditee et rattachee a une commande ;
 - `EvidenceUploadLink` : lien d'upload mobile tokenise, stocke uniquement sous forme de hash ;
+- `EvidenceImportBatch` : lot d'import massif de preuves ;
+- `EvidenceImportedFile` : fichier importe en vrac, stocke et audite ;
+- `EvidenceAnalysisResult` : resultat d'analyse locale, fake ou provider controle ;
+- `EvidenceMatchCandidate` : proposition de rattachement d'une preuve importee ;
+- `EvidenceAttachmentDecision` : decision humaine d'attachement, rejet ou ignore ;
 - `UberCustomerRefundDispute` : deduction Uber ou remboursement client detecte depuis une transaction financiere importee ;
 - `CustomerRefundEvidenceRequirement` : preuve requise pour contester une deduction client ou ajustement negatif ;
 - `CustomerRefundDisputeReview` : decision humaine sur une deduction Uber, avec montants, statuts avant/apres et trace de revue ;
 - `RecoveryCockpitService` : service d'agregation des pertes, actions, montants et exports du cockpit recuperation ;
+- `AppealWorkflow` : workflow persistant apres refus Uber ;
+- `AppealAttempt` : tentative d'appel avec brouillon interne/provider et statut ;
+- `RefusalAnalysis` : analyse controlee du motif de refus et prochaine action recommandee ;
 - `EmailDraft` : brouillon interne, sans envoi reel ;
 - `EmailAccount` : connexion OAuth Gmail utilisateur, tokens proteges et jamais exposes ;
 - `EmailProviderDraft` : historique des brouillons Gmail crees et envoyes manuellement depuis un brouillon interne ;
