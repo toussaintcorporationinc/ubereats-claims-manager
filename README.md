@@ -27,6 +27,7 @@ Le backend expose maintenant les premiers objets metier :
 - service de validation des dossiers de reclamation ;
 - service de generation de brouillons internes d'email ;
 - upload local securise des fichiers de preuve ;
+- file de demandes de preuves et upload mobile par lien tokenise ;
 - import massif CSV/XLSX des commandes annulees ;
 - creation de vrais brouillons Gmail via OAuth ;
 - envoi manuel approuve de brouillons Gmail, sans automatisation ;
@@ -56,6 +57,11 @@ Les endpoints principaux sont :
 - `GET|POST /v1/orders/{id}/evidence`
 - `POST /v1/orders/{id}/evidence/upload`
 - `GET /v1/evidence/{id}/download`
+- `GET /v1/evidence-tasks`
+- `POST /v1/evidence-tasks/recalculate`
+- `POST /v1/evidence-tasks/{id}/upload`
+- `POST /v1/evidence-tasks/{id}/upload-link`
+- `GET|POST /v1/evidence-upload-links/{token}`
 - `GET|POST /v1/orders/{id}/drafts`
 - `GET /v1/drafts`
 - `GET /v1/email/gmail/status`
@@ -101,6 +107,8 @@ Le service de brouillons cree uniquement des contenus internes a partir des donn
 
 Les preuves peuvent etre ajoutees par upload local securise depuis le detail d'une commande. Les fichiers acceptes sont PDF et images courantes (`jpg`, `png`, `webp`, `heic`, `heif`) avec limite de taille configurable. Les telechargements passent toujours par l'API protegee.
 
+Les preuves manquantes peuvent aussi etre pilotees depuis `/evidence-tasks`. TENNET recalcule les demandes de preuves a partir des dossiers incomplets et des resultats de reconciliation Uber qui exigent des justificatifs. Un owner ou manager peut creer un lien mobile tokenise pour une demande precise. Le token brut est retourne une seule fois, seul son hash est stocke, et l'upload public reste limite a la preuve demandee. Aucun email n'est envoye automatiquement.
+
 Les commandes peuvent aussi etre importees en masse depuis `/imports/new` avec un fichier CSV ou XLSX. Le backend analyse les lignes, detecte erreurs, doublons et restaurants non autorises, puis cree uniquement les lignes valides lors de la confirmation.
 
 Les brouillons internes peuvent etre transformes en brouillons Gmail reels lorsque `EMAIL_PROVIDER_ENABLED=true` et que l'OAuth Gmail est configure. Cette integration utilise les scopes `gmail.compose`, `gmail.send` et `gmail.readonly`, joint les preuves de la commande si demande et n'envoie jamais l'email automatiquement. L'envoi Gmail est possible uniquement apres confirmation manuelle explicite depuis l'application.
@@ -126,6 +134,7 @@ Les imports utilisent `IMPORT_STORAGE_DIR` et `IMPORT_MAX_FILE_SIZE_MB`.
 Gmail reste desactive par defaut avec `EMAIL_PROVIDER_ENABLED=false`. Pour tester la creation, l'envoi manuel et la lecture des reponses Gmail, renseigner `GMAIL_OAUTH_CLIENT_ID`, `GMAIL_OAUTH_CLIENT_SECRET`, `GMAIL_OAUTH_REDIRECT_URI`, `GMAIL_SCOPES`, `DEFAULT_UBER_EATS_SUPPORT_EMAIL`, `EMAIL_MAX_ATTACHMENT_TOTAL_MB`, puis activer `GMAIL_INBOUND_SYNC_ENABLED=true` pour la sync entrante.
 Les delais de relance sont configurables via `FOLLOWUP_1_DELAY_DAYS`, `FOLLOWUP_2_DELAY_DAYS`, `ESCALATION_DELAY_DAYS`, `MANUAL_REVIEW_AFTER_DAYS` et `MAX_FOLLOWUPS_PER_ORDER`. `FOLLOWUP_AUTOMATIC_SEND_ENABLED` reste `false` par defaut et ne declenche aucun envoi dans cette V1.
 Les exports utilisent `EXPORT_MAX_ROWS` pour limiter le volume et `REPORT_DEFAULT_LOOKBACK_DAYS` comme fenetre indicative de reporting.
+Les demandes de preuves utilisent `EVIDENCE_TASK_HIGH_AMOUNT`, `EVIDENCE_TASK_URGENT_AMOUNT`, `EVIDENCE_UPLOAD_LINK_EXPIRY_HOURS` et `EVIDENCE_UPLOAD_LINK_MAX_USES`.
 
 2. Lancer les services :
 

@@ -66,6 +66,15 @@ export type FollowUpTaskStatus =
   | "completed"
   | "skipped"
   | "cancelled";
+export type EvidenceRequestTaskType =
+  | "missing_receipt"
+  | "missing_cancellation_proof"
+  | "missing_preparation_proof"
+  | "missing_waste_photo"
+  | "missing_uber_screenshot"
+  | "evidence_review";
+export type EvidenceRequestTaskStatus = "pending" | "uploaded" | "completed" | "skipped" | "cancelled";
+export type EvidenceRequestPriority = "low" | "normal" | "high" | "urgent";
 export type UberIntegrationStatus = "not_configured" | "pending_approval" | "connected" | "disconnected" | "disabled";
 export type UberReconciliationStatus =
   | "compensated"
@@ -556,6 +565,116 @@ export type FollowUpRecalculateResponse = {
   errors: string[];
 };
 
+export type EvidenceRequestTask = {
+  id: number;
+  order_id: number;
+  reconciliation_result_id: number | null;
+  restaurant_id: number;
+  task_type: EvidenceRequestTaskType;
+  required_evidence_type: EvidenceType;
+  status: EvidenceRequestTaskStatus;
+  priority: EvidenceRequestPriority;
+  title: string;
+  description: string | null;
+  due_at: string | null;
+  assigned_to_user_id: number | null;
+  reason: string;
+  created_by_user_id: number | null;
+  completed_by_user_id: number | null;
+  skipped_by_user_id: number | null;
+  completed_at: string | null;
+  skipped_at: string | null;
+  skip_reason: string | null;
+  last_upload_evidence_id: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EvidenceRequestTaskSummary = {
+  id: number;
+  order_id: number;
+  restaurant_id: number;
+  restaurant_name: string;
+  uber_order_number: string;
+  order_amount: MoneyValue;
+  currency: string;
+  claim_status: ClaimOrderStatus;
+  task_type: EvidenceRequestTaskType;
+  required_evidence_type: EvidenceType;
+  status: EvidenceRequestTaskStatus;
+  priority: EvidenceRequestPriority;
+  due_at: string | null;
+  title: string;
+  description: string | null;
+  reason: string;
+  reconciliation_result_id: number | null;
+  last_upload_evidence_id: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EvidenceRequestTasksResponse = {
+  tasks: EvidenceRequestTaskSummary[];
+  limit: number;
+  offset: number;
+};
+
+export type EvidenceRequestRecalculatePayload = {
+  restaurant_id?: number | null;
+  order_id?: number | null;
+  dry_run?: boolean;
+};
+
+export type EvidenceRequestRecalculateResponse = {
+  created_tasks: number;
+  existing_tasks: number;
+  completed_tasks: number;
+  skipped_orders: number;
+  errors: string[];
+};
+
+export type EvidenceUploadLink = {
+  id: number;
+  task_id: number;
+  expires_at: string;
+  max_uses: number;
+  use_count: number;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type EvidenceUploadLinkCreateResponse = EvidenceUploadLink & {
+  token: string;
+  upload_url: string;
+};
+
+export type PublicEvidenceUploadLink = {
+  id: number;
+  task_id: number;
+  order_id: number;
+  restaurant_name: string;
+  uber_order_number: string;
+  task_type: EvidenceRequestTaskType;
+  required_evidence_type: EvidenceType;
+  status: EvidenceRequestTaskStatus;
+  priority: EvidenceRequestPriority;
+  due_at: string | null;
+  title: string;
+  description: string | null;
+  reason: string;
+  expires_at: string;
+  max_uses: number;
+  use_count: number;
+};
+
+export type EvidenceTaskUploadResponse = {
+  task: EvidenceRequestTask;
+  evidence_file: EvidenceFile;
+  validation: ClaimValidationResponse;
+};
+
 export type UberStatus = {
   provider: "uber_eats";
   status: UberIntegrationStatus;
@@ -972,6 +1091,26 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return payload as T;
 }
 
+async function publicRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const isFormData = init.body instanceof FormData;
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
+      ...(init.headers ?? {}),
+    },
+    cache: "no-store",
+  });
+  const contentType = response.headers.get("content-type") ?? "";
+  const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+
+  if (!response.ok) {
+    throw new ApiError(response.status, payload);
+  }
+
+  return payload as T;
+}
+
 function formatApiError(detail: unknown): string {
   if (typeof detail === "string") {
     return detail;
@@ -1231,6 +1370,55 @@ export const api = {
     postJson<FollowUpTask, { skip_reason: string }>(`/v1/followups/${taskId}/skip`, payload),
   completeFollowupTask: (taskId: number) =>
     postJson<FollowUpTask, Record<string, never>>(`/v1/followups/${taskId}/complete`, {}),
+  getEvidenceTasks: (
+    filters: {
+      restaurant_id?: number;
+      status?: EvidenceRequestTaskStatus | "";
+      required_evidence_type?: EvidenceType | "";
+      priority?: EvidenceRequestPriority | "";
+      assigned_to_me?: boolean;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => request<EvidenceRequestTasksResponse>(`/v1/evidence-tasks${buildQuery(filters)}`),
+  getEvidenceTask: (taskId: number) => request<EvidenceRequestTask>(`/v1/evidence-tasks/${taskId}`),
+  recalculateEvidenceTasks: (payload: EvidenceRequestRecalculatePayload = {}) =>
+    postJson<EvidenceRequestRecalculateResponse, EvidenceRequestRecalculatePayload>(
+      "/v1/evidence-tasks/recalculate",
+      payload,
+    ),
+  uploadEvidenceTask: (taskId: number, file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return request<EvidenceTaskUploadResponse>(`/v1/evidence-tasks/${taskId}/upload`, {
+      method: "POST",
+      body: formData,
+    });
+  },
+  skipEvidenceTask: (taskId: number, payload: { skip_reason: string }) =>
+    postJson<EvidenceRequestTask, { skip_reason: string }>(`/v1/evidence-tasks/${taskId}/skip`, payload),
+  completeEvidenceTask: (taskId: number) =>
+    postJson<EvidenceRequestTask, Record<string, never>>(`/v1/evidence-tasks/${taskId}/complete`, {}),
+  createEvidenceUploadLink: (
+    taskId: number,
+    payload: { expires_in_hours?: number | null; max_uses?: number | null } = {},
+  ) =>
+    postJson<EvidenceUploadLinkCreateResponse, { expires_in_hours?: number | null; max_uses?: number | null }>(
+      `/v1/evidence-tasks/${taskId}/upload-link`,
+      payload,
+    ),
+  getPublicEvidenceUploadLink: (token: string) =>
+    publicRequest<PublicEvidenceUploadLink>(`/v1/evidence-upload-links/${encodeURIComponent(token)}`),
+  uploadPublicEvidenceLink: (token: string, file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return publicRequest<EvidenceTaskUploadResponse>(`/v1/evidence-upload-links/${encodeURIComponent(token)}/upload`, {
+      method: "POST",
+      body: formData,
+    });
+  },
+  revokeEvidenceUploadLink: (linkId: number) =>
+    postJson<EvidenceUploadLink, Record<string, never>>(`/v1/evidence-upload-links/${linkId}/revoke`, {}),
   getUberStatus: () => request<UberStatus>("/v1/uber/status"),
   getUberStoreMappings: () => request<UberStoreMapping[]>("/v1/uber/store-mappings"),
   createUberStoreMapping: (payload: UberStoreMappingCreatePayload) =>

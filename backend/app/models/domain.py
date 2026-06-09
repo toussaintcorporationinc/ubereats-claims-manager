@@ -97,6 +97,16 @@ FOLLOWUP_TASK_STATUSES = (
     "skipped",
     "cancelled",
 )
+EVIDENCE_REQUEST_TASK_TYPES = (
+    "missing_receipt",
+    "missing_cancellation_proof",
+    "missing_preparation_proof",
+    "missing_waste_photo",
+    "missing_uber_screenshot",
+    "evidence_review",
+)
+EVIDENCE_REQUEST_TASK_STATUSES = ("pending", "uploaded", "completed", "skipped", "cancelled")
+EVIDENCE_REQUEST_PRIORITIES = ("low", "normal", "high", "urgent")
 UBER_INTEGRATION_PROVIDERS = ("uber_eats",)
 UBER_INTEGRATION_STATUSES = ("not_configured", "pending_approval", "connected", "disconnected", "disabled")
 UBER_SNAPSHOT_SOURCES = ("api_orders", "api_reporting", "manager_export")
@@ -189,6 +199,7 @@ class Restaurant(TimestampMixin, Base):
     uber_financial_transactions: Mapped[list["UberFinancialTransaction"]] = relationship(back_populates="restaurant")
     uber_reconciliation_results: Mapped[list["UberReconciliationResult"]] = relationship(back_populates="restaurant")
     uber_reconciliation_runs: Mapped[list["UberReconciliationRun"]] = relationship(back_populates="restaurant")
+    evidence_request_tasks: Mapped[list["EvidenceRequestTask"]] = relationship(back_populates="restaurant")
 
 
 class ClaimOrder(TimestampMixin, Base):
@@ -229,6 +240,7 @@ class ClaimOrder(TimestampMixin, Base):
     inbound_email_messages: Mapped[list["InboundEmailMessage"]] = relationship(back_populates="order")
     response_reviews: Mapped[list["ClaimResponseReview"]] = relationship(back_populates="order")
     followup_tasks: Mapped[list["FollowUpTask"]] = relationship(back_populates="order")
+    evidence_request_tasks: Mapped[list["EvidenceRequestTask"]] = relationship(back_populates="order")
 
 
 class EvidenceFile(Base):
@@ -752,6 +764,91 @@ class UberReconciliationResult(TimestampMixin, Base):
     restaurant: Mapped[Restaurant] = relationship(back_populates="uber_reconciliation_results")
     claim_order: Mapped[ClaimOrder | None] = relationship()
     matched_snapshot: Mapped[UberOrderSnapshot | None] = relationship()
+    evidence_request_tasks: Mapped[list["EvidenceRequestTask"]] = relationship(back_populates="reconciliation_result")
+
+
+class EvidenceRequestTask(TimestampMixin, Base):
+    __tablename__ = "evidence_request_tasks"
+    __table_args__ = (
+        CheckConstraint(
+            check_in_constraint("task_type", EVIDENCE_REQUEST_TASK_TYPES),
+            name="ck_evidence_request_tasks_task_type",
+        ),
+        CheckConstraint(
+            check_in_constraint("required_evidence_type", EVIDENCE_TYPES),
+            name="ck_evidence_request_tasks_required_type",
+        ),
+        CheckConstraint(
+            check_in_constraint("status", EVIDENCE_REQUEST_TASK_STATUSES),
+            name="ck_evidence_request_tasks_status",
+        ),
+        CheckConstraint(
+            check_in_constraint("priority", EVIDENCE_REQUEST_PRIORITIES),
+            name="ck_evidence_request_tasks_priority",
+        ),
+        Index("ix_evidence_request_tasks_order_id", "order_id"),
+        Index("ix_evidence_request_tasks_restaurant_id", "restaurant_id"),
+        Index("ix_evidence_request_tasks_status", "status"),
+        Index("ix_evidence_request_tasks_priority", "priority"),
+        Index("ix_evidence_request_tasks_task_type", "task_type"),
+        Index("ix_evidence_request_tasks_required_type", "required_evidence_type"),
+        Index("ix_evidence_request_tasks_reconciliation_result_id", "reconciliation_result_id"),
+        Index("ix_evidence_request_tasks_due_at", "due_at"),
+        Index("ix_evidence_request_tasks_assigned_to_user_id", "assigned_to_user_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    order_id: Mapped[int] = mapped_column(ForeignKey("claim_orders.id"), nullable=False)
+    reconciliation_result_id: Mapped[int | None] = mapped_column(ForeignKey("uber_reconciliation_results.id"))
+    restaurant_id: Mapped[int] = mapped_column(ForeignKey("restaurants.id"), nullable=False)
+    task_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    required_evidence_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
+    priority: Mapped[str] = mapped_column(String(20), nullable=False, default="normal")
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    assigned_to_user_id: Mapped[int | None] = mapped_column(Integer)
+    reason: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    completed_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    skipped_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    skipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    skip_reason: Mapped[str | None] = mapped_column(Text)
+    last_upload_evidence_id: Mapped[int | None] = mapped_column(ForeignKey("evidence_files.id"))
+
+    order: Mapped[ClaimOrder] = relationship(back_populates="evidence_request_tasks")
+    restaurant: Mapped[Restaurant] = relationship(back_populates="evidence_request_tasks")
+    reconciliation_result: Mapped[UberReconciliationResult | None] = relationship(
+        back_populates="evidence_request_tasks"
+    )
+    last_upload_evidence: Mapped[EvidenceFile | None] = relationship(foreign_keys=[last_upload_evidence_id])
+    upload_links: Mapped[list["EvidenceUploadLink"]] = relationship(
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+
+
+class EvidenceUploadLink(TimestampMixin, Base):
+    __tablename__ = "evidence_upload_links"
+    __table_args__ = (
+        Index("ix_evidence_upload_links_task_id", "task_id"),
+        Index("ix_evidence_upload_links_token_hash", "token_hash", unique=True),
+        Index("ix_evidence_upload_links_expires_at", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("evidence_request_tasks.id"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    max_uses: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    use_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    task: Mapped[EvidenceRequestTask] = relationship(back_populates="upload_links")
 
 
 class UberReportingImportBatch(TimestampMixin, Base):

@@ -13,6 +13,7 @@ const navigation = [
   { href: "/orders", label: "Commandes" },
   { href: "/imports", label: "Imports" },
   { href: "/drafts", label: "Brouillons" },
+  { href: "/evidence-tasks", label: "Preuves" },
   { href: "/followups", label: "Relances", ownerOrManagerOnly: true },
   { href: "/reports", label: "Rapports", ownerOrManagerOnly: true },
   { href: "/uber", label: "Uber", ownerOrManagerOnly: true },
@@ -27,7 +28,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { user, loading, logout } = useAuth();
-  const isPublicPath = publicPaths.has(pathname);
+  const isPublicPath = publicPaths.has(pathname) || pathname.startsWith("/evidence-upload/");
 
   useEffect(() => {
     if (!loading && !user && !isPublicPath) {

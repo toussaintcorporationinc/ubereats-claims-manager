@@ -311,6 +311,176 @@ Regles :
 
 Endpoint protege. La reponse retourne le fichier si l'utilisateur a acces au restaurant de la commande.
 
+## Evidence request tasks
+
+Les demandes de preuves structurent les justificatifs manquants avant validation ou apres reconciliation Uber. Elles ne creent aucun email et ne declenchent aucun envoi.
+
+Endpoints :
+
+- `POST /v1/evidence-tasks/recalculate`
+- `GET /v1/evidence-tasks`
+- `GET /v1/evidence-tasks/{task_id}`
+- `POST /v1/evidence-tasks/{task_id}/upload`
+- `POST /v1/evidence-tasks/{task_id}/skip`
+- `POST /v1/evidence-tasks/{task_id}/complete`
+- `POST /v1/evidence-tasks/{task_id}/upload-link`
+- `GET /v1/evidence-upload-links/{token}`
+- `POST /v1/evidence-upload-links/{token}/upload`
+- `POST /v1/evidence-upload-links/{id}/revoke`
+
+Types de preuves geres :
+
+- `receipt`
+- `cancellation_proof`
+- `preparation_proof`
+- `waste_photo`
+- `uber_screenshot`
+- `other`
+
+Statuts :
+
+- `pending`
+- `uploaded`
+- `completed`
+- `skipped`
+- `cancelled`
+
+Priorites :
+
+- `low`
+- `normal`
+- `high`
+- `urgent`
+
+### Recalculer les demandes
+
+`POST /v1/evidence-tasks/recalculate`
+
+Body optionnel :
+
+```json
+{
+  "restaurant_id": 123,
+  "order_id": 456,
+  "dry_run": false
+}
+```
+
+Retour :
+
+```json
+{
+  "created_tasks": 2,
+  "existing_tasks": 0,
+  "completed_tasks": 0,
+  "skipped_orders": 1,
+  "errors": []
+}
+```
+
+Regles :
+
+- `owner` peut recalculer tous les restaurants ;
+- `manager` peut recalculer uniquement ses restaurants assignes ;
+- `staff` ne peut pas recalculer ;
+- les statuts finaux `accepted`, `payment_confirmed`, `refused`, `closed` sont ignores ;
+- TENNET cree des taches pour `cancellation_proof` et `preparation_proof` ou `waste_photo` quand elles bloquent la validation ;
+- les resultats Uber reconciliation avec `evidence_required=true` alimentent la priorite si un `ClaimOrder` existe ;
+- aucune tache active en doublon n'est creee pour la meme commande et le meme type de preuve.
+
+### Lister les demandes
+
+`GET /v1/evidence-tasks`
+
+Query params :
+
+- `restaurant_id`
+- `status`
+- `required_evidence_type`
+- `priority`
+- `assigned_to_me`
+- `limit`
+- `offset`
+
+`owner` voit tout. `manager` et `staff` voient uniquement les restaurants assignes.
+
+### Upload depuis une demande protegee
+
+`POST /v1/evidence-tasks/{task_id}/upload`
+
+Content-Type : `multipart/form-data`
+
+Champs :
+
+- `file`
+
+Retour :
+
+```json
+{
+  "task": {
+    "id": 1,
+    "order_id": 123,
+    "restaurant_id": 12,
+    "task_type": "missing_cancellation_proof",
+    "required_evidence_type": "cancellation_proof",
+    "title": "Preuve d'annulation requise",
+    "status": "completed"
+  },
+  "evidence_file": {
+    "id": 10,
+    "order_id": 123,
+    "evidence_type": "cancellation_proof",
+    "checksum_sha256": "..."
+  },
+  "validation": {
+    "order_id": 123,
+    "is_complete": false,
+    "missing_items": ["preparation_or_waste_proof"],
+    "blocking_reasons": ["missing_preparation_or_waste_proof"]
+  }
+}
+```
+
+L'upload utilise les memes controles que `POST /v1/orders/{id}/evidence/upload`, marque la tache comme `completed`, cree un `AuditLog` et relance la validation du dossier.
+
+### Lien mobile tokenise
+
+`POST /v1/evidence-tasks/{task_id}/upload-link`
+
+Body optionnel :
+
+```json
+{
+  "expires_in_hours": 48,
+  "max_uses": 3
+}
+```
+
+Retour :
+
+```json
+{
+  "id": 5,
+  "task_id": 1,
+  "expires_at": "2026-06-12T10:00:00Z",
+  "max_uses": 3,
+  "use_count": 0,
+  "token": "raw-token-returned-once",
+  "upload_url": "https://app.example.com/evidence-upload/raw-token-returned-once"
+}
+```
+
+Regles :
+
+- seuls `owner` et `manager` peuvent creer ou revoquer un lien ;
+- le token brut n'est jamais stocke, seul `token_hash` est conserve ;
+- le token brut est retourne uniquement a la creation ;
+- le lien public est limite par expiration, nombre d'usages et statut de la tache ;
+- l'upload public n'exige pas de JWT mais ne peut ajouter que le type de preuve demande ;
+- un upload public cree `EvidenceFile`, complete la tache, audite l'action et relance la validation ;
+- `POST /v1/evidence-upload-links/{id}/revoke` revoque un lien sans supprimer l'historique.
+
 ## Imports commandes
 
 - `POST /v1/imports/orders/preview`

@@ -31,6 +31,16 @@ EvidenceType = Literal[
     "uber_screenshot",
     "other",
 ]
+EvidenceRequestTaskType = Literal[
+    "missing_receipt",
+    "missing_cancellation_proof",
+    "missing_preparation_proof",
+    "missing_waste_photo",
+    "missing_uber_screenshot",
+    "evidence_review",
+]
+EvidenceRequestTaskStatus = Literal["pending", "uploaded", "completed", "skipped", "cancelled"]
+EvidenceRequestPriority = Literal["low", "normal", "high", "urgent"]
 
 EmailDraftType = Literal["initial_claim", "followup_1", "followup_2", "escalation", "proof_reply"]
 EmailDraftStatus = Literal["created", "draft", "ready", "archived"]
@@ -1046,4 +1056,127 @@ class UberReconciliationBulkCreateResponse(BaseModel):
 
 class UberReconciliationIgnoreRequest(BaseModel):
     reason: str = Field(min_length=1)
+
+
+class EvidenceRequestTaskRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    order_id: int
+    reconciliation_result_id: int | None
+    restaurant_id: int
+    task_type: EvidenceRequestTaskType
+    required_evidence_type: EvidenceType
+    status: EvidenceRequestTaskStatus
+    priority: EvidenceRequestPriority
+    title: str
+    description: str | None
+    due_at: datetime | None
+    assigned_to_user_id: int | None
+    reason: str
+    created_by_user_id: int | None
+    completed_by_user_id: int | None
+    skipped_by_user_id: int | None
+    completed_at: datetime | None
+    skipped_at: datetime | None
+    skip_reason: str | None
+    last_upload_evidence_id: int | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class EvidenceRequestTaskSummary(BaseModel):
+    id: int
+    order_id: int
+    restaurant_id: int
+    restaurant_name: str
+    uber_order_number: str
+    order_amount: Decimal | None
+    currency: str
+    claim_status: ClaimOrderStatus
+    task_type: EvidenceRequestTaskType
+    required_evidence_type: EvidenceType
+    status: EvidenceRequestTaskStatus
+    priority: EvidenceRequestPriority
+    due_at: datetime | None
+    title: str
+    description: str | None
+    reason: str
+    reconciliation_result_id: int | None
+    last_upload_evidence_id: int | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class EvidenceRequestTasksResponse(BaseModel):
+    tasks: list[EvidenceRequestTaskSummary]
+    limit: int
+    offset: int
+
+
+class EvidenceRequestRecalculateRequest(BaseModel):
+    restaurant_id: int | None = None
+    order_id: int | None = None
+    dry_run: bool = False
+
+
+class EvidenceRequestRecalculateResponse(BaseModel):
+    created_tasks: int
+    existing_tasks: int
+    completed_tasks: int
+    skipped_orders: int
+    errors: list[str]
+
+
+class EvidenceRequestSkipRequest(BaseModel):
+    skip_reason: str = Field(min_length=1)
+
+
+class EvidenceUploadLinkCreateRequest(BaseModel):
+    expires_in_hours: int | None = Field(default=None, ge=1, le=24 * 30)
+    max_uses: int | None = Field(default=None, ge=1, le=20)
+
+
+class EvidenceUploadLinkRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    task_id: int
+    expires_at: datetime
+    max_uses: int
+    use_count: int
+    last_used_at: datetime | None
+    revoked_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class EvidenceUploadLinkCreateResponse(EvidenceUploadLinkRead):
+    token: str
+    upload_url: str
+
+
+class PublicEvidenceUploadLinkRead(BaseModel):
+    id: int
+    task_id: int
+    order_id: int
+    restaurant_name: str
+    uber_order_number: str
+    task_type: EvidenceRequestTaskType
+    required_evidence_type: EvidenceType
+    status: EvidenceRequestTaskStatus
+    priority: EvidenceRequestPriority
+    due_at: datetime | None
+    title: str
+    description: str | None
+    reason: str
+    expires_at: datetime
+    max_uses: int
+    use_count: int
+
+
+class EvidenceTaskUploadResponse(BaseModel):
+    task: EvidenceRequestTaskRead
+    evidence_file: EvidenceFileRead
+    validation: ClaimValidationResponse
 

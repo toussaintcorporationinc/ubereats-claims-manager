@@ -32,6 +32,7 @@ La V1 pose la base applicative et les premiers objets metier :
 - lecture et rattachement des reponses Gmail entrantes ;
 - traitement manuel des reponses Uber pour accepter, refuser, demander des preuves ou confirmer un paiement ;
 - workflow de relances controlees pour dossiers non resolus ;
+- file de demandes de preuves et upload mobile par lien tokenise ;
 - reporting commercial et exports CSV/XLSX ;
 - journalisation des creations importantes ;
 - authentification et roles utilisateurs ;
@@ -86,12 +87,19 @@ La V1 pose la base applicative et les premiers objets metier :
 37. TENNET cree des snapshots commandes et transactions financieres uniquement apres confirmation.
 38. TENNET rapproche commandes annulees et transactions financieres pour detecter les commandes non compensees.
 39. Un owner ou manager cree un dossier TENNET depuis un resultat non compense, puis suit le workflow de preuves et validation existant.
+40. Un owner ou manager ouvre `/evidence-tasks` et recalcule les preuves manquantes.
+41. TENNET cree une demande par preuve bloquante manquante, sans inventer de justificatif.
+42. L'utilisateur peut uploader la preuve depuis la tache ou creer un lien mobile tokenise.
+43. Le lien mobile permet uniquement l'upload de la preuve demandee, expire automatiquement et ne stocke que le hash du token.
+44. Apres upload, TENNET rattache la preuve, complete la tache, audite l'action et relance la validation du dossier.
 
 ## Modeles metier V1
 
 - `Restaurant` : etablissement, email expediteur et identifiant marchand Uber ;
 - `ClaimOrder` : commande annulee apres preparation, montant reclame, statut et resultat ;
 - `EvidenceFile` : fichier de preuve local attache a une commande avec metadonnees, checksum et acces securise ;
+- `EvidenceRequestTask` : demande de preuve manquante, priorisee, auditee et rattachee a une commande ;
+- `EvidenceUploadLink` : lien d'upload mobile tokenise, stocke uniquement sous forme de hash ;
 - `EmailDraft` : brouillon interne, sans envoi reel ;
 - `EmailAccount` : connexion OAuth Gmail utilisateur, tokens proteges et jamais exposes ;
 - `EmailProviderDraft` : historique des brouillons Gmail crees et envoyes manuellement depuis un brouillon interne ;

@@ -69,6 +69,26 @@ Regles appliquees :
 - le chemin disque absolu n'est pas expose par l'API ;
 - les telechargements passent par `GET /v1/evidence/{id}/download`.
 
+## Demandes de preuves et liens mobiles
+
+Les demandes de preuves permettent de collecter les justificatifs manquants sans exposer le reste de l'application.
+
+Regles appliquees :
+
+- `owner` peut recalculer et gerer les demandes de preuves de tous les restaurants ;
+- `manager` peut recalculer et gerer les demandes de ses restaurants assignes ;
+- `staff` peut consulter et uploader les preuves des restaurants assignes, mais ne peut pas creer de lien mobile, ignorer ou completer manuellement une demande ;
+- les liens mobiles sont crees uniquement par `owner` ou `manager` ;
+- le token brut est retourne une seule fois a la creation ;
+- seul un SHA256 du token est stocke en base ;
+- un lien expire via `EVIDENCE_UPLOAD_LINK_EXPIRY_HOURS` ;
+- un lien limite le nombre d'usages via `EVIDENCE_UPLOAD_LINK_MAX_USES` ;
+- un lien revoque ou expire ne peut plus uploader ;
+- l'upload public ajoute uniquement le type de preuve demande par la tache ;
+- aucun chemin disque brut n'est expose sur la page publique ;
+- chaque creation de tache, creation de lien, revocation, upload et completion est auditee ;
+- la page publique n'expose jamais de token Gmail, JWT, secret, mot de passe ou donnees d'un autre dossier.
+
 ## Imports CSV/XLSX
 
 Les imports de commandes sont proteges par JWT et ne doivent contenir aucune donnee client reelle dans le code ou les exemples.

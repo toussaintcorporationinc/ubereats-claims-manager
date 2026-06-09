@@ -35,6 +35,10 @@ L'analyse ne cree jamais de `ClaimOrder` automatiquement. L'utilisateur doit cre
 
 Les resultats `compensated`, `already_claimed`, `ignored` et `manual_review` ne sont pas eligibles en V1.1.
 
+Quand un resultat eligible cree un `ClaimOrder` avec `evidence_required=true`, TENNET peut ensuite creer des `EvidenceRequestTask` via `/v1/evidence-tasks/recalculate`.
+
+Ces taches demandent les preuves bloquantes manquantes et renvoient le dossier dans le workflow standard de validation. Aucune preuve n'est inventee depuis les donnees Uber et aucune reclamation n'est envoyee automatiquement.
+
 ## Limites
 
 Les exports Uber peuvent changer de format. TENNET ne doit jamais inventer un montant, un paiement ou une preuve. En cas de doute, le resultat reste en revue manuelle.
