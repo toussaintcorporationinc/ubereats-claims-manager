@@ -1,11 +1,13 @@
 from io import BytesIO
+from datetime import date, datetime
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import ClaimOrder, UberFinancialTransaction, UberOrderSnapshot, UberReconciliationResult
+from app.models import AuditLog, ClaimOrder, UberFinancialTransaction, UberOrderSnapshot, UberReconciliationResult, UberReconciliationRun
 
 
 def auth_headers(token: str) -> dict[str, str]:
@@ -107,6 +109,59 @@ def xlsx_bytes(headers: list[str], rows: list[list[object]]) -> BytesIO:
     workbook.save(output)
     output.seek(0)
     return output
+
+
+def add_snapshot(
+    db_session: Session,
+    restaurant_id: int,
+    store_id: str,
+    order_id: str,
+    state: str,
+    amount: str | None,
+    *,
+    display_id: str | None = None,
+) -> UberOrderSnapshot:
+    snapshot = UberOrderSnapshot(
+        restaurant_id=restaurant_id,
+        uber_store_id=store_id,
+        uber_order_id=order_id,
+        display_id=display_id,
+        current_state=state,
+        placed_at=datetime(2026, 6, 1, 20, 15),
+        canceled_at=datetime(2026, 6, 1, 20, 35) if state.lower() in {"cancelled", "canceled"} else None,
+        order_total_amount=Decimal(amount) if amount is not None else None,
+        currency="EUR",
+        raw_payload_json={"source": "test"},
+        imported_from="manager_export",
+    )
+    db_session.add(snapshot)
+    db_session.flush()
+    return snapshot
+
+
+def add_transaction(
+    db_session: Session,
+    restaurant_id: int,
+    store_id: str,
+    order_id: str,
+    transaction_type: str,
+    amount: str,
+) -> UberFinancialTransaction:
+    transaction = UberFinancialTransaction(
+        restaurant_id=restaurant_id,
+        uber_store_id=store_id,
+        uber_order_id=order_id,
+        transaction_type=transaction_type,
+        amount=Decimal(amount),
+        currency="EUR",
+        transaction_date=date(2026, 6, 2),
+        payout_reference="PAYOUT-TEST",
+        raw_payload_json={"source": "test"},
+        imported_from="manager_export",
+    )
+    db_session.add(transaction)
+    db_session.flush()
+    return transaction
 
 
 def test_health_still_public(unauthenticated_client: TestClient) -> None:
@@ -216,8 +271,7 @@ def test_create_claim_order_from_non_compensated_result_without_duplicate(
     )
 
     assert first.status_code == 201
-    assert second.status_code == 201
-    assert first.json()["id"] == second.json()["id"]
+    assert second.status_code == 409
     assert (
         db_session.scalar(
             select(ClaimOrder).where(
@@ -227,6 +281,132 @@ def test_create_claim_order_from_non_compensated_result_without_duplicate(
         )
         is not None
     )
+
+
+def test_owner_can_launch_reconciliation_and_default_run_window(
+    unauthenticated_client: TestClient,
+    db_session: Session,
+) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Restaurant Uber Run")
+    create_store_mapping(unauthenticated_client, owner_token, restaurant["id"], "store-run")
+    upload_report(
+        unauthenticated_client,
+        owner_token,
+        "\n".join(
+            [
+                "store_id,order_id,status,amount,currency",
+                "store-run,UBER-RUN-1,cancelled,24.90,EUR",
+            ]
+        ),
+    )
+
+    response = unauthenticated_client.post("/v1/uber/reconciliation/run", headers=auth_headers(owner_token))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "completed"
+    assert payload["total_orders_analyzed"] == 1
+    assert payload["not_compensated_count"] == 1
+    run = db_session.get(UberReconciliationRun, payload["run_id"])
+    assert run is not None
+    assert (run.date_to - run.date_from).days == 180
+
+
+def test_manager_permissions_and_staff_refused_for_reconciliation(unauthenticated_client: TestClient) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Restaurant Uber Manager")
+    other_restaurant = create_restaurant(unauthenticated_client, owner_token, "Restaurant Uber Other")
+    manager = create_user(unauthenticated_client, owner_token, "manager@example.com", "manager")
+    staff = create_user(unauthenticated_client, owner_token, "staff@example.com", "staff")
+    assign_restaurant(unauthenticated_client, owner_token, manager["id"], restaurant["id"])
+    manager_token = login(unauthenticated_client, manager["email"])
+    staff_token = login(unauthenticated_client, staff["email"])
+
+    assigned = unauthenticated_client.post(
+        "/v1/uber/reconciliation/run",
+        json={"restaurant_id": restaurant["id"]},
+        headers=auth_headers(manager_token),
+    )
+    denied = unauthenticated_client.post(
+        "/v1/uber/reconciliation/run",
+        json={"restaurant_id": other_restaurant["id"]},
+        headers=auth_headers(manager_token),
+    )
+    staff_denied = unauthenticated_client.post("/v1/uber/reconciliation/run", headers=auth_headers(staff_token))
+
+    assert assigned.status_code == 200
+    assert denied.status_code == 403
+    assert staff_denied.status_code == 403
+
+
+def test_reconciliation_ignores_non_cancelled_and_manual_review_cases(
+    unauthenticated_client: TestClient,
+    db_session: Session,
+) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Restaurant Uber Manual")
+    create_store_mapping(unauthenticated_client, owner_token, restaurant["id"], "store-manual")
+    add_snapshot(db_session, restaurant["id"], "store-manual", "UBER-OK", "completed", "20.00")
+    add_snapshot(db_session, restaurant["id"], "store-manual", "UBER-MISSING", "cancelled", None)
+    add_snapshot(db_session, restaurant["id"], "store-manual", "UBER-UNKNOWN", "cancelled", "20.00")
+    add_transaction(db_session, restaurant["id"], "store-manual", "UBER-UNKNOWN", "mystery_credit", "20.00")
+
+    response = unauthenticated_client.post("/v1/uber/reconciliation/run", headers=auth_headers(owner_token))
+
+    assert response.status_code == 200
+    results = {
+        result.uber_order_id: result
+        for result in db_session.scalars(select(UberReconciliationResult)).all()
+    }
+    assert "UBER-OK" not in results
+    assert results["UBER-MISSING"].status == "manual_review"
+    assert results["UBER-MISSING"].reason == "missing_order_amount"
+    assert results["UBER-UNKNOWN"].status == "manual_review"
+    assert results["UBER-UNKNOWN"].reason == "transaction_conflict"
+
+
+def test_reconciliation_detail_bulk_ignore_and_audit_logs(
+    unauthenticated_client: TestClient,
+    db_session: Session,
+) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Restaurant Uber Detail")
+    create_store_mapping(unauthenticated_client, owner_token, restaurant["id"], "store-detail")
+    add_snapshot(db_session, restaurant["id"], "store-detail", "UBER-DETAIL-1", "cancelled", "20.00")
+    add_transaction(db_session, restaurant["id"], "store-detail", "UBER-DETAIL-1", "compensation", "20.00")
+    add_snapshot(db_session, restaurant["id"], "store-detail", "UBER-DETAIL-2", "cancelled", "30.00")
+    unauthenticated_client.post("/v1/uber/reconciliation/run", headers=auth_headers(owner_token))
+    paid = db_session.scalar(select(UberReconciliationResult).where(UberReconciliationResult.uber_order_id == "UBER-DETAIL-1"))
+    missing = db_session.scalar(select(UberReconciliationResult).where(UberReconciliationResult.uber_order_id == "UBER-DETAIL-2"))
+    assert paid is not None and missing is not None
+
+    detail = unauthenticated_client.get(f"/v1/uber/reconciliation/results/{paid.id}", headers=auth_headers(owner_token))
+    compensated_claim = unauthenticated_client.post(
+        f"/v1/uber/reconciliation/results/{paid.id}/claim-order",
+        headers=auth_headers(owner_token),
+    )
+    bulk = unauthenticated_client.post(
+        "/v1/uber/reconciliation/results/bulk-create-claim-orders",
+        json={"result_ids": [paid.id, missing.id]},
+        headers=auth_headers(owner_token),
+    )
+    ignore = unauthenticated_client.post(
+        f"/v1/uber/reconciliation/results/{paid.id}/ignore",
+        json={"reason": "Montant considere regle apres verification manuelle"},
+        headers=auth_headers(owner_token),
+    )
+
+    assert detail.status_code == 200
+    assert detail.json()["snapshot"]["uber_order_id"] == "UBER-DETAIL-1"
+    assert detail.json()["transactions"]
+    assert compensated_claim.status_code == 400
+    assert bulk.status_code == 200
+    assert bulk.json()["created_count"] == 1
+    assert bulk.json()["skipped_count"] == 1
+    assert ignore.status_code == 200
+    assert db_session.scalar(select(AuditLog).where(AuditLog.action == "run_uber_reconciliation")) is not None
+    assert db_session.scalar(select(AuditLog).where(AuditLog.action == "create_from_uber_reconciliation")) is not None
 
 
 def test_uber_endpoints_are_protected_and_staff_cannot_access_config(unauthenticated_client: TestClient) -> None:

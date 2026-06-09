@@ -17,4 +17,7 @@
 - Gmail must be validated with a sandbox account before live operations.
 - Exports are capped by `EXPORT_MAX_ROWS`.
 - Reports exclude customer names by default.
+- Uber reconciliation V1.1 relies on user-provided CSV/XLSX exports, not a live Uber API.
+- Uber reconciliation never creates claims, emails, or disputes automatically.
+- Ambiguous Uber rows or transaction types require manual review.
 

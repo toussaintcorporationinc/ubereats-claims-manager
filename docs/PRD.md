@@ -107,6 +107,7 @@ La V1 pose la base applicative et les premiers objets metier :
 - `UberReconciliationResult` : resultat de rapprochement compensation / non compensation ;
 - `UberReportingImportBatch` : fichier Uber Reporting analyse avant confirmation ;
 - `UberReportingImportRow` : ligne de rapport avec raw data, normalisation, erreurs et warnings ;
+- `UberReconciliationRun` : execution d'analyse Uber sur une periode donnee ;
 - `EmailThread` : historique des conversations email outbound et inbound ;
 - `AuditLog` : trace des actions importantes.
 - `User` : utilisateur interne avec role ;

@@ -1160,9 +1160,14 @@ Mission 18 expose une fondation de connecteur Uber Eats sans appel API Uber reel
 - `POST /v1/uber/reporting/batches/{batch_id}/cancel` : annule un batch non confirme.
 - `GET /v1/uber/reporting/unmapped-stores` : liste les stores detectes mais non mappes.
 - `POST /v1/uber/reporting/unmapped-stores/{uber_store_id}/map` : mappe un store vers un restaurant TENNET. Owner uniquement.
-- `GET /v1/uber/reconciliation/results` : liste les resultats visibles.
-- `POST /v1/uber/reconciliation/run` : calcule les statuts `compensated`, `not_compensated`, `partially_compensated`, `already_claimed` ou `manual_review`.
-- `POST /v1/uber/reconciliation/results/{id}/claim-order` : cree un dossier TENNET depuis un resultat eligible, sans doublon.
+- `POST /v1/uber/reconciliation/run` : lance une analyse controlee des snapshots et transactions Uber importes. Body optionnel : `restaurant_id`, `date_from`, `date_to`, `dry_run`.
+- `GET /v1/uber/reconciliation/runs` : liste les analyses visibles selon les droits.
+- `GET /v1/uber/reconciliation/runs/{run_id}` : retourne le resume d'une analyse.
+- `GET /v1/uber/reconciliation/results` : liste les resultats filtres par `run_id`, `restaurant_id`, `status`, dates, montant manquant ou besoin de preuve.
+- `GET /v1/uber/reconciliation/results/{result_id}` : detail resultat avec snapshot, transactions rapprochees et dossier TENNET lie.
+- `POST /v1/uber/reconciliation/results/{result_id}/claim-order` : cree manuellement un dossier TENNET depuis un resultat eligible.
+- `POST /v1/uber/reconciliation/results/bulk-create-claim-orders` : cree plusieurs dossiers TENNET eligibles.
+- `POST /v1/uber/reconciliation/results/{result_id}/ignore` : ignore manuellement un resultat.
 
 Permissions :
 

@@ -283,6 +283,8 @@ Mission 19 ajoute le workflow d'import reporting sur plusieurs mois :
 - preview avec colonnes detectees, lignes invalides, warnings et stores non mappes ;
 - `/uber/reporting/{batch_id}` : confirmation de l'import apres controle ;
 - `/uber/unmapped-stores` : mapping explicite des stores Uber vers restaurants TENNET.
+- `/uber/reconciliation` : analyse 6 mois des commandes annulees et transactions Uber importees ;
+- `/uber/reconciliation/runs` : historique des analyses et creation manuelle de dossiers TENNET depuis les resultats eligibles.
 
 Exemples fictifs disponibles :
 
