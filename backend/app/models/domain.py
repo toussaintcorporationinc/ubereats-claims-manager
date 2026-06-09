@@ -46,6 +46,13 @@ EVIDENCE_TYPES = (
     "preparation_proof",
     "waste_photo",
     "uber_screenshot",
+    "delivery_proof",
+    "packaging_photo",
+    "sealed_bag_photo",
+    "courier_statement",
+    "gps_or_route_proof",
+    "customer_contact_proof",
+    "order_details_screenshot",
     "other",
 )
 
@@ -55,6 +62,10 @@ EMAIL_DRAFT_TYPES = (
     "followup_2",
     "escalation",
     "proof_reply",
+    "customer_refund_order_not_received",
+    "customer_refund_missing_item",
+    "customer_refund_order_error_adjustment",
+    "customer_refund_generic",
 )
 
 EMAIL_DRAFT_STATUSES = ("created", "draft", "ready", "archived")
@@ -107,6 +118,43 @@ EVIDENCE_REQUEST_TASK_TYPES = (
 )
 EVIDENCE_REQUEST_TASK_STATUSES = ("pending", "uploaded", "completed", "skipped", "cancelled")
 EVIDENCE_REQUEST_PRIORITIES = ("low", "normal", "high", "urgent")
+CUSTOMER_REFUND_DISPUTE_TYPES = (
+    "order_not_received",
+    "missing_item",
+    "incorrect_item",
+    "damaged_order",
+    "quality_issue",
+    "customer_refund",
+    "order_error_adjustment",
+    "chargeback",
+    "unknown",
+)
+CUSTOMER_REFUND_DISPUTE_REASONS = (
+    "customer_reported_not_received",
+    "customer_reported_missing_item",
+    "customer_reported_wrong_item",
+    "customer_reported_quality_issue",
+    "uber_adjustment_order_error",
+    "refund_without_sufficient_proof",
+    "self_delivery_dispute",
+    "unknown_reason",
+)
+CUSTOMER_REFUND_DISPUTE_STATUSES = (
+    "detected",
+    "needs_evidence",
+    "evidence_ready",
+    "draft_created",
+    "gmail_draft_created",
+    "sent",
+    "accepted",
+    "payment_to_verify",
+    "payment_confirmed",
+    "refused",
+    "ignored",
+    "manual_review",
+)
+CUSTOMER_REFUND_EVIDENCE_STATUSES = ("missing", "partial", "complete", "not_required", "manual_review")
+CUSTOMER_REFUND_REQUIREMENT_STATUSES = ("pending", "uploaded", "waived", "not_available")
 UBER_INTEGRATION_PROVIDERS = ("uber_eats",)
 UBER_INTEGRATION_STATUSES = ("not_configured", "pending_approval", "connected", "disconnected", "disabled")
 UBER_SNAPSHOT_SOURCES = ("api_orders", "api_reporting", "manager_export")
@@ -200,6 +248,7 @@ class Restaurant(TimestampMixin, Base):
     uber_reconciliation_results: Mapped[list["UberReconciliationResult"]] = relationship(back_populates="restaurant")
     uber_reconciliation_runs: Mapped[list["UberReconciliationRun"]] = relationship(back_populates="restaurant")
     evidence_request_tasks: Mapped[list["EvidenceRequestTask"]] = relationship(back_populates="restaurant")
+    customer_refund_disputes: Mapped[list["UberCustomerRefundDispute"]] = relationship(back_populates="restaurant")
 
 
 class ClaimOrder(TimestampMixin, Base):
@@ -241,6 +290,7 @@ class ClaimOrder(TimestampMixin, Base):
     response_reviews: Mapped[list["ClaimResponseReview"]] = relationship(back_populates="order")
     followup_tasks: Mapped[list["FollowUpTask"]] = relationship(back_populates="order")
     evidence_request_tasks: Mapped[list["EvidenceRequestTask"]] = relationship(back_populates="order")
+    customer_refund_disputes: Mapped[list["UberCustomerRefundDispute"]] = relationship(back_populates="claim_order")
 
 
 class EvidenceFile(Base):
@@ -691,6 +741,100 @@ class UberFinancialTransaction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     restaurant: Mapped[Restaurant] = relationship(back_populates="uber_financial_transactions")
+    customer_refund_disputes: Mapped[list["UberCustomerRefundDispute"]] = relationship(back_populates="financial_transaction")
+
+
+class UberCustomerRefundDispute(TimestampMixin, Base):
+    __tablename__ = "uber_customer_refund_disputes"
+    __table_args__ = (
+        CheckConstraint(
+            check_in_constraint("dispute_type", CUSTOMER_REFUND_DISPUTE_TYPES),
+            name="ck_customer_refund_disputes_type",
+        ),
+        CheckConstraint(
+            check_in_constraint("reason", CUSTOMER_REFUND_DISPUTE_REASONS),
+            name="ck_customer_refund_disputes_reason",
+        ),
+        CheckConstraint(
+            check_in_constraint("status", CUSTOMER_REFUND_DISPUTE_STATUSES),
+            name="ck_customer_refund_disputes_status",
+        ),
+        CheckConstraint(
+            check_in_constraint("evidence_status", CUSTOMER_REFUND_EVIDENCE_STATUSES),
+            name="ck_customer_refund_disputes_evidence_status",
+        ),
+        Index("ix_customer_refund_disputes_restaurant_id", "restaurant_id"),
+        Index("ix_customer_refund_disputes_status", "status"),
+        Index("ix_customer_refund_disputes_evidence_status", "evidence_status"),
+        Index("ix_customer_refund_disputes_dispute_type", "dispute_type"),
+        Index("ix_customer_refund_disputes_financial_transaction_id", "financial_transaction_id"),
+        Index("ix_customer_refund_disputes_claim_order_id", "claim_order_id"),
+        Index("ix_customer_refund_disputes_deducted_at", "deducted_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    restaurant_id: Mapped[int] = mapped_column(ForeignKey("restaurants.id"), nullable=False)
+    uber_store_id: Mapped[str | None] = mapped_column(String(255))
+    uber_order_id: Mapped[str | None] = mapped_column(String(255))
+    display_id: Mapped[str | None] = mapped_column(String(255))
+    claim_order_id: Mapped[int | None] = mapped_column(ForeignKey("claim_orders.id"))
+    financial_transaction_id: Mapped[int | None] = mapped_column(ForeignKey("uber_financial_transactions.id"), unique=True)
+    customer_refund_reference: Mapped[str | None] = mapped_column(String(255))
+    dispute_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    reason: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="detected")
+    customer_refund_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    order_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
+    deducted_at: Mapped[date | None] = mapped_column(Date)
+    order_date: Mapped[date | None] = mapped_column(Date)
+    evidence_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    evidence_status: Mapped[str] = mapped_column(String(50), nullable=False, default="missing")
+    dispute_email_draft_id: Mapped[int | None] = mapped_column(ForeignKey("email_drafts.id"))
+    provider_draft_id: Mapped[int | None] = mapped_column(ForeignKey("email_provider_drafts.id"))
+    notes: Mapped[str | None] = mapped_column(Text)
+    raw_payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    ignored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ignored_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    ignore_reason: Mapped[str | None] = mapped_column(Text)
+
+    restaurant: Mapped[Restaurant] = relationship(back_populates="customer_refund_disputes")
+    claim_order: Mapped[ClaimOrder | None] = relationship(back_populates="customer_refund_disputes")
+    financial_transaction: Mapped[UberFinancialTransaction | None] = relationship(back_populates="customer_refund_disputes")
+    dispute_email_draft: Mapped[EmailDraft | None] = relationship(foreign_keys=[dispute_email_draft_id])
+    provider_draft: Mapped[EmailProviderDraft | None] = relationship(foreign_keys=[provider_draft_id])
+    evidence_requirements: Mapped[list["CustomerRefundEvidenceRequirement"]] = relationship(
+        back_populates="dispute",
+        cascade="all, delete-orphan",
+    )
+    evidence_request_tasks: Mapped[list["EvidenceRequestTask"]] = relationship(back_populates="customer_refund_dispute")
+
+
+class CustomerRefundEvidenceRequirement(TimestampMixin, Base):
+    __tablename__ = "customer_refund_evidence_requirements"
+    __table_args__ = (
+        UniqueConstraint("dispute_id", "required_evidence_type", name="uq_customer_refund_requirement_type"),
+        CheckConstraint(
+            check_in_constraint("required_evidence_type", EVIDENCE_TYPES),
+            name="ck_customer_refund_requirements_evidence_type",
+        ),
+        CheckConstraint(
+            check_in_constraint("status", CUSTOMER_REFUND_REQUIREMENT_STATUSES),
+            name="ck_customer_refund_requirements_status",
+        ),
+        Index("ix_customer_refund_requirements_dispute_id", "dispute_id"),
+        Index("ix_customer_refund_requirements_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    dispute_id: Mapped[int] = mapped_column(ForeignKey("uber_customer_refund_disputes.id"), nullable=False)
+    required_evidence_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
+    evidence_file_id: Mapped[int | None] = mapped_column(ForeignKey("evidence_files.id"))
+
+    dispute: Mapped[UberCustomerRefundDispute] = relationship(back_populates="evidence_requirements")
+    evidence_file: Mapped[EvidenceFile | None] = relationship()
 
 
 class UberReconciliationRun(Base):
@@ -793,6 +937,7 @@ class EvidenceRequestTask(TimestampMixin, Base):
         Index("ix_evidence_request_tasks_task_type", "task_type"),
         Index("ix_evidence_request_tasks_required_type", "required_evidence_type"),
         Index("ix_evidence_request_tasks_reconciliation_result_id", "reconciliation_result_id"),
+        Index("ix_evidence_request_tasks_customer_refund_dispute_id", "customer_refund_dispute_id"),
         Index("ix_evidence_request_tasks_due_at", "due_at"),
         Index("ix_evidence_request_tasks_assigned_to_user_id", "assigned_to_user_id"),
     )
@@ -800,6 +945,7 @@ class EvidenceRequestTask(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("claim_orders.id"), nullable=False)
     reconciliation_result_id: Mapped[int | None] = mapped_column(ForeignKey("uber_reconciliation_results.id"))
+    customer_refund_dispute_id: Mapped[int | None] = mapped_column(ForeignKey("uber_customer_refund_disputes.id"))
     restaurant_id: Mapped[int] = mapped_column(ForeignKey("restaurants.id"), nullable=False)
     task_type: Mapped[str] = mapped_column(String(50), nullable=False)
     required_evidence_type: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -823,6 +969,7 @@ class EvidenceRequestTask(TimestampMixin, Base):
     reconciliation_result: Mapped[UberReconciliationResult | None] = relationship(
         back_populates="evidence_request_tasks"
     )
+    customer_refund_dispute: Mapped[UberCustomerRefundDispute | None] = relationship(back_populates="evidence_request_tasks")
     last_upload_evidence: Mapped[EvidenceFile | None] = relationship(foreign_keys=[last_upload_evidence_id])
     upload_links: Mapped[list["EvidenceUploadLink"]] = relationship(
         back_populates="task",

@@ -203,6 +203,10 @@ def upload_evidence_for_task(
     )
     db.add(evidence_file)
     db.flush()
+    if task.customer_refund_dispute_id is not None:
+        from app.services.customer_refund_dispute_service import sync_requirement_from_evidence_task
+
+        sync_requirement_from_evidence_task(db, task, evidence_file, user_id)
 
     previous_status = task.status
     now = utc_now()

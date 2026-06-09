@@ -157,6 +157,11 @@ export default function EvidenceTaskDetailPage() {
           <Link href={`/orders/${order.id}`} className="secondary-button">
             Ouvrir commande
           </Link>
+          {task.customer_refund_dispute_id ? (
+            <Link href={`/customer-refunds/${task.customer_refund_dispute_id}`} className="secondary-button">
+              Ouvrir deduction
+            </Link>
+          ) : null}
         </div>
       </div>
 
@@ -177,6 +182,7 @@ export default function EvidenceTaskDetailPage() {
           <DetailItem label="Statut dossier" value={order.status} />
           <DetailItem label="Montant" value={formatCurrency(order.order_amount, order.currency)} />
           <DetailItem label="Type preuve" value={task.required_evidence_type} />
+          <DetailItem label="Deduction Uber" value={task.customer_refund_dispute_id ? `#${task.customer_refund_dispute_id}` : "-"} />
           <DetailItem label="Echeance" value={formatDate(task.due_at)} />
           <DetailItem label="Raison" value={task.reason} />
           <DetailItem label="Creee le" value={formatDate(task.created_at)} />

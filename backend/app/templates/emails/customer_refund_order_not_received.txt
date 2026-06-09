@@ -1,0 +1,14 @@
+Bonjour,
+
+Nous contestons la deduction Uber Eats appliquee sur la commande {uber_order_number} du restaurant {restaurant_name}.
+
+Motif conteste : commande indiquee comme non recue par le client.
+Montant deduit : {customer_refund_amount} {currency}.
+
+La commande a ete traitee par le restaurant et les preuves disponibles sont jointes au dossier :
+{evidence_list}
+
+Merci de verifier cette deduction et de regulariser le paiement si la deduction a ete appliquee a tort.
+
+Cordialement,
+{signature}

@@ -1,0 +1,15 @@
+Bonjour,
+
+Nous contestons l'ajustement negatif Uber Eats applique sur la commande {uber_order_number} du restaurant {restaurant_name}.
+
+Type de deduction : {dispute_type}.
+Raison detectee : {reason}.
+Montant deduit : {customer_refund_amount} {currency}.
+
+Les preuves disponibles sont jointes :
+{evidence_list}
+
+Merci de communiquer le detail du motif et de regulariser le paiement si l'ajustement est injustifie.
+
+Cordialement,
+{signature}

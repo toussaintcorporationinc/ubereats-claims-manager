@@ -182,6 +182,10 @@ export default function ReportsPage() {
             <StatCard label="Relances en attente" value={summary.followups.pending_count} />
             <StatCard label="Escalades dues" value={summary.followups.escalation_due_count} />
             <StatCard label="Revues manuelles" value={summary.responses.manual_review_count} />
+            <StatCard label="Deductions Uber" value={formatCurrency(summary.customer_refunds.total_deducted_amount)} />
+            <StatCard label="Disputes deductions" value={summary.customer_refunds.disputes_count} />
+            <StatCard label="Deductions besoin preuve" value={summary.customer_refunds.needs_evidence_count} />
+            <StatCard label="Deductions pretes" value={summary.customer_refunds.evidence_ready_count} />
           </div>
 
           <div className="grid-two">

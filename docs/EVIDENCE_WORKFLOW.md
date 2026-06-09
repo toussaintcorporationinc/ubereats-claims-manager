@@ -23,6 +23,17 @@ TENNET cree une tache par preuve bloquante manquante :
 
 Les resultats Uber reconciliation avec `evidence_required=true` peuvent alimenter la priorite quand un dossier TENNET existe deja.
 
+Les deductions Uber detectees depuis transactions financieres creent aussi des exigences de preuves :
+
+- `order_not_received` : `receipt` et `delivery_proof` obligatoires ;
+- `missing_item` : `receipt` et `preparation_proof` obligatoires ;
+- `incorrect_item` : `receipt` et `preparation_proof` obligatoires ;
+- `damaged_order` : `receipt` et `packaging_photo` obligatoires ;
+- `quality_issue` : `receipt` et `preparation_proof` obligatoires ;
+- `customer_refund`, `order_error_adjustment`, `chargeback` et `unknown` : `receipt` et `uber_screenshot` obligatoires.
+
+Les preuves recommandees comme `sealed_bag_photo`, `order_details_screenshot`, `gps_or_route_proof`, `customer_contact_proof` ou `courier_statement` peuvent renforcer le dossier mais ne sont pas toutes bloquantes en V1.1.
+
 ## Priorites
 
 Les priorites sont configurees par variables d'environnement :
@@ -31,6 +42,8 @@ Les priorites sont configurees par variables d'environnement :
 - `EVIDENCE_TASK_URGENT_AMOUNT`.
 
 Si le montant manquant issu de la reconciliation est disponible, il est utilise. Sinon TENNET utilise le montant de la commande.
+
+Pour les deductions Uber, la priorite utilise le montant deduit rattache a la dispute.
 
 ## Upload protege
 

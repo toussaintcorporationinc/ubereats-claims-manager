@@ -42,3 +42,15 @@ Ces taches demandent les preuves bloquantes manquantes et renvoient le dossier d
 ## Limites
 
 Les exports Uber peuvent changer de format. TENNET ne doit jamais inventer un montant, un paiement ou une preuve. En cas de doute, le resultat reste en revue manuelle.
+
+## Deductions clients et ajustements negatifs
+
+Les transactions negatives importees peuvent aussi alimenter le module Customer Refund Disputes.
+
+Ce module est distinct de la reconciliation de compensation :
+
+- la reconciliation detecte les commandes annulees non compensees ;
+- les disputes de deductions detectent les refunds, chargebacks, remboursements clients et ajustements negatifs sur versement ;
+- aucune action ne clique dans Uber Eats Manager ;
+- aucune contestation, aucun email et aucune relance ne sont envoyes automatiquement ;
+- les dossiers crees depuis une deduction restent soumis aux preuves et au workflow TENNET standard.

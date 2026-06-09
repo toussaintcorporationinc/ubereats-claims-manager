@@ -24,6 +24,13 @@ const evidenceTypes: EvidenceType[] = [
   "preparation_proof",
   "waste_photo",
   "uber_screenshot",
+  "delivery_proof",
+  "packaging_photo",
+  "sealed_bag_photo",
+  "courier_statement",
+  "gps_or_route_proof",
+  "customer_contact_proof",
+  "order_details_screenshot",
   "other",
 ];
 const statuses: EvidenceRequestTaskStatus[] = ["pending", "uploaded", "completed", "skipped", "cancelled"];
@@ -183,6 +190,7 @@ export default function EvidenceTasksPage() {
                 <th>Priorite</th>
                 <th>Statut</th>
                 <th>Montant</th>
+                <th>Contexte</th>
                 <th>Echeance</th>
                 <th>Action</th>
               </tr>
@@ -209,6 +217,17 @@ export default function EvidenceTasksPage() {
                     <StatusBadge status={task.status} />
                   </td>
                   <td>{formatCurrency(task.order_amount, task.currency)}</td>
+                  <td>
+                    {task.customer_refund_dispute_id ? (
+                      <Link href={`/customer-refunds/${task.customer_refund_dispute_id}`} className="secondary-button">
+                        Deduction
+                      </Link>
+                    ) : task.reconciliation_result_id ? (
+                      <span className="muted">Reconciliation</span>
+                    ) : (
+                      <span className="muted">Dossier</span>
+                    )}
+                  </td>
                   <td>{formatDate(task.due_at)}</td>
                   <td>
                     <Link href={`/evidence-tasks/${task.id}`} className="button">

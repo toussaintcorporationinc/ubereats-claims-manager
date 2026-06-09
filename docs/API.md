@@ -1212,6 +1212,15 @@ Retour :
     "payment_to_verify_count": 0,
     "payment_confirmed_count": 0,
     "manual_review_count": 0
+  },
+  "customer_refunds": {
+    "total_deducted_amount": "0.00",
+    "disputes_count": 0,
+    "needs_evidence_count": 0,
+    "evidence_ready_count": 0,
+    "sent_count": 0,
+    "accepted_count": 0,
+    "refused_count": 0
   }
 }
 ```
@@ -1283,6 +1292,100 @@ L'export `commercial-summary.xlsx` contient plusieurs feuilles :
 - `Responses`
 
 Les exports n'incluent jamais les tokens Gmail, secrets, chemins disque bruts de preuves ou champs `access_token` / `refresh_token`.
+
+## Deductions Uber et remboursements clients
+
+Le module Customer Refund Disputes detecte des deductions dans les transactions financieres Uber importees. Il ne scrape pas Uber Eats Manager, ne demande aucun mot de passe Uber et ne declenche aucun email automatique.
+
+Permissions :
+
+- `owner` : detection, creation de dossiers, brouillons, brouillons Gmail et ignore sur tous les restaurants ;
+- `manager` : memes actions sur restaurants assignes ;
+- `staff` : peut consulter et uploader des preuves via les taches autorisees, mais ne peut pas detecter, creer de dossier, brouillon, brouillon Gmail ou ignorer.
+
+Endpoints :
+
+- `POST /v1/customer-refunds/detect`
+- `GET /v1/customer-refunds`
+- `GET /v1/customer-refunds/{id}`
+- `POST /v1/customer-refunds/{id}/recalculate-evidence`
+- `POST /v1/customer-refunds/{id}/create-claim-order`
+- `POST /v1/customer-refunds/{id}/create-draft`
+- `POST /v1/customer-refunds/{id}/create-gmail-draft`
+- `POST /v1/customer-refunds/{id}/ignore`
+- `POST /v1/customer-refunds/bulk-create-claim-orders`
+- `POST /v1/customer-refunds/bulk-create-drafts`
+
+### Detecter les deductions
+
+`POST /v1/customer-refunds/detect`
+
+Body optionnel :
+
+```json
+{
+  "restaurant_id": 123,
+  "date_from": "2026-01-01",
+  "date_to": "2026-06-30"
+}
+```
+
+Retour :
+
+```json
+{
+  "detected_count": 10,
+  "needs_evidence_count": 8,
+  "manual_review_count": 2,
+  "total_deducted_amount": "250.75",
+  "errors": []
+}
+```
+
+La detection analyse les `UberFinancialTransaction` negatives ou de type `refund`, `chargeback`, `adjustment_negative`, `eater_refund` ou `order_error`. Les motifs reconnus incluent commande non recue, article manquant, mauvaise commande et probleme qualite. En cas de doute, la dispute reste `manual_review`.
+
+### Lister et filtrer
+
+`GET /v1/customer-refunds`
+
+Filtres :
+
+- `restaurant_id`
+- `dispute_type`
+- `status`
+- `evidence_status`
+- `date_from`
+- `date_to`
+- `min_amount`
+- `limit`
+- `offset`
+
+### Detail
+
+`GET /v1/customer-refunds/{id}` retourne :
+
+- la dispute ;
+- le restaurant ;
+- le snapshot Uber lie si disponible ;
+- la transaction financiere liee ;
+- le dossier TENNET lie si disponible ;
+- les exigences de preuves ;
+- les fichiers de preuve ;
+- les taches de preuve associees.
+
+### Actions controlees
+
+`POST /v1/customer-refunds/{id}/recalculate-evidence` recalcule `evidence_status` et cree les taches de preuves manquantes quand un dossier TENNET existe.
+
+`POST /v1/customer-refunds/{id}/create-claim-order` cree un `ClaimOrder` lie a la dispute. Le montant du dossier correspond au montant deduit a contester. Le dossier reste dans le workflow TENNET standard.
+
+`POST /v1/customer-refunds/{id}/create-draft` cree un brouillon interne de contestation si les preuves sont completes. Aucun email n'est envoye.
+
+`POST /v1/customer-refunds/{id}/create-gmail-draft` cree un brouillon Gmail a partir du brouillon interne existant, si Gmail est active et connecte. Aucun email n'est envoye.
+
+`POST /v1/customer-refunds/{id}/ignore` marque la dispute `ignored` avec une raison obligatoire.
+
+Les endpoints bulk appliquent les memes validations et retournent `created_count`, `skipped_count`, `errors` et `created_ids`.
 
 ## Dashboard
 
