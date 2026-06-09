@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+CURRENT_VERSION = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
 
 
 def test_release_health_ready_and_version(unauthenticated_client: TestClient) -> None:
@@ -14,7 +15,7 @@ def test_release_health_ready_and_version(unauthenticated_client: TestClient) ->
     assert response.status_code == 200
     payload = response.json()
     assert payload["app"] == "TENNET"
-    assert payload["version"] == "1.0.3-tennet"
+    assert payload["version"] == CURRENT_VERSION
     assert payload["environment"] in {"ci", "test"}
     assert payload["commit"] == "unknown"
     serialized = str(payload).lower()
@@ -54,7 +55,7 @@ def test_production_release_files_exist() -> None:
 
     missing = [path for path in files if not (REPO_ROOT / path).is_file()]
     assert missing == []
-    assert (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip() == "1.0.3-tennet"
+    assert (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip() == CURRENT_VERSION
 
 
 def test_env_production_example_contains_critical_variables() -> None:

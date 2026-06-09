@@ -62,3 +62,17 @@ Les chemins dangereux dans un ZIP sont refuses :
 - aucun rattachement faible n'est force ;
 - l'attachement automatique reste desactive par defaut ;
 - aucun email n'est cree ou envoye par l'import.
+
+## V1.1 RC acceptance
+
+Use fictitious PDF/image files or ZIP archives in staging first.
+
+Validate:
+
+- ZIP path traversal is refused;
+- nested ZIP is refused;
+- `fake` analysis creates deterministic extraction;
+- OpenAI/Vision returns disabled unless explicitly enabled;
+- high-confidence matches can be accepted;
+- evidence tasks complete after attachment;
+- claim order validation is retried.

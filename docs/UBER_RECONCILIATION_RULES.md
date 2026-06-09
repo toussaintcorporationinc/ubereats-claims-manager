@@ -69,3 +69,14 @@ Regles :
 - aucun `ClaimOrder`, brouillon, email ou relance n'est cree automatiquement depuis le cockpit ;
 - les refus sous appel apparaissent comme `under_appeal` tant que le workflow d'appel reste actif ;
 - les exports recovery ne doivent pas contenir de token, secret ou chemin disque brut de preuve.
+
+## V1.1 RC acceptance
+
+Use `docs/examples/v1_1` to validate:
+
+- canceled without payment becomes `not_compensated`;
+- canceled with full compensation becomes `compensated`;
+- canceled with partial payment becomes `partially_compensated`;
+- existing TENNET order becomes `already_claimed`;
+- missing amount becomes `manual_review`;
+- claim order creation remains manual.

@@ -1,0 +1,7 @@
+uber_store_id,uber_store_name,uber_order_id,display_id,order_status,placed_at,canceled_at,order_total_amount,currency
+STORE-RC-001,Restaurant Test Nord,UBER-RC-001,RC001,canceled,2026-01-10 19:15,2026-01-10 19:42,24.90,EUR
+STORE-RC-001,Restaurant Test Nord,UBER-RC-002,RC002,canceled,2026-01-12 20:00,2026-01-12 20:18,18.50,EUR
+STORE-RC-002,Restaurant Test Sud,UBER-RC-003,RC003,customer_cancelled,2026-02-03 12:10,2026-02-03 12:38,32.40,EUR
+STORE-RC-002,Restaurant Test Sud,UBER-RC-004,RC004,cancelled,2026-02-11 21:05,2026-02-11 21:44,41.20,EUR
+STORE-RC-003,Restaurant Test Est,UBER-RC-005,RC005,annule,2026-03-02 18:35,2026-03-02 19:02,,EUR
+STORE-RC-003,Restaurant Test Est,UBER-RC-006,RC006,completed,2026-03-04 13:20,,22.10,EUR

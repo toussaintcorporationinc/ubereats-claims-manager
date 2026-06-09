@@ -97,3 +97,17 @@ Les exports respectent les permissions restaurant, sont reserves a `owner` et `m
 - Aucun scraping Uber.
 - Aucun mot de passe Uber.
 - Aucun montant, motif ou preuve invente.
+
+## V1.1 RC acceptance
+
+During staging acceptance, verify that the cockpit includes:
+
+- canceled orders from reconciliation;
+- customer refund disputes;
+- missing evidence tasks;
+- bulk evidence attachments;
+- active appeals and escalations;
+- refused amounts under appeal;
+- manual-review cases.
+
+The cockpit remains an operational tracking view, not a promise of recovery.

@@ -71,3 +71,15 @@ Un refus Uber ne cloture pas automatiquement un dossier dans TENNET. Il ouvre un
 - aucun email n'est envoye automatiquement ;
 - aucun refus n'est transforme en cloture sans decision humaine ;
 - les preuves et montants restent bases sur les donnees existantes.
+
+## V1.1 RC acceptance
+
+Validate in staging:
+
+- refused claim response creates an appeal workflow;
+- refused customer refund review creates an appeal workflow;
+- create draft works from local templates;
+- create Gmail draft does not send;
+- mark sent is manual;
+- cooldown blocks immediate duplicate attempts;
+- owner can manually close and reopen.

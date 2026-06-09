@@ -1,0 +1,6 @@
+restaurant_name,uber_order_number,display_id,dispute_type,reason,customer_refund_amount,currency,deducted_at,evidence_status
+Restaurant Test Nord,UBER-RC-007,RC007,order_not_received,customer_reported_not_received,16.90,EUR,2026-03-12,missing
+Restaurant Test Nord,UBER-RC-008,RC008,missing_item,customer_reported_missing_item,8.50,EUR,2026-03-13,partial
+Restaurant Test Sud,UBER-RC-009,RC009,order_error_adjustment,uber_adjustment_order_error,12.20,EUR,2026-03-16,missing
+Restaurant Test Sud,UBER-RC-010,RC010,chargeback,refund_without_sufficient_proof,21.00,EUR,2026-03-18,manual_review
+Restaurant Test Est,UBER-RC-011,RC011,unknown,unknown_reason,5.00,EUR,2026-03-21,manual_review

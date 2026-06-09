@@ -78,3 +78,20 @@ Use this checklist before launching a TENNET commercial production instance.
 - [ ] Security scans clean.
 - [ ] No real client data in repository.
 - [ ] No hardcoded restaurant limit.
+
+## V1.1 RC pre-production checklist
+
+- [ ] Staging deployed with `1.1.0-rc1-tennet`.
+- [ ] `.env.staging` uses staging-only secrets.
+- [ ] `EMAIL_PROVIDER_ENABLED=false` unless Gmail staging test is explicit.
+- [ ] `GMAIL_INBOUND_SYNC_ENABLED=false` unless Gmail staging test is explicit.
+- [ ] `AI_EVIDENCE_ANALYSIS_ENABLED=false`.
+- [ ] `AI_EVIDENCE_AUTO_ATTACH_ENABLED=false`.
+- [ ] `FOLLOWUP_AUTOMATIC_SEND_ENABLED=false`.
+- [ ] `APPEAL_AUTO_SEND_ENABLED=false`.
+- [ ] `scripts/smoke_test_v1_1.sh` passed.
+- [ ] V1.1 acceptance plan completed.
+- [ ] Real-format Uber exports validated in staging.
+- [ ] No reimbursement guarantee appears in UI/docs.
+- [ ] No automatic email, follow-up or appeal send occurred.
+- [ ] Owner-only manual closure verified.

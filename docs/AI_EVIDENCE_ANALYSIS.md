@@ -49,3 +49,13 @@ Les resultats restent des propositions. Les candidats ambigus doivent etre revus
 ## Regle produit
 
 TENNET ne doit jamais inventer une preuve, un montant, une date ou un numero de commande. Si l'analyse est incertaine, le dossier reste en revue manuelle.
+
+## V1.1 RC acceptance
+
+In staging and CI:
+
+- use provider `fake` for deterministic checks;
+- keep `AI_EVIDENCE_ANALYSIS_ENABLED=false`;
+- keep `AI_EVIDENCE_AUTO_ATTACH_ENABLED=false`;
+- confirm no real OpenAI request is made;
+- validate real-format evidence only after explicit operator approval.
