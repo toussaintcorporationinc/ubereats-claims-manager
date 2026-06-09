@@ -79,6 +79,11 @@ La V1 pose la base applicative et les premiers objets metier :
 30. Un owner ou manager ouvre `/reports` pour analyser les montants reclames, recuperes, en attente et refuses.
 31. Il filtre par restaurant, periode, statut, resultat ou montant pour isoler les dossiers prioritaires.
 32. Il exporte les commandes, relances, reponses traitees ou le resume commercial en CSV/XLSX selon ses droits.
+33. Un owner ou manager ouvre `/uber` pour preparer l'acces officiel aux donnees Uber Eats.
+34. Un owner mappe les restaurants TENNET avec leurs stores Uber Eats dans `/uber/stores`.
+35. En attendant l'approbation API Uber, un owner ou manager importe des exports Uber Eats Manager dans `/uber/reconciliation`.
+36. TENNET rapproche commandes annulees et transactions financieres pour detecter les commandes non compensees.
+37. Un owner ou manager cree un dossier TENNET depuis un resultat non compense, puis suit le workflow de preuves et validation existant.
 
 ## Modeles metier V1
 
@@ -93,6 +98,11 @@ La V1 pose la base applicative et les premiers objets metier :
 - `ClaimResponseReview` : decision humaine prise sur une reponse Uber, avec transition de statut, montant recupere eventuel et notes internes ;
 - `FollowUpTask` : tache de relance limitee et auditee, avec echeance, statut et liens vers brouillons internes/provider ;
 - `ReportingService` : service applicatif de calcul des indicateurs commerciaux, filtres, permissions et exports ;
+- `UberIntegrationAccount` : preparation d'un compte d'integration officielle Uber Eats, sans secret expose ;
+- `UberStoreMapping` : association restaurant TENNET vers store Uber Eats ;
+- `UberOrderSnapshot` : snapshot de commande Uber importe par API future ou rapport manager ;
+- `UberFinancialTransaction` : transaction financiere Uber importee pour reconciliation ;
+- `UberReconciliationResult` : resultat de rapprochement compensation / non compensation ;
 - `EmailThread` : historique des conversations email outbound et inbound ;
 - `AuditLog` : trace des actions importantes.
 - `User` : utilisateur interne avec role ;
@@ -109,6 +119,8 @@ La V1 pose la base applicative et les premiers objets metier :
 - relances automatiques ;
 - boucles infinies de relance ;
 - automatisation metier des decisions.
+- appel API Uber reel sans approbation officielle Uber ;
+- scraping tablette Uber Eats ou automatisation Uber Eats Manager par mot de passe.
 
 ## Exigences techniques
 

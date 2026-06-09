@@ -15,6 +15,7 @@ const navigation = [
   { href: "/drafts", label: "Brouillons" },
   { href: "/followups", label: "Relances", ownerOrManagerOnly: true },
   { href: "/reports", label: "Rapports", ownerOrManagerOnly: true },
+  { href: "/uber", label: "Uber", ownerOrManagerOnly: true },
   { href: "/inbox", label: "Reponses Uber", ownerOrManagerOnly: true },
   { href: "/settings/email", label: "Email", ownerOrManagerOnly: true },
   { href: "/users", label: "Utilisateurs", ownerOnly: true },

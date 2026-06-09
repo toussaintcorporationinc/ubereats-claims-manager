@@ -21,6 +21,7 @@ from app.routes import (
     reports,
     response_reviews,
     restaurants,
+    uber,
     users,
 )
 from app.services.file_storage_service import ensure_evidence_storage
@@ -91,3 +92,4 @@ app.include_router(imports.router)
 app.include_router(dashboard.router)
 app.include_router(response_reviews.router)
 app.include_router(users.router)
+app.include_router(uber.router)

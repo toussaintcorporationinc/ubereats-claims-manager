@@ -265,3 +265,14 @@ Cette base contient une integration Gmail limitee a la creation de brouillons, a
 - de relance automatique infinie.
 
 Les fichiers sont stockes localement en developpement dans `backend/storage`.
+
+## Connecteur Uber Eats
+
+Mission 18 prepare TENNET a une integration officielle Uber Eats sans scraping ni automatisation de navigateur :
+
+- page `/uber` pour l'etat de strategie d'acces ;
+- page `/uber/stores` pour mapper un restaurant TENNET vers un `uber_store_id` ;
+- page `/uber/reconciliation` pour importer des rapports Uber Eats Manager CSV/XLSX et detecter les commandes annulees non compensees ;
+- endpoints `/v1/uber/*` pour statut, mappings, import reporting et reconciliation.
+
+La V1 du connecteur ne fait aucun appel API Uber reel. Les imports de rapports restent le fallback jusqu'a approbation Uber et obtention de credentials officiels.
