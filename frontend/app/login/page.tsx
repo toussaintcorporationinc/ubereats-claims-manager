@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import ApiError from "@/components/ApiError";
 import { useAuth } from "@/lib/auth";
+import { consumeSessionExpiredMessage } from "@/lib/api";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -12,7 +13,12 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<unknown>(null);
+  const [sessionMessage, setSessionMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setSessionMessage(consumeSessionExpiredMessage());
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -37,6 +43,12 @@ export default function LoginPage() {
       </div>
 
       <ApiError error={error} />
+      {sessionMessage ? (
+        <div className="api-error" role="status">
+          <strong>Session expirée</strong>
+          <span>{sessionMessage}</span>
+        </div>
+      ) : null}
 
       <form className="tool-panel" onSubmit={handleSubmit}>
         <div className="field">

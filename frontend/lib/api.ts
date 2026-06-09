@@ -1,5 +1,9 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 const TOKEN_STORAGE_KEY = "ubereats_claims_manager_token";
+const SESSION_EXPIRED_STORAGE_KEY = "tennet_session_expired_message";
+
+export const SESSION_EXPIRED_MESSAGE = "Votre session a expiré. Veuillez vous reconnecter.";
+export const SESSION_EXPIRED_EVENT = "tennet:session-expired";
 
 export type MoneyValue = string | number | null;
 export type UserRole = "owner" | "manager" | "staff";
@@ -686,7 +690,7 @@ export class ApiError extends Error {
   detail: unknown;
 
   constructor(status: number, detail: unknown) {
-    super(formatApiError(detail));
+    super(status === 401 ? SESSION_EXPIRED_MESSAGE : formatApiError(detail));
     this.name = "ApiError";
     this.status = status;
     this.detail = detail;
@@ -697,7 +701,7 @@ export function getStoredToken(): string | null {
   if (typeof window === "undefined") {
     return null;
   }
-  return window.localStorage.getItem(TOKEN_STORAGE_KEY);
+  return window.localStorage.getItem(TOKEN_STORAGE_KEY) ?? window.sessionStorage.getItem(TOKEN_STORAGE_KEY);
 }
 
 export function setStoredToken(token: string): void {
@@ -705,6 +709,7 @@ export function setStoredToken(token: string): void {
     return;
   }
   window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
+  window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 
 export function clearStoredToken(): void {
@@ -712,6 +717,34 @@ export function clearStoredToken(): void {
     return;
   }
   window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+  window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+}
+
+export function consumeSessionExpiredMessage(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const message = window.sessionStorage.getItem(SESSION_EXPIRED_STORAGE_KEY);
+  window.sessionStorage.removeItem(SESSION_EXPIRED_STORAGE_KEY);
+  return message;
+}
+
+function handleUnauthorizedResponse(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  clearStoredToken();
+  window.sessionStorage.setItem(SESSION_EXPIRED_STORAGE_KEY, SESSION_EXPIRED_MESSAGE);
+  window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+
+  if (window.location.pathname !== "/login") {
+    window.location.replace("/login");
+  }
+}
+
+function shouldHandleUnauthorized(path: string): boolean {
+  return !path.startsWith("/v1/auth/login") && !path.startsWith("/v1/auth/register");
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -730,6 +763,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
 
   if (!response.ok) {
+    if (response.status === 401 && shouldHandleUnauthorized(path)) {
+      handleUnauthorizedResponse();
+    }
     throw new ApiError(response.status, payload);
   }
 
@@ -788,6 +824,9 @@ async function downloadBlob(path: string): Promise<Blob> {
   const contentType = response.headers.get("content-type") ?? "";
   if (!response.ok) {
     const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+    if (response.status === 401 && shouldHandleUnauthorized(path)) {
+      handleUnauthorizedResponse();
+    }
     throw new ApiError(response.status, payload);
   }
   return response.blob();
@@ -866,6 +905,9 @@ export const api = {
     const contentType = response.headers.get("content-type") ?? "";
     if (!response.ok) {
       const payload = contentType.includes("application/json") ? await response.json() : await response.text();
+      if (response.status === 401) {
+        handleUnauthorizedResponse();
+      }
       throw new ApiError(response.status, payload);
     }
     return response.blob();
