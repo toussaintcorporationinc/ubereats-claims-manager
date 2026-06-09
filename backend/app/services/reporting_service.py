@@ -115,6 +115,15 @@ class ReportingService:
             ),
             customer_refunds=CommercialCustomerRefundSummary(
                 total_deducted_amount=sum_decimal(row.customer_refund_amount for row in customer_refunds),
+                total_recovered_amount=sum_decimal(recovered_amount_for_customer_refund(row) for row in customer_refunds),
+                total_refused_amount=sum_decimal(
+                    row.customer_refund_amount for row in customer_refunds if row.status == "refused"
+                ),
+                total_pending_amount=sum_decimal(
+                    row.customer_refund_amount
+                    for row in customer_refunds
+                    if row.status not in {"payment_confirmed", "refused", "ignored"}
+                ),
                 disputes_count=len(customer_refunds),
                 needs_evidence_count=len([row for row in customer_refunds if row.evidence_status in {"missing", "partial"}]),
                 evidence_ready_count=len([row for row in customer_refunds if row.evidence_status == "complete"]),
@@ -317,6 +326,14 @@ def sum_decimal(values: list[Decimal | None] | Any) -> Decimal:
 
 def quantize_decimal(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def recovered_amount_for_customer_refund(row: UberCustomerRefundDispute) -> Decimal | None:
+    if row.recovered_amount is not None:
+        return row.recovered_amount
+    if row.status == "payment_confirmed":
+        return row.customer_refund_amount
+    return None
 
 
 def breakdown_orders(orders: list[ReportOrderRow], key_func: Any) -> list[ReportBreakdownItem]:

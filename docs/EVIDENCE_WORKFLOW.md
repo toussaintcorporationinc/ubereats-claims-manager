@@ -45,6 +45,8 @@ Si le montant manquant issu de la reconciliation est disponible, il est utilise.
 
 Pour les deductions Uber, la priorite utilise le montant deduit rattache a la dispute.
 
+Si Uber demande une preuve supplementaire sur une deduction, une review `evidence_requested` remet la dispute en `needs_evidence`, recalcule les exigences et cree les taches manquantes quand un dossier TENNET est lie.
+
 ## Upload protege
 
 Un utilisateur connecte peut uploader une preuve depuis une tache s'il a acces au restaurant de la commande.

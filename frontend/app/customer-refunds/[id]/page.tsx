@@ -13,8 +13,21 @@ import {
   formatCurrency,
   formatDate,
   type CustomerRefundDisputeDetail,
+  type CustomerRefundReviewType,
   type EvidenceType,
 } from "@/lib/api";
+
+const reviewTypes: CustomerRefundReviewType[] = [
+  "accepted",
+  "payment_to_verify",
+  "payment_confirmed",
+  "refused",
+  "evidence_requested",
+  "information_requested",
+  "followup_needed",
+  "ignored",
+  "manual_review",
+];
 
 export default function CustomerRefundDetailPage() {
   const params = useParams<{ id: string }>();
@@ -24,6 +37,12 @@ export default function CustomerRefundDetailPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [ignoreReason, setIgnoreReason] = useState("");
+  const [reviewType, setReviewType] = useState<CustomerRefundReviewType>("accepted");
+  const [reviewRecoveredAmount, setReviewRecoveredAmount] = useState("");
+  const [reviewExpectedPaymentDate, setReviewExpectedPaymentDate] = useState("");
+  const [reviewRefusalReason, setReviewRefusalReason] = useState("");
+  const [reviewNotes, setReviewNotes] = useState("");
+  const [reviewEvidenceRequested, setReviewEvidenceRequested] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [actionError, setActionError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -89,6 +108,25 @@ export default function CustomerRefundDetailPage() {
     await runAction("ignore", () => api.ignoreCustomerRefundDispute(disputeId, { reason }));
   }
 
+  async function handleReview(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await runAction("review", async () => {
+      await api.createCustomerRefundReview(disputeId, {
+        review_type: reviewType,
+        recovered_amount: reviewRecoveredAmount.trim() || null,
+        expected_payment_date: reviewExpectedPaymentDate || null,
+        refusal_reason: reviewRefusalReason.trim() || null,
+        evidence_requested: reviewType === "evidence_requested" ? true : reviewEvidenceRequested,
+        notes: reviewNotes.trim() || null,
+      });
+      setReviewRecoveredAmount("");
+      setReviewExpectedPaymentDate("");
+      setReviewRefusalReason("");
+      setReviewNotes("");
+      setReviewEvidenceRequested(false);
+    });
+  }
+
   if (loading) {
     return <LoadingState label="Chargement deduction Uber" />;
   }
@@ -129,6 +167,7 @@ export default function CustomerRefundDetailPage() {
 
       <div className="stats-grid">
         <StatCard label="Montant deduit" value={formatCurrency(dispute.customer_refund_amount, dispute.currency)} />
+        <StatCard label="Montant recupere" value={formatCurrency(dispute.recovered_amount, dispute.currency)} />
         <StatCard label="Montant commande" value={formatCurrency(dispute.order_amount, dispute.currency)} />
         <StatCard label="Statut" value={dispute.status} />
         <StatCard label="Preuves" value={dispute.evidence_status} />
@@ -149,6 +188,8 @@ export default function CustomerRefundDetailPage() {
           <DetailItem label="Commande Uber" value={dispute.uber_order_id ?? "-"} />
           <DetailItem label="Display ID" value={dispute.display_id ?? "-"} />
           <DetailItem label="Deduit le" value={formatDate(dispute.deducted_at)} />
+          <DetailItem label="Paiement attendu" value={formatDate(dispute.expected_payment_date)} />
+          <DetailItem label="Derniere revue" value={formatDate(dispute.last_reviewed_at)} />
           <DetailItem label="Transaction" value={dispute.financial_transaction_id ? `#${dispute.financial_transaction_id}` : "-"} />
           <DetailItem label="Brouillon interne" value={dispute.dispute_email_draft_id ? `#${dispute.dispute_email_draft_id}` : "-"} />
           <DetailItem label="Brouillon Gmail" value={dispute.provider_draft_id ? `#${dispute.provider_draft_id}` : "-"} />
@@ -265,6 +306,102 @@ export default function CustomerRefundDetailPage() {
             Creer brouillon Gmail
           </button>
         </div>
+      </section>
+
+      <section className="grid-two">
+        <form className="tool-panel" onSubmit={handleReview}>
+          <div className="section-heading">
+            <h2>Traiter la decision Uber</h2>
+            <span className="muted">Decision manuelle, auditee, sans envoi automatique.</span>
+          </div>
+          <div className="field">
+            <label htmlFor="review_type">Decision</label>
+            <select id="review_type" value={reviewType} onChange={(event) => setReviewType(event.target.value as CustomerRefundReviewType)}>
+              {reviewTypes.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-grid">
+            <div className="field">
+              <label htmlFor="review_recovered_amount">Montant recupere</label>
+              <input
+                id="review_recovered_amount"
+                value={reviewRecoveredAmount}
+                onChange={(event) => setReviewRecoveredAmount(event.target.value)}
+                placeholder="24.90"
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="review_expected_date">Paiement attendu</label>
+              <input
+                id="review_expected_date"
+                type="date"
+                value={reviewExpectedPaymentDate}
+                onChange={(event) => setReviewExpectedPaymentDate(event.target.value)}
+              />
+            </div>
+          </div>
+          <div className="field">
+            <label htmlFor="review_refusal_reason">Raison refus</label>
+            <input
+              id="review_refusal_reason"
+              value={reviewRefusalReason}
+              onChange={(event) => setReviewRefusalReason(event.target.value)}
+            />
+          </div>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={reviewEvidenceRequested}
+              onChange={(event) => setReviewEvidenceRequested(event.target.checked)}
+            />
+            Preuve ou information demandee
+          </label>
+          <div className="field">
+            <label htmlFor="review_notes">Notes</label>
+            <textarea id="review_notes" value={reviewNotes} onChange={(event) => setReviewNotes(event.target.value)} />
+          </div>
+          <button type="submit" className="button" disabled={working === "review" || dispute.status === "payment_confirmed" || dispute.status === "ignored"}>
+            Enregistrer decision
+          </button>
+        </form>
+
+        <section className="tool-panel">
+          <h2>Historique decisions</h2>
+          {detail.reviews.length > 0 ? (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Decision</th>
+                    <th>Avant</th>
+                    <th>Apres</th>
+                    <th>Montant</th>
+                    <th>Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.reviews.map((review) => (
+                    <tr key={review.id}>
+                      <td>
+                        <StatusBadge status={review.review_type} />
+                      </td>
+                      <td>{review.previous_dispute_status}</td>
+                      <td>{review.new_dispute_status}</td>
+                      <td>{formatCurrency(review.recovered_amount, dispute.currency)}</td>
+                      <td>{formatDate(review.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <EmptyState title="Aucune decision traitee" />
+          )}
+        </section>
       </section>
 
       <section className="grid-two">

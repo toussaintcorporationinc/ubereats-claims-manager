@@ -206,6 +206,24 @@ Regles appliquees :
 - les brouillons de contestation restent internes ou Gmail draft, sans envoi automatique ;
 - aucun module ne promet un remboursement automatique ou une decision sans validation humaine ;
 - chaque detection, creation de dispute, recalcul preuve, creation de dossier, creation de brouillon, brouillon Gmail et ignore cree un `AuditLog`.
+- les decisions sur deductions creent un `CustomerRefundDisputeReview` et un `AuditLog` ;
+- `payment_confirmed` et `ignored` protegent la dispute contre une transition risquee en V1.1 ;
+- les montants recuperes et refus sont saisis manuellement par utilisateur autorise.
+
+## Cockpit recuperation
+
+Le cockpit recuperation agrege des donnees financieres et reste protege.
+
+Regles appliquees :
+
+- `owner` voit tous les restaurants ;
+- `manager` voit uniquement ses restaurants assignes ;
+- `staff` ne peut pas exporter les rapports financiers recovery ;
+- les exports `summary.xlsx` et `cases.csv` appliquent les memes droits que les endpoints JSON ;
+- les exports ne contiennent pas tokens Gmail, secrets, mots de passe, `access_token`, `refresh_token`, chemin disque brut de preuve ou contenu de fichier ;
+- les actions staff restent limitees aux preuves autorisees par le workflow existant ;
+- aucune action du cockpit n'envoie un email, ne cree une relance automatique ou ne modifie Gmail automatiquement ;
+- TENNET ne garantit pas le remboursement et ne doit pas presenter le cockpit comme une promesse de recuperation.
 
 ## Backups
 
@@ -280,6 +298,8 @@ Un `AuditLog` est cree pour :
 - message inbound marque revu ou ignore.
 - creation, skip et completion de taches de relance.
 - detection, creation, recalcul, brouillon et ignore de disputes de deductions Uber.
+- creation de reviews sur deductions Uber.
+- changements de statut issus du cockpit ou des reviews de deductions.
 
 ## Limites V1
 
