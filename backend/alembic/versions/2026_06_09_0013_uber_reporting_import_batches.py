@@ -1,6 +1,6 @@
 """uber reporting import batches
 
-Revision ID: 0013_uber_reporting_import_batches
+Revision ID: 0013_uber_reporting_import
 Revises: 0012_uber_connector_foundation
 Create Date: 2026-06-09 15:00:00.000000
 """
@@ -10,7 +10,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0013_uber_reporting_import_batches"
+revision: str = "0013_uber_reporting_import"
 down_revision: str | None = "0012_uber_connector_foundation"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
