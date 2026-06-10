@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import ApiError from "@/components/ApiError";
 import EmptyState from "@/components/EmptyState";
 import LoadingState from "@/components/LoadingState";
+import RecoveryActionCard from "@/components/RecoveryActionCard";
+import ResponsiveDataList from "@/components/ResponsiveDataList";
 import StatusBadge from "@/components/StatusBadge";
 import {
   api,
@@ -117,44 +119,47 @@ export default function RecoveryActionsPage() {
         </div>
       </section>
 
-      {actions.length > 0 ? (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Action</th>
-                <th>Restaurant</th>
-                <th>Priorite</th>
-                <th>Montant</th>
-                <th>Echeance</th>
-                <th>Type</th>
-                <th>Ouvrir</th>
-              </tr>
-            </thead>
-            <tbody>
-              {actions.map((action) => (
-                <tr key={`${action.case_type}-${action.case_id}-${action.action_type}`}>
-                  <td>{action.label}</td>
-                  <td>{action.restaurant_name}</td>
-                  <td>
-                    <StatusBadge status={action.priority} />
-                  </td>
-                  <td>{formatCurrency(action.amount)}</td>
-                  <td>{formatDate(action.due_at)}</td>
-                  <td>{action.action_type}</td>
-                  <td>
-                    <Link className="secondary-button" href={action.url}>
-                      Ouvrir
-                    </Link>
-                  </td>
+      <ResponsiveDataList
+        items={actions}
+        empty={<EmptyState title="Aucune action" />}
+        renderMobileCard={(action) => <RecoveryActionCard key={`${action.case_type}-${action.case_id}-${action.action_type}`} action={action} />}
+        desktop={
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Action</th>
+                  <th>Restaurant</th>
+                  <th>Priorite</th>
+                  <th>Montant</th>
+                  <th>Echeance</th>
+                  <th>Type</th>
+                  <th>Ouvrir</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <EmptyState title="Aucune action" />
-      )}
+              </thead>
+              <tbody>
+                {actions.map((action) => (
+                  <tr key={`${action.case_type}-${action.case_id}-${action.action_type}`}>
+                    <td>{action.label}</td>
+                    <td>{action.restaurant_name}</td>
+                    <td>
+                      <StatusBadge status={action.priority} />
+                    </td>
+                    <td>{formatCurrency(action.amount)}</td>
+                    <td>{formatDate(action.due_at)}</td>
+                    <td>{action.action_type}</td>
+                    <td>
+                      <Link className="secondary-button" href={action.url}>
+                        Ouvrir
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        }
+      />
     </section>
   );
 }

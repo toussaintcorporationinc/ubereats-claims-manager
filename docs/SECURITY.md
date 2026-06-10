@@ -431,3 +431,11 @@ La fondation Uber Mission 18 respecte les regles suivantes :
 - les colonnes inconnues sont ignorees, les colonnes manquantes produisent erreurs/warnings ;
 - les stores non mappes ne creent pas automatiquement de restaurant ;
 - les exemples CSV fournis sont fictifs et ne contiennent aucune vraie commande.
+
+## Smart Import et UX mobile
+
+- Smart Import stocke uniquement des metadonnees de preview, pas le contenu brut des fichiers.
+- Les previews ne doivent jamais exposer token, secret, chemin disque brut ou credential Gmail.
+- Les documents inconnus sont envoyes en revue manuelle.
+- Les actions `staff` restent limitees a la collecte de preuves autorisee.
+- La PWA legere ne stocke pas de donnees sensibles hors ligne.

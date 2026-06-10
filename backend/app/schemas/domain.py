@@ -314,6 +314,21 @@ AutopilotActionStatus = Literal[
     "failed",
     "manual_review",
 ]
+SmartImportCategory = Literal["uber_reporting", "evidence", "zip", "unknown"]
+SmartImportRecommendedAction = Literal["import_uber_reporting", "import_evidence_bulk", "manual_review", "ignore"]
+WorkspaceActionType = Literal[
+    "upload_evidence",
+    "review_import",
+    "create_claim_order",
+    "create_draft",
+    "connect_gmail",
+    "send_manual",
+    "appeal_refusal",
+    "map_uber_store",
+    "review_customer_refund",
+    "export_report",
+    "manual_review",
+]
 
 
 class UserRead(BaseModel):
@@ -1676,6 +1691,61 @@ class RecoveryActionsResponse(BaseModel):
     actions: list[RecoveryAction]
     limit: int
     offset: int
+
+
+class WorkspaceAction(BaseModel):
+    title: str
+    description: str
+    restaurant: str | None = None
+    amount: Decimal | None = None
+    priority: str
+    action_url: str
+    action_type: WorkspaceActionType
+
+
+class WorkspaceNextActionsResponse(BaseModel):
+    urgent: list[WorkspaceAction] = Field(default_factory=list)
+    today: list[WorkspaceAction] = Field(default_factory=list)
+    this_week: list[WorkspaceAction] = Field(default_factory=list)
+    blocked: list[WorkspaceAction] = Field(default_factory=list)
+    high_value: list[WorkspaceAction] = Field(default_factory=list)
+
+
+class SmartImportFilePreviewRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    original_filename: str
+    file_type: str
+    detected_category: SmartImportCategory
+    detected_report_type: str | None
+    detected_evidence_type: str | None
+    detected_restaurant_name: str | None
+    detected_date_from: date | None
+    detected_date_to: date | None
+    header_row_number: int | None
+    skipped_preamble_rows: int
+    confidence: Decimal
+    recommended_action: SmartImportRecommendedAction
+    warnings: list[str]
+    detected_columns: list[str]
+    metadata_json: dict[str, Any] | None = None
+
+
+class SmartImportPreviewResponse(BaseModel):
+    batch_preview_id: int
+    status: str
+    files: list[SmartImportFilePreviewRead]
+
+
+class SmartImportConfirmRequest(BaseModel):
+    batch_preview_id: int
+
+
+class SmartImportConfirmResponse(BaseModel):
+    batch_preview_id: int
+    status: str
+    recommended_actions: list[SmartImportRecommendedAction]
 
 
 class EvidenceImportBatchRead(BaseModel):

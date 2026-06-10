@@ -2,13 +2,16 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import LoadingState from "@/components/LoadingState";
+import MobileHeader from "@/components/MobileHeader";
+import MobileNavDrawer, { type NavItem } from "@/components/MobileNavDrawer";
 import { useAuth } from "@/lib/auth";
 
-const navigation = [
+const navigation: NavItem[] = [
   { href: "/dashboard", label: "Dashboard" },
+  { href: "/smart-import", label: "Smart Import", ownerOrManagerOnly: true },
   { href: "/restaurants", label: "Restaurants" },
   { href: "/orders", label: "Commandes" },
   { href: "/imports", label: "Imports" },
@@ -33,6 +36,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { user, loading, logout } = useAuth();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const isPublicPath = publicPaths.has(pathname) || pathname.startsWith("/evidence-upload/");
 
   useEffect(() => {
@@ -53,8 +57,22 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     );
   }
 
+  const handleLogout = () => {
+    setMobileMenuOpen(false);
+    logout();
+    router.replace("/login");
+  };
+
   return (
     <div className="app-shell">
+      <MobileHeader onMenuClick={() => setMobileMenuOpen(true)} />
+      <MobileNavDrawer
+        open={mobileMenuOpen}
+        items={navigation}
+        userRole={user.role}
+        onClose={() => setMobileMenuOpen(false)}
+        onLogout={handleLogout}
+      />
       <aside className="sidebar" aria-label="Navigation principale">
         <Link href="/dashboard" className="brand">
           <span className="brand-mark">T</span>
@@ -76,10 +94,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           <button
             type="button"
             className="secondary-button"
-            onClick={() => {
-              logout();
-              router.replace("/login");
-            }}
+            onClick={handleLogout}
           >
             Deconnexion
           </button>

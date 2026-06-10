@@ -182,3 +182,19 @@ La V1 pose la base applicative et les premiers objets metier :
 - Next.js TypeScript pour l'interface ;
 - Docker Compose pour lancer backend, frontend et base de donnees.
 
+## Principes UX premium V1.2
+
+TENNET doit toujours privilegier :
+1. Une action claire plutot qu'un tableau complexe.
+2. Une recommandation plutot qu'un choix technique.
+3. Un statut lisible plutot qu'un code interne.
+4. Un workflow guide plutot qu'un ecran vide.
+5. Une confirmation humaine seulement quand elle est utile.
+6. Une revue manuelle seulement quand TENNET doute.
+7. Un import intelligent plutot qu'un renommage manuel.
+8. Une interface mobile exploitable sur le terrain.
+
+Les codes internes doivent etre masques dans l'interface quand c'est possible. Exemples : `combined_report` devient "Rapport Uber detecte", `missing_evidence` devient "Preuves manquantes", `manual_review` devient "A verifier" et `customer_refund` devient "Remboursement client".
+
+TENNET ne garantit pas le remboursement. L'objectif produit est qu'aucune perte detectee ne reste sans revue.
+

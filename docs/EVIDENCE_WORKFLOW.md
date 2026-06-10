@@ -109,3 +109,9 @@ L'analyse OpenAI reste desactivee par defaut. Le fournisseur `fake` permet les t
 ## Garanties
 
 TENNET ne doit jamais inventer une preuve. Aucun email, aucune relance et aucune contestation ne sont envoyes automatiquement par ce workflow.
+
+## Mobile field workflow
+
+On mobile, staff should open `/evidence-tasks`, choose the task card, then upload the requested photo or PDF. Smart Import can also route unknown images or ZIP files toward the evidence import workflow.
+
+TENNET must keep the action simple for field users: take or upload the proof, then let owner/manager continue the financial review.

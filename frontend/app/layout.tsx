@@ -6,6 +6,10 @@ import "./globals.css";
 export const metadata = {
   title: "TENNET",
   description: "Interface de gestion des reclamations Uber Eats.",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({

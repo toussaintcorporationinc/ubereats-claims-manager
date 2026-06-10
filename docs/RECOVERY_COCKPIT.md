@@ -111,3 +111,17 @@ During staging acceptance, verify that the cockpit includes:
 - manual-review cases.
 
 The cockpit remains an operational tracking view, not a promise of recovery.
+
+## A faire maintenant
+
+`GET /v1/workspace/next-actions` provides a simplified action queue for dashboard and mobile usage.
+
+Buckets:
+
+- `urgent` ;
+- `today` ;
+- `this_week` ;
+- `blocked` ;
+- `high_value`.
+
+Staff users receive only evidence actions. Owner and manager users also receive recovery, import, report and AutoPilot guidance.

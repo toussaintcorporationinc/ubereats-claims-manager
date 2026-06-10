@@ -76,3 +76,9 @@ Validate:
 - high-confidence matches can be accepted;
 - evidence tasks complete after attachment;
 - claim order validation is retried.
+
+## Smart Import entry point
+
+Operators can start from `/smart-import` with images, PDFs or ZIP files. TENNET recommends `import_evidence_bulk` when the content looks like evidence, then the normal bulk evidence workflow continues.
+
+The filename is only a hint. It is never required to match a specific naming convention.

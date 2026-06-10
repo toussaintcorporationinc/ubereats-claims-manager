@@ -5,21 +5,26 @@ import { useEffect, useState } from "react";
 import ApiError from "@/components/ApiError";
 import EmptyState from "@/components/EmptyState";
 import LoadingState from "@/components/LoadingState";
+import PremiumEmptyState from "@/components/PremiumEmptyState";
+import RecoveryActionCard from "@/components/RecoveryActionCard";
 import StatCard from "@/components/StatCard";
 import StatusBadge from "@/components/StatusBadge";
 import { useAuth } from "@/lib/auth";
-import { api, type DashboardSummary, formatCurrency } from "@/lib/api";
+import { api, type DashboardSummary, type WorkspaceNextActionsResponse, formatCurrency } from "@/lib/api";
 
 export default function DashboardPage() {
   const { user } = useAuth();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [nextActions, setNextActions] = useState<WorkspaceNextActionsResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api
-      .getDashboardSummary()
-      .then(setSummary)
+    Promise.all([api.getDashboardSummary(), api.getWorkspaceNextActions()])
+      .then(([summaryData, actionsData]) => {
+        setSummary(summaryData);
+        setNextActions(actionsData);
+      })
       .catch(setError)
       .finally(() => setLoading(false));
   }, []);
@@ -51,6 +56,31 @@ export default function DashboardPage() {
 
       {summary ? (
         <>
+          {nextActions ? (
+            <section className="tool-panel">
+              <div className="section-heading">
+                <div>
+                  <h2>{user?.role === "staff" ? "Mes preuves a fournir" : "A faire maintenant"}</h2>
+                  <p className="muted">
+                    {user?.role === "staff"
+                      ? "Les actions terrain sont limitees aux preuves et aux uploads autorises."
+                      : "TENNET priorise les actions pour qu'aucune perte detectee ne reste sans revue."}
+                  </p>
+                </div>
+                {user?.role !== "staff" ? (
+                  <Link href="/recovery/actions" className="secondary-button">
+                    File actions
+                  </Link>
+                ) : (
+                  <Link href="/evidence-tasks" className="secondary-button">
+                    Preuves
+                  </Link>
+                )}
+              </div>
+              <NextActionsGrid nextActions={nextActions} />
+            </section>
+          ) : null}
+
           <div className="stats-grid">
             <StatCard label="Dossiers" value={summary.total_orders} />
             <StatCard label="Total reclame" value={formatCurrency(summary.total_claimed_amount)} />
@@ -184,6 +214,28 @@ export default function DashboardPage() {
         </>
       ) : null}
     </section>
+  );
+}
+
+function NextActionsGrid({ nextActions }: { nextActions: WorkspaceNextActionsResponse }) {
+  const actions = [
+    ...nextActions.urgent,
+    ...nextActions.today,
+    ...nextActions.blocked,
+    ...nextActions.high_value,
+    ...nextActions.this_week,
+  ].slice(0, 6);
+
+  if (actions.length === 0) {
+    return <PremiumEmptyState title="Rien d'urgent" description="Les dossiers visibles sont a jour pour votre role." />;
+  }
+
+  return (
+    <div className="premium-card-grid">
+      {actions.map((action) => (
+        <RecoveryActionCard key={`${action.action_type}-${action.action_url}`} action={action} />
+      ))}
+    </div>
   );
 }
 
