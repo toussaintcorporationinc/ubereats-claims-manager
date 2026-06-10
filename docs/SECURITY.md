@@ -207,6 +207,27 @@ Regles appliquees :
 - `FOLLOWUP_AUTOMATIC_SEND_ENABLED` ne declenche aucun envoi automatique ;
 - chaque recalcul, creation de brouillon, skip et completion est audite.
 
+## AutoPilot controle
+
+AutoPilot V1.2 ajoute un envoi Gmail automatique strictement controle. Il est desactive par defaut et ne doit jamais etre active sans validation operationnelle.
+
+Regles de securite :
+
+- `AUTOPILOT_ENABLED=false` par defaut ;
+- `AUTOPILOT_INITIAL_CLAIMS_ENABLED=false`, `AUTOPILOT_FOLLOWUPS_ENABLED=false` et `AUTOPILOT_APPEALS_ENABLED=false` par defaut ;
+- chaque restaurant doit avoir `autopilot_enabled=true` avant d'etre eligible ;
+- Gmail doit etre active et connecte si `AUTOPILOT_REQUIRE_GMAIL_CONNECTED=true` ;
+- les preuves completes sont requises si `AUTOPILOT_REQUIRE_COMPLETE_EVIDENCE=true` ;
+- les limites quotidiennes globale et par restaurant bloquent le spam ;
+- le cooldown limite les relances et appels repetes ;
+- l'arret d'urgence `POST /v1/autopilot/stop` bloque les nouveaux runs ;
+- un refus Uber ne cloture jamais automatiquement un dossier ;
+- aucune preuve, commande ou montant ne peut etre invente ;
+- aucun token Gmail, secret, mot de passe ou contenu `.env` n'est expose par les endpoints AutoPilot ;
+- chaque run et chaque action sont traces par `AutopilotRun`, `AutopilotAction` et `AuditLog`.
+
+TENNET ne garantit pas le remboursement. AutoPilot automatise une execution controlee, pas une decision commerciale irreversible.
+
 ## Appels persistants apres refus
 
 Un refus Uber ne cloture pas un dossier automatiquement. Il cree ou alimente un workflow d'appel controle.

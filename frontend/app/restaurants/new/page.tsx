@@ -14,6 +14,7 @@ type RestaurantForm = {
   sender_email: string;
   uber_merchant_id: string;
   active: boolean;
+  autopilot_enabled: boolean;
 };
 
 const initialForm: RestaurantForm = {
@@ -23,6 +24,7 @@ const initialForm: RestaurantForm = {
   sender_email: "",
   uber_merchant_id: "",
   active: true,
+  autopilot_enabled: false,
 };
 
 export default function NewRestaurantPage() {
@@ -50,6 +52,7 @@ export default function NewRestaurantPage() {
         sender_email: form.sender_email.trim(),
         uber_merchant_id: emptyToNull(form.uber_merchant_id),
         active: form.active,
+        autopilot_enabled: form.autopilot_enabled,
       });
       setCreatedRestaurant(restaurant);
       setForm(initialForm);
@@ -141,6 +144,14 @@ export default function NewRestaurantPage() {
               onChange={(event) => setForm((current) => ({ ...current, active: event.target.checked }))}
             />
             Actif
+          </label>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={form.autopilot_enabled}
+              onChange={(event) => setForm((current) => ({ ...current, autopilot_enabled: event.target.checked }))}
+            />
+            AutoPilot active pour ce restaurant
           </label>
         </div>
         <div className="actions">

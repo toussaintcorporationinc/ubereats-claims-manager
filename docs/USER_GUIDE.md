@@ -178,6 +178,23 @@ The cockpit also highlights active appeals, escalations and refused amounts stil
 
 Follow-ups are limited and traceable. There is no infinite follow-up loop.
 
+## AutoPilot controlled send
+
+AutoPilot can send Gmail emails automatically only when the configured safety rules are met. It is off by default.
+
+Use it this way:
+
+1. Confirm Gmail is connected.
+2. Confirm the restaurant has AutoPilot enabled.
+3. Open `/autopilot`.
+4. Choose initial claims, follow-ups, appeals or all.
+5. Run a dry-run first.
+6. Review candidates and skipped reasons.
+7. Run AutoPilot only if the dry-run is correct.
+8. Review `/autopilot/runs` after execution.
+
+AutoPilot requires complete evidence, daily limits, per-restaurant limits and cooldowns. It never closes a refusal automatically and does not guarantee reimbursement. Use the emergency stop button if sending must be paused immediately.
+
 ## Reports and exports
 
 1. Open `/reports`.

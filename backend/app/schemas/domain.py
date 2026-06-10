@@ -293,6 +293,27 @@ RefusalNextAction = Literal[
     "payment_verification",
     "manual_review",
 ]
+AutopilotMode = Literal["initial_claims", "followups", "appeals", "all", "emergency_stop"]
+AutopilotRunStatus = Literal["running", "completed", "failed", "stopped"]
+AutopilotCaseType = Literal["claim_order", "followup_task", "appeal_workflow"]
+AutopilotActionType = Literal[
+    "send_initial_claim",
+    "send_followup_1",
+    "send_followup_2",
+    "send_escalation",
+    "send_appeal",
+    "request_more_evidence",
+    "manual_review",
+]
+AutopilotActionStatus = Literal[
+    "candidate",
+    "skipped",
+    "draft_created",
+    "provider_draft_created",
+    "sent",
+    "failed",
+    "manual_review",
+]
 
 
 class UserRead(BaseModel):
@@ -360,6 +381,7 @@ class RestaurantCreate(BaseModel):
     sender_email: str = Field(min_length=1)
     uber_merchant_id: str | None = None
     active: bool = True
+    autopilot_enabled: bool = False
 
 
 class RestaurantUpdate(BaseModel):
@@ -369,6 +391,7 @@ class RestaurantUpdate(BaseModel):
     sender_email: str | None = Field(default=None, min_length=1)
     uber_merchant_id: str | None = None
     active: bool | None = None
+    autopilot_enabled: bool | None = None
 
 
 class RestaurantRead(BaseModel):
@@ -381,6 +404,7 @@ class RestaurantRead(BaseModel):
     sender_email: str
     uber_merchant_id: str | None
     active: bool
+    autopilot_enabled: bool
     created_at: datetime
     updated_at: datetime
 
@@ -1933,4 +1957,89 @@ class AppealPauseRequest(BaseModel):
 
 class AppealManualCloseRequest(BaseModel):
     reason: str = Field(min_length=1)
+
+
+class AutopilotRunRequest(BaseModel):
+    mode: AutopilotMode = "all"
+    restaurant_id: int | None = None
+    dry_run: bool = True
+
+
+class AutopilotSettingsRead(BaseModel):
+    enabled: bool
+    initial_claims_enabled: bool
+    followups_enabled: bool
+    appeals_enabled: bool
+    daily_send_limit: int
+    per_restaurant_daily_limit: int
+    min_amount: Decimal
+    max_amount_without_owner_review: Decimal
+    require_complete_evidence: bool
+    require_gmail_connected: bool
+    cooldown_hours: int
+    refusal_retry_enabled: bool
+    max_appeal_attempts: int
+    never_close_on_refusal: bool
+
+
+class AutopilotStatusResponse(BaseModel):
+    settings: AutopilotSettingsRead
+    gmail_provider_enabled: bool
+    gmail_connected: bool
+    gmail_email_address: str | None
+    emergency_stopped: bool
+    sent_today_count: int
+    remaining_today_count: int
+
+
+class AutopilotRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    started_by_user_id: int | None
+    status: AutopilotRunStatus
+    mode: AutopilotMode
+    total_candidates: int
+    sent_count: int
+    skipped_count: int
+    failed_count: int
+    created_at: datetime
+    completed_at: datetime | None
+    error_message: str | None
+
+
+class AutopilotActionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_id: int
+    case_type: AutopilotCaseType
+    case_id: int
+    restaurant_id: int
+    action_type: AutopilotActionType
+    status: AutopilotActionStatus
+    reason: str
+    email_draft_id: int | None
+    provider_draft_id: int | None
+    sent_at: datetime | None
+    skipped_reason: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AutopilotRunDetailResponse(BaseModel):
+    run: AutopilotRunRead
+    actions: list[AutopilotActionRead]
+
+
+class AutopilotRunsResponse(BaseModel):
+    runs: list[AutopilotRunRead]
+    limit: int
+    offset: int
+
+
+class AutopilotActionsResponse(BaseModel):
+    actions: list[AutopilotActionRead]
+    limit: int
+    offset: int
 

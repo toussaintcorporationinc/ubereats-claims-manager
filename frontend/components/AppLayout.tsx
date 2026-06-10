@@ -17,6 +17,7 @@ const navigation = [
   { href: "/evidence-imports", label: "Import preuves", ownerOrManagerOnly: true },
   { href: "/followups", label: "Relances", ownerOrManagerOnly: true },
   { href: "/appeals", label: "Appels / Refus Uber", ownerOrManagerOnly: true },
+  { href: "/autopilot", label: "AutoPilot", ownerOrManagerOnly: true },
   { href: "/customer-refunds", label: "Deductions Uber", ownerOrManagerOnly: true },
   { href: "/recovery", label: "Recuperation", ownerOrManagerOnly: true },
   { href: "/reports", label: "Rapports", ownerOrManagerOnly: true },

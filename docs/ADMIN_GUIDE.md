@@ -188,6 +188,37 @@ Operational review cadence:
 - confirm recovered amounts only after payment evidence or accounting confirmation;
 - document refusals and manual review notes.
 
+## AutoPilot administration
+
+Owners and managers can use `/autopilot` to preview and run controlled Gmail sending. Staff cannot run AutoPilot.
+
+Activation sequence:
+
+1. Configure Gmail and verify the account is connected.
+2. Set `AUTOPILOT_ENABLED=true`.
+3. Enable only the required mode flags: initial claims, follow-ups or appeals.
+4. Enable AutoPilot per restaurant from `/restaurants`.
+5. Run a dry-run and review every skipped reason.
+6. Run the selected mode only after validation.
+
+Operational settings:
+
+- `AUTOPILOT_DAILY_SEND_LIMIT` caps global daily sends;
+- `AUTOPILOT_PER_RESTAURANT_DAILY_LIMIT` caps sends by restaurant;
+- `AUTOPILOT_MIN_AMOUNT` and `AUTOPILOT_MAX_AMOUNT_WITHOUT_OWNER_REVIEW` protect low and high value cases;
+- `AUTOPILOT_REQUIRE_COMPLETE_EVIDENCE=true` blocks incomplete dossiers;
+- `AUTOPILOT_REQUIRE_GMAIL_CONNECTED=true` blocks sending without Gmail;
+- `AUTOPILOT_COOLDOWN_HOURS` limits repeated sends;
+- `AUTOPILOT_MAX_APPEAL_ATTEMPTS` blocks infinite appeals;
+- `AUTOPILOT_NEVER_CLOSE_ON_REFUSAL=true` keeps refusals open for review.
+
+Emergency policy:
+
+- use `POST /v1/autopilot/stop` or the UI emergency stop button if sending must stop immediately;
+- investigate `AutopilotRun`, `AutopilotAction` and `AuditLog` before re-enabling;
+- do not raise limits during an incident;
+- TENNET does not guarantee reimbursement and must not be presented as doing so.
+
 ## Data retention
 
 V1 does not include an automated retention workflow. Recommended operating policy:

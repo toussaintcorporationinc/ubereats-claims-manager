@@ -173,6 +173,29 @@ Regles :
 - l'envoi Gmail reste manuel et confirme via le workflow d'envoi existant ;
 - chaque recalcul, creation, skip ou completion de tache est audite.
 
+## AutoPilot controle V1.2
+
+AutoPilot peut envoyer automatiquement des contestations initiales, relances ou appels uniquement si toutes les conditions de securite sont remplies. Il reste desactive par defaut.
+
+Flags obligatoires :
+
+- `AUTOPILOT_ENABLED=true` ;
+- `AUTOPILOT_INITIAL_CLAIMS_ENABLED=true` pour les contestations initiales ;
+- `AUTOPILOT_FOLLOWUPS_ENABLED=true` pour les relances ;
+- `AUTOPILOT_APPEALS_ENABLED=true` pour les appels ;
+- `EMAIL_PROVIDER_ENABLED=true` et Gmail connecte si `AUTOPILOT_REQUIRE_GMAIL_CONNECTED=true`.
+
+Regles :
+
+- aucun dossier incomplet n'est envoye ;
+- aucune preuve, montant ou commande n'est invente ;
+- les limites `AUTOPILOT_DAILY_SEND_LIMIT` et `AUTOPILOT_PER_RESTAURANT_DAILY_LIMIT` limitent le volume ;
+- `AUTOPILOT_COOLDOWN_HOURS` espace les relances et appels ;
+- un refus Uber ne cloture jamais automatiquement un dossier ;
+- un renvoi identique sans nouvel argument est bloque quand `APPEAL_ALLOW_SAME_TEMPLATE_RESEND=false` ;
+- `POST /v1/autopilot/dry-run` previsualise sans envoyer ;
+- `POST /v1/autopilot/stop` active un arret d'urgence.
+
 ## Regles de generation
 
 - `initial_claim` exige une commande `ready_to_send` et complete selon le service de validation ;
@@ -195,8 +218,8 @@ Regles :
 ## Hors perimetre actuel
 
 - SMTP ;
-- envoi automatique ;
-- relances automatiques ;
+- envoi automatique hors AutoPilot controle ;
+- relances automatiques hors AutoPilot controle ;
 - generation OpenAI de contenu d'email.
 - classification IA de reponses Uber ;
 - reponse automatique aux emails entrants.
@@ -216,6 +239,7 @@ Regles :
 - Refusals create review/appeal work, not automatic closure.
 - Appeal drafts stay internal until an authorized user creates a Gmail draft.
 - Gmail sending remains manual and explicit.
+- AutoPilot V1.2 is opt-in, controlled by disabled-by-default flags and per-restaurant activation.
 - `APPEAL_AUTO_SEND_ENABLED=false` must remain the default.
 - `FOLLOWUP_AUTOMATIC_SEND_ENABLED=false` must remain the default.
 - No spam loop is acceptable.

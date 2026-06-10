@@ -14,6 +14,7 @@ export default function RestaurantsPage() {
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
+  const [updatingRestaurantId, setUpdatingRestaurantId] = useState<number | null>(null);
 
   useEffect(() => {
     api
@@ -22,6 +23,21 @@ export default function RestaurantsPage() {
       .catch(setError)
       .finally(() => setLoading(false));
   }, []);
+
+  async function toggleAutopilot(restaurant: Restaurant) {
+    setUpdatingRestaurantId(restaurant.id);
+    setError(null);
+    try {
+      const updated = await api.updateRestaurant(restaurant.id, {
+        autopilot_enabled: !restaurant.autopilot_enabled,
+      });
+      setRestaurants((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+    } catch (apiError) {
+      setError(apiError);
+    } finally {
+      setUpdatingRestaurantId(null);
+    }
+  }
 
   if (loading) {
     return <LoadingState label="Chargement des restaurants" />;
@@ -54,6 +70,7 @@ export default function RestaurantsPage() {
                 <th>Email expediteur</th>
                 <th>Uber merchant</th>
                 <th>Statut</th>
+                <th>AutoPilot</th>
               </tr>
             </thead>
             <tbody>
@@ -66,6 +83,21 @@ export default function RestaurantsPage() {
                   <td>{restaurant.uber_merchant_id ?? "-"}</td>
                   <td>
                     <StatusBadge status={restaurant.active ? "active" : "inactive"} />
+                  </td>
+                  <td>
+                    <div className="actions">
+                      <StatusBadge status={restaurant.autopilot_enabled ? "active" : "inactive"} />
+                      {user?.role === "owner" ? (
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={updatingRestaurantId === restaurant.id}
+                          onClick={() => void toggleAutopilot(restaurant)}
+                        >
+                          {restaurant.autopilot_enabled ? "Desactiver" : "Activer"}
+                        </button>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))}

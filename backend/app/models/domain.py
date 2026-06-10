@@ -268,6 +268,27 @@ REFUSAL_NEXT_ACTIONS = (
     "payment_verification",
     "manual_review",
 )
+AUTOPILOT_RUN_STATUSES = ("running", "completed", "failed", "stopped")
+AUTOPILOT_MODES = ("initial_claims", "followups", "appeals", "all", "emergency_stop")
+AUTOPILOT_CASE_TYPES = ("claim_order", "followup_task", "appeal_workflow")
+AUTOPILOT_ACTION_TYPES = (
+    "send_initial_claim",
+    "send_followup_1",
+    "send_followup_2",
+    "send_escalation",
+    "send_appeal",
+    "request_more_evidence",
+    "manual_review",
+)
+AUTOPILOT_ACTION_STATUSES = (
+    "candidate",
+    "skipped",
+    "draft_created",
+    "provider_draft_created",
+    "sent",
+    "failed",
+    "manual_review",
+)
 
 
 def utc_now() -> datetime:
@@ -336,6 +357,7 @@ class Restaurant(TimestampMixin, Base):
     sender_email: Mapped[str] = mapped_column(String(255), nullable=False)
     uber_merchant_id: Mapped[str | None] = mapped_column(String(255))
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    autopilot_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     orders: Mapped[list["ClaimOrder"]] = relationship(back_populates="restaurant")
     user_access: Mapped[list[UserRestaurantAccess]] = relationship(back_populates="restaurant")
@@ -348,6 +370,7 @@ class Restaurant(TimestampMixin, Base):
     customer_refund_disputes: Mapped[list["UberCustomerRefundDispute"]] = relationship(back_populates="restaurant")
     evidence_import_batches: Mapped[list["EvidenceImportBatch"]] = relationship(back_populates="restaurant")
     appeal_workflows: Mapped[list["AppealWorkflow"]] = relationship(back_populates="restaurant")
+    autopilot_actions: Mapped[list["AutopilotAction"]] = relationship(back_populates="restaurant")
 
 
 class ClaimOrder(TimestampMixin, Base):
@@ -749,6 +772,63 @@ class EmailProviderDraft(TimestampMixin, Base):
     last_error: Mapped[str | None] = mapped_column(Text)
 
     email_draft: Mapped[EmailDraft] = relationship(back_populates="provider_drafts")
+
+
+class AutopilotRun(Base):
+    __tablename__ = "autopilot_runs"
+    __table_args__ = (
+        CheckConstraint(check_in_constraint("status", AUTOPILOT_RUN_STATUSES), name="ck_autopilot_runs_status"),
+        CheckConstraint(check_in_constraint("mode", AUTOPILOT_MODES), name="ck_autopilot_runs_mode"),
+        Index("ix_autopilot_runs_status", "status"),
+        Index("ix_autopilot_runs_mode", "mode"),
+        Index("ix_autopilot_runs_created_at", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    started_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    mode: Mapped[str] = mapped_column(String(50), nullable=False)
+    total_candidates: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sent_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    actions: Mapped[list["AutopilotAction"]] = relationship(back_populates="run", cascade="all, delete-orphan")
+
+
+class AutopilotAction(TimestampMixin, Base):
+    __tablename__ = "autopilot_actions"
+    __table_args__ = (
+        CheckConstraint(check_in_constraint("case_type", AUTOPILOT_CASE_TYPES), name="ck_autopilot_actions_case_type"),
+        CheckConstraint(check_in_constraint("action_type", AUTOPILOT_ACTION_TYPES), name="ck_autopilot_actions_action_type"),
+        CheckConstraint(check_in_constraint("status", AUTOPILOT_ACTION_STATUSES), name="ck_autopilot_actions_status"),
+        Index("ix_autopilot_actions_run_id", "run_id"),
+        Index("ix_autopilot_actions_restaurant_id", "restaurant_id"),
+        Index("ix_autopilot_actions_case", "case_type", "case_id"),
+        Index("ix_autopilot_actions_status", "status"),
+        Index("ix_autopilot_actions_sent_at", "sent_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("autopilot_runs.id"), nullable=False)
+    case_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    case_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    restaurant_id: Mapped[int] = mapped_column(ForeignKey("restaurants.id"), nullable=False)
+    action_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="candidate")
+    reason: Mapped[str] = mapped_column(String(255), nullable=False)
+    email_draft_id: Mapped[int | None] = mapped_column(ForeignKey("email_drafts.id"))
+    provider_draft_id: Mapped[int | None] = mapped_column(ForeignKey("email_provider_drafts.id"))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    skipped_reason: Mapped[str | None] = mapped_column(Text)
+
+    run: Mapped[AutopilotRun] = relationship(back_populates="actions")
+    restaurant: Mapped[Restaurant] = relationship(back_populates="autopilot_actions")
+    email_draft: Mapped[EmailDraft | None] = relationship(foreign_keys=[email_draft_id])
+    provider_draft: Mapped[EmailProviderDraft | None] = relationship(foreign_keys=[provider_draft_id])
 
 
 class UberIntegrationAccount(TimestampMixin, Base):

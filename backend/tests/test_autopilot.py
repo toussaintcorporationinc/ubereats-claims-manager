@@ -1,0 +1,444 @@
+from __future__ import annotations
+
+from collections.abc import Generator
+from datetime import timedelta
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.config import get_settings
+from app.main import app
+from app.models import (
+    AppealAttempt,
+    AppealWorkflow,
+    AuditLog,
+    ClaimOrder,
+    EmailAccount,
+    EmailDraft,
+    EmailProviderDraft,
+    FollowUpTask,
+    User,
+)
+from app.models.domain import utc_now
+from app.routes.email import get_gmail_provider
+from app.services.email_provider import EmailConnectionStatus, EmailSendResult
+
+
+class FakeAutopilotGmailProvider:
+    provider = "gmail"
+
+    def get_connection_status(self, db: Session, user: User) -> EmailConnectionStatus:
+        if not get_settings().email_provider_enabled:
+            return EmailConnectionStatus(connected=False, provider="gmail", email_address=None, enabled=False)
+        account = db.scalar(
+            select(EmailAccount).where(
+                EmailAccount.user_id == user.id,
+                EmailAccount.provider == "gmail",
+                EmailAccount.disconnected_at.is_(None),
+            )
+        )
+        return EmailConnectionStatus(
+            connected=account is not None,
+            provider="gmail",
+            email_address=account.email_address if account else None,
+            enabled=True,
+        )
+
+    def create_draft(
+        self,
+        db: Session,
+        user: User,
+        email_draft: EmailDraft,
+        to_email: str,
+        include_evidence: bool,
+    ) -> EmailProviderDraft:
+        provider_draft = EmailProviderDraft(
+            email_draft_id=email_draft.id,
+            provider="gmail",
+            provider_draft_id=f"fake-autopilot-{email_draft.id}-{utc_now().timestamp()}",
+            provider_thread_id=f"fake-thread-{email_draft.id}",
+            to_email=to_email,
+            subject=email_draft.subject,
+            status="provider_draft_created",
+            created_by_user_id=user.id,
+        )
+        db.add(provider_draft)
+        db.flush()
+        return provider_draft
+
+    def send_draft(self, db: Session, user: User, provider_draft: EmailProviderDraft) -> EmailSendResult:
+        return EmailSendResult(
+            provider_message_id=f"fake-message-{provider_draft.id}",
+            provider_thread_id=provider_draft.provider_thread_id or f"fake-thread-{provider_draft.id}",
+            sent_at=utc_now(),
+        )
+
+
+@pytest.fixture()
+def fake_gmail_provider() -> Generator[FakeAutopilotGmailProvider, None, None]:
+    provider = FakeAutopilotGmailProvider()
+    app.dependency_overrides[get_gmail_provider] = lambda: provider
+    yield provider
+    app.dependency_overrides.pop(get_gmail_provider, None)
+
+
+@pytest.fixture()
+def autopilot_enabled(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+    monkeypatch.setenv("EMAIL_PROVIDER_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_INITIAL_CLAIMS_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_FOLLOWUPS_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_DAILY_SEND_LIMIT", "50")
+    monkeypatch.setenv("AUTOPILOT_PER_RESTAURANT_DAILY_LIMIT", "20")
+    monkeypatch.setenv("AUTOPILOT_COOLDOWN_HOURS", "48")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def create_restaurant(client: TestClient, name: str = "AutoPilot Restaurant") -> dict:
+    response = client.post(
+        "/v1/restaurants",
+        json={
+            "name": name,
+            "sender_email": "claims@example.com",
+            "autopilot_enabled": True,
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+def create_ready_order(client: TestClient, restaurant_id: int, order_number: str = "AUTO-001") -> dict:
+    response = client.post(
+        "/v1/orders",
+        json={
+            "restaurant_id": restaurant_id,
+            "uber_order_number": order_number,
+            "order_amount": "24.90",
+            "currency": "EUR",
+            "accepted_by_restaurant": True,
+            "prepared_before_cancellation": True,
+        },
+    )
+    assert response.status_code == 201
+    order = response.json()
+    for evidence_type in ("cancellation_proof", "preparation_proof"):
+        evidence_response = client.post(
+            f"/v1/orders/{order['id']}/evidence",
+            json={
+                "evidence_type": evidence_type,
+                "original_filename": f"{evidence_type}.png",
+                "storage_path": f"storage/evidence/{evidence_type}.png",
+                "mime_type": "image/png",
+                "file_size": 1024,
+            },
+        )
+        assert evidence_response.status_code == 201
+    validate_response = client.post(f"/v1/orders/{order['id']}/validate")
+    assert validate_response.status_code == 200
+    return validate_response.json()
+
+
+def add_gmail_account(db_session: Session) -> None:
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+    db_session.add(
+        EmailAccount(
+            user_id=owner.id,
+            provider="gmail",
+            email_address="owner@example.com",
+            access_token_encrypted="fake",
+            refresh_token_encrypted="fake",
+        )
+    )
+    db_session.commit()
+
+
+def test_health_public_still_works(unauthenticated_client: TestClient) -> None:
+    response = unauthenticated_client.get("/health")
+    assert response.status_code == 200
+
+
+def test_autopilot_dry_run_lists_candidates_without_sending(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client)
+    order = create_ready_order(client, restaurant["id"])
+    add_gmail_account(db_session)
+
+    response = client.post("/v1/autopilot/dry-run", json={"mode": "initial_claims", "restaurant_id": restaurant["id"]})
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["run"]["total_candidates"] == 1
+    assert payload["actions"][0]["case_id"] == order["order_id"]
+    assert payload["actions"][0]["status"] == "candidate"
+    assert db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent")) is None
+
+
+def test_autopilot_run_refuses_when_disabled(
+    client: TestClient,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+) -> None:
+    response = client.post("/v1/autopilot/run", json={"mode": "all", "dry_run": False})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "autopilot_disabled"
+
+
+def test_autopilot_run_refuses_when_gmail_disconnected(
+    client: TestClient,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client)
+    create_ready_order(client, restaurant["id"])
+
+    response = client.post("/v1/autopilot/run", json={"mode": "initial_claims", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "gmail_account_not_connected"
+
+
+def test_autopilot_sends_initial_claim_for_ready_order(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client)
+    ready = create_ready_order(client, restaurant["id"])
+    add_gmail_account(db_session)
+
+    response = client.post("/v1/autopilot/run", json={"mode": "initial_claims", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert response.status_code == 201
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    assert order is not None
+    assert order.status == "sent"
+    assert db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent")) is not None
+    assert db_session.scalar(select(AuditLog).where(AuditLog.action == "autopilot.initial_claim.sent")) is not None
+
+
+def test_autopilot_does_not_send_missing_evidence_order(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client)
+    response = client.post(
+        "/v1/orders",
+        json={
+            "restaurant_id": restaurant["id"],
+            "uber_order_number": "AUTO-MISSING",
+            "order_amount": "24.90",
+            "currency": "EUR",
+        },
+    )
+    assert response.status_code == 201
+    add_gmail_account(db_session)
+
+    run_response = client.post("/v1/autopilot/run", json={"mode": "initial_claims", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert run_response.status_code == 201
+    assert run_response.json()["run"]["sent_count"] == 0
+    assert db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent")) is None
+
+
+def test_autopilot_respects_daily_limit(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMAIL_PROVIDER_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_INITIAL_CLAIMS_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_DAILY_SEND_LIMIT", "0")
+    get_settings.cache_clear()
+    restaurant = create_restaurant(client)
+    create_ready_order(client, restaurant["id"])
+    add_gmail_account(db_session)
+
+    response = client.post("/v1/autopilot/run", json={"mode": "initial_claims", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert response.status_code == 201
+    assert response.json()["actions"][0]["skipped_reason"] == "daily_send_limit_reached"
+    get_settings.cache_clear()
+
+
+def test_autopilot_respects_per_restaurant_limit(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMAIL_PROVIDER_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_INITIAL_CLAIMS_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_PER_RESTAURANT_DAILY_LIMIT", "0")
+    get_settings.cache_clear()
+    restaurant = create_restaurant(client)
+    create_ready_order(client, restaurant["id"])
+    add_gmail_account(db_session)
+
+    response = client.post("/v1/autopilot/run", json={"mode": "initial_claims", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert response.status_code == 201
+    assert response.json()["actions"][0]["skipped_reason"] == "per_restaurant_daily_limit_reached"
+    get_settings.cache_clear()
+
+
+def test_autopilot_does_not_send_final_status(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client)
+    ready = create_ready_order(client, restaurant["id"], "AUTO-FINAL")
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    assert order is not None
+    order.status = "accepted"
+    db_session.commit()
+    add_gmail_account(db_session)
+
+    response = client.post("/v1/autopilot/run", json={"mode": "all", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert response.status_code == 201
+    assert response.json()["run"]["sent_count"] == 0
+
+
+def test_autopilot_followup_respects_cooldown(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client)
+    ready = create_ready_order(client, restaurant["id"], "AUTO-FOLLOW")
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    assert order is not None
+    order.status = "sent"
+    order.first_email_sent_at = utc_now() - timedelta(days=5)
+    order.last_followup_sent_at = utc_now() - timedelta(hours=1)
+    task = FollowUpTask(order_id=order.id, task_type="followup_1", status="pending", due_at=utc_now() - timedelta(hours=1))
+    db_session.add(task)
+    db_session.commit()
+    add_gmail_account(db_session)
+
+    response = client.post("/v1/autopilot/run", json={"mode": "followups", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert response.status_code == 201
+    assert response.json()["actions"][0]["skipped_reason"] == "cooldown_active"
+
+
+def test_autopilot_appeal_after_refusal_does_not_close(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client)
+    ready = create_ready_order(client, restaurant["id"], "AUTO-APPEAL")
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    assert order is not None
+    order.status = "refused"
+    workflow = AppealWorkflow(
+        case_type="claim_order",
+        case_id=order.id,
+        restaurant_id=order.restaurant_id,
+        claim_order_id=order.id,
+        status="appeal_needed",
+        refusal_count=1,
+        next_action_type="create_appeal_draft",
+        next_action_at=utc_now() - timedelta(hours=1),
+    )
+    db_session.add(workflow)
+    db_session.commit()
+    add_gmail_account(db_session)
+
+    response = client.post("/v1/autopilot/run", json={"mode": "appeals", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert response.status_code == 201
+    db_session.refresh(workflow)
+    assert workflow.status != "manually_closed"
+    assert workflow.appeal_attempt_count == 1
+
+
+def test_autopilot_appeal_refuses_same_template_without_new_argument(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client)
+    ready = create_ready_order(client, restaurant["id"], "AUTO-SAME")
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    assert order is not None
+    workflow = AppealWorkflow(
+        case_type="claim_order",
+        case_id=order.id,
+        restaurant_id=order.restaurant_id,
+        claim_order_id=order.id,
+        status="appeal_needed",
+        refusal_count=1,
+        appeal_attempt_count=1,
+        last_appeal_sent_at=utc_now() - timedelta(days=3),
+        next_action_type="create_appeal_draft",
+        next_action_at=utc_now() - timedelta(hours=1),
+    )
+    db_session.add(workflow)
+    db_session.flush()
+    draft = EmailDraft(
+        order_id=order.id,
+        draft_type="appeal_generic_refusal",
+        subject="Appeal",
+        body="Appeal body",
+        status="created",
+    )
+    db_session.add(draft)
+    db_session.flush()
+    db_session.add(
+        AppealAttempt(
+            workflow_id=workflow.id,
+            attempt_number=1,
+            appeal_type="first_appeal",
+            status="sent",
+            email_draft_id=draft.id,
+            new_evidence_summary="",
+            created_by_user_id=1,
+            sent_by_user_id=1,
+            sent_at=utc_now() - timedelta(days=3),
+            completed_at=utc_now() - timedelta(days=3),
+        )
+    )
+    db_session.commit()
+    add_gmail_account(db_session)
+
+    response = client.post("/v1/autopilot/run", json={"mode": "appeals", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert response.status_code == 201
+    assert response.json()["actions"][0]["skipped_reason"] == "same_template_without_new_argument"
+
+
+def test_autopilot_emergency_stop_blocks_run(
+    client: TestClient,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    stop_response = client.post("/v1/autopilot/stop")
+    assert stop_response.status_code == 201
+
+    response = client.post("/v1/autopilot/run", json={"mode": "all", "dry_run": False})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "autopilot_emergency_stopped"

@@ -37,6 +37,7 @@ Le backend expose maintenant les premiers objets metier :
 - traitement manuel des reponses Uber et mise a jour des statuts de reclamation ;
 - workflow d'appels persistants apres refus Uber ;
 - relances controlees J+2/J+5/J+10/J+15 sous forme de taches et brouillons, sans envoi automatique ;
+- AutoPilot V1.2 pour envois Gmail controles, desactive par defaut, avec dry-run, limites, cooldown et arret d'urgence ;
 - reporting commercial avec exports CSV/XLSX ;
 - dashboard de synthese.
 
@@ -54,6 +55,12 @@ Les endpoints principaux sont :
 - `DELETE /v1/users/{id}/restaurants/{restaurant_id}`
 - `GET|POST /v1/restaurants`
 - `GET|PATCH /v1/restaurants/{id}`
+- `GET /v1/autopilot/status`
+- `POST /v1/autopilot/dry-run`
+- `POST /v1/autopilot/run`
+- `POST /v1/autopilot/stop`
+- `GET /v1/autopilot/runs`
+- `GET /v1/autopilot/actions`
 - `GET|POST /v1/orders`
 - `GET|PATCH /v1/orders/{id}`
 - `POST /v1/orders/{id}/validate`
