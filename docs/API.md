@@ -127,7 +127,8 @@ Champs principaux :
 
 - `name` obligatoire ;
 - `sender_email` obligatoire ;
-- `active` vaut `true` par defaut.
+- `active` vaut `true` par defaut ;
+- `autopilot_enabled` vaut `false` par defaut et doit etre active explicitement par restaurant.
 
 La creation d'un restaurant ajoute un `AuditLog`.
 
@@ -136,6 +137,40 @@ Acces :
 - `owner` voit et gere tous les restaurants ;
 - `manager` et `staff` voient uniquement les restaurants assignes ;
 - seul `owner` peut creer ou modifier un restaurant.
+
+## AutoPilot
+
+Endpoints reserves aux roles `owner` et `manager` :
+
+- `GET /v1/autopilot/status`
+- `POST /v1/autopilot/dry-run`
+- `POST /v1/autopilot/run`
+- `POST /v1/autopilot/stop`
+- `GET /v1/autopilot/runs`
+- `GET /v1/autopilot/runs/{id}`
+- `GET /v1/autopilot/actions`
+
+Body de run :
+
+```json
+{
+  "mode": "initial_claims",
+  "restaurant_id": 123,
+  "dry_run": true
+}
+```
+
+Modes autorises : `initial_claims`, `followups`, `appeals`, `all`.
+
+Regles :
+
+- `dry-run` cree une previsualisation sans envoyer ;
+- `run` refuse si `AUTOPILOT_ENABLED=false` ;
+- Gmail doit etre active et connecte si `AUTOPILOT_REQUIRE_GMAIL_CONNECTED=true` ;
+- chaque restaurant doit avoir `autopilot_enabled=true` ;
+- les limites quotidiennes et par restaurant sont appliquees ;
+- `stop` active un arret d'urgence persistant ;
+- aucun secret Gmail ou token n'est retourne.
 
 ## Orders
 

@@ -246,6 +246,25 @@ export type AppealAttemptStatus =
   | "response_received"
   | "superseded"
   | "cancelled";
+export type AutopilotMode = "initial_claims" | "followups" | "appeals" | "all" | "emergency_stop";
+export type AutopilotRunStatus = "running" | "completed" | "failed" | "stopped";
+export type AutopilotCaseType = "claim_order" | "followup_task" | "appeal_workflow";
+export type AutopilotActionType =
+  | "send_initial_claim"
+  | "send_followup_1"
+  | "send_followup_2"
+  | "send_escalation"
+  | "send_appeal"
+  | "request_more_evidence"
+  | "manual_review";
+export type AutopilotActionStatus =
+  | "candidate"
+  | "skipped"
+  | "draft_created"
+  | "provider_draft_created"
+  | "sent"
+  | "failed"
+  | "manual_review";
 
 export type Restaurant = {
   id: number;
@@ -255,6 +274,7 @@ export type Restaurant = {
   sender_email: string;
   uber_merchant_id: string | null;
   active: boolean;
+  autopilot_enabled: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -1631,6 +1651,88 @@ export type RestaurantCreatePayload = {
   sender_email: string;
   uber_merchant_id?: string | null;
   active: boolean;
+  autopilot_enabled?: boolean;
+};
+
+export type AutopilotSettings = {
+  enabled: boolean;
+  initial_claims_enabled: boolean;
+  followups_enabled: boolean;
+  appeals_enabled: boolean;
+  daily_send_limit: number;
+  per_restaurant_daily_limit: number;
+  min_amount: MoneyValue;
+  max_amount_without_owner_review: MoneyValue;
+  require_complete_evidence: boolean;
+  require_gmail_connected: boolean;
+  cooldown_hours: number;
+  refusal_retry_enabled: boolean;
+  max_appeal_attempts: number;
+  never_close_on_refusal: boolean;
+};
+
+export type AutopilotStatusResponse = {
+  settings: AutopilotSettings;
+  gmail_provider_enabled: boolean;
+  gmail_connected: boolean;
+  gmail_email_address: string | null;
+  emergency_stopped: boolean;
+  sent_today_count: number;
+  remaining_today_count: number;
+};
+
+export type AutopilotRunPayload = {
+  mode: Exclude<AutopilotMode, "emergency_stop">;
+  restaurant_id?: number | null;
+  dry_run?: boolean;
+};
+
+export type AutopilotRun = {
+  id: number;
+  started_by_user_id: number | null;
+  status: AutopilotRunStatus;
+  mode: AutopilotMode;
+  total_candidates: number;
+  sent_count: number;
+  skipped_count: number;
+  failed_count: number;
+  created_at: string;
+  completed_at: string | null;
+  error_message: string | null;
+};
+
+export type AutopilotAction = {
+  id: number;
+  run_id: number;
+  case_type: AutopilotCaseType;
+  case_id: number;
+  restaurant_id: number;
+  action_type: AutopilotActionType;
+  status: AutopilotActionStatus;
+  reason: string;
+  email_draft_id: number | null;
+  provider_draft_id: number | null;
+  sent_at: string | null;
+  skipped_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AutopilotRunDetail = {
+  run: AutopilotRun;
+  actions: AutopilotAction[];
+};
+
+export type AutopilotRunsResponse = {
+  runs: AutopilotRun[];
+  limit: number;
+  offset: number;
+};
+
+export type AutopilotActionsResponse = {
+  actions: AutopilotAction[];
+  limit: number;
+  offset: number;
 };
 
 export type ClaimOrderCreatePayload = {
@@ -1849,6 +1951,11 @@ export const api = {
   getRestaurants: () => request<Restaurant[]>("/v1/restaurants"),
   createRestaurant: (payload: RestaurantCreatePayload) =>
     postJson<Restaurant, RestaurantCreatePayload>("/v1/restaurants", payload),
+  updateRestaurant: (id: number, payload: Partial<RestaurantCreatePayload>) =>
+    request<Restaurant>(`/v1/restaurants/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
   getUsers: () => request<User[]>("/v1/users"),
   createUser: (payload: UserCreatePayload) => postJson<User, UserCreatePayload>("/v1/users", payload),
   getUser: (id: number) => request<User>(`/v1/users/${id}`),
@@ -2226,6 +2333,24 @@ export const api = {
     postJson<AppealWorkflow, { reason: string }>(`/v1/appeals/${workflowId}/manual-close`, payload),
   reopenAppeal: (workflowId: number) =>
     postJson<AppealWorkflow, Record<string, never>>(`/v1/appeals/${workflowId}/reopen`, {}),
+  getAutopilotStatus: () => request<AutopilotStatusResponse>("/v1/autopilot/status"),
+  dryRunAutopilot: (payload: AutopilotRunPayload) =>
+    postJson<AutopilotRunDetail, AutopilotRunPayload>("/v1/autopilot/dry-run", { ...payload, dry_run: true }),
+  runAutopilot: (payload: AutopilotRunPayload) =>
+    postJson<AutopilotRunDetail, AutopilotRunPayload>("/v1/autopilot/run", { ...payload, dry_run: false }),
+  stopAutopilot: () => postJson<AutopilotRun, Record<string, never>>("/v1/autopilot/stop", {}),
+  getAutopilotRuns: (filters: { limit?: number; offset?: number } = {}) =>
+    request<AutopilotRunsResponse>(`/v1/autopilot/runs${buildQuery(filters)}`),
+  getAutopilotRun: (id: number) => request<AutopilotRunDetail>(`/v1/autopilot/runs/${id}`),
+  getAutopilotActions: (
+    filters: {
+      restaurant_id?: number | "";
+      status?: AutopilotActionStatus | "";
+      action_type?: AutopilotActionType | "";
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => request<AutopilotActionsResponse>(`/v1/autopilot/actions${buildQuery(filters)}`),
   getUberStatus: () => request<UberStatus>("/v1/uber/status"),
   getUberStoreMappings: () => request<UberStoreMapping[]>("/v1/uber/store-mappings"),
   createUberStoreMapping: (payload: UberStoreMappingCreatePayload) =>
@@ -2343,6 +2468,16 @@ export function formatDate(value: string | null): string {
     return "-";
   }
   return new Intl.DateTimeFormat("fr-FR").format(new Date(value));
+}
+
+export function formatDateTime(value: string | null): string {
+  if (!value) {
+    return "-";
+  }
+  return new Intl.DateTimeFormat("fr-FR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 export function emptyToNull(value: string): string | null {
