@@ -79,6 +79,8 @@ Validate:
 
 ## Smart Import entry point
 
-Operators can start from `/smart-import` with images, PDFs or ZIP files. TENNET recommends `import_evidence_bulk` when the content looks like evidence, then the normal bulk evidence workflow continues.
+Operators can start from `/smart-import` with images, PDFs or ZIP files. TENNET recommends `import_evidence_bulk` when the content looks like evidence. After confirmation, Smart Import creates a real `EvidenceImportBatch` and redirects to `/evidence-imports/{batch_id}`.
+
+The normal bulk evidence workflow continues from there: analysis is manual/fake/local unless explicitly configured, attachment is reviewed, and OpenAI remains disabled by default.
 
 The filename is only a hint. It is never required to match a specific naming convention.

@@ -10,7 +10,13 @@ from app.schemas.domain import (
     SmartImportFilePreviewRead,
     SmartImportPreviewResponse,
 )
-from app.services.smart_import_classifier_service import confirm_smart_import_preview, create_smart_import_preview
+from app.services.smart_import_classifier_service import create_smart_import_preview
+from app.services.smart_import_cleanup_service import cleanup_expired_smart_import_previews
+from app.services.smart_import_routing_service import (
+    SmartImportDecision,
+    cancel_smart_import_preview,
+    route_smart_import_preview,
+)
 
 router = APIRouter(prefix="/v1/smart-import", tags=["smart-import"])
 
@@ -42,12 +48,42 @@ def confirm_smart_import(
     current_user: User = Depends(require_owner_or_manager),
 ) -> SmartImportConfirmResponse:
     batch = get_batch_or_404(db, payload.batch_preview_id, current_user)
-    confirmed = confirm_smart_import_preview(db, current_user, batch)
-    return SmartImportConfirmResponse(
-        batch_preview_id=confirmed.id,
-        status=confirmed.status,
-        recommended_actions=[file.recommended_action for file in confirmed.files],
+    result = route_smart_import_preview(
+        db,
+        current_user,
+        batch,
+        [
+            SmartImportDecision(
+                file_id=decision.file_id,
+                action=decision.action,
+                report_type=decision.report_type,
+                restaurant_id=decision.restaurant_id,
+            )
+            for decision in payload.files
+        ],
     )
+    return SmartImportConfirmResponse(**result)
+
+
+@router.post("/previews/{batch_id}/cancel", response_model=SmartImportPreviewResponse)
+def cancel_smart_import(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+) -> SmartImportPreviewResponse:
+    batch = get_batch_or_404(db, batch_id, current_user)
+    cancelled = cancel_smart_import_preview(db, current_user, batch)
+    return smart_import_response(cancelled)
+
+
+@router.post("/cleanup-expired")
+def cleanup_expired_smart_import(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+) -> dict[str, int]:
+    if current_user.role != "owner":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Owner role required")
+    return cleanup_expired_smart_import_previews(db, current_user)
 
 
 def get_batch_or_404(db: Session, batch_id: int, current_user: User) -> SmartImportPreviewBatch:

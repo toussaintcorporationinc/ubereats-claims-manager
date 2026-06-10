@@ -289,7 +289,7 @@ AUTOPILOT_ACTION_STATUSES = (
     "failed",
     "manual_review",
 )
-SMART_IMPORT_PREVIEW_STATUSES = ("previewed", "confirmed", "cancelled")
+SMART_IMPORT_PREVIEW_STATUSES = ("previewed", "confirmed", "cancelled", "expired")
 SMART_IMPORT_FILE_CATEGORIES = ("uber_reporting", "evidence", "zip", "unknown")
 SMART_IMPORT_RECOMMENDED_ACTIONS = (
     "import_uber_reporting",
@@ -297,6 +297,7 @@ SMART_IMPORT_RECOMMENDED_ACTIONS = (
     "manual_review",
     "ignore",
 )
+SMART_IMPORT_FILE_STATUSES = ("previewed", "confirmed", "routed", "ignored", "failed", "expired", "manual_review")
 
 
 def utc_now() -> datetime:
@@ -854,6 +855,8 @@ class SmartImportPreviewBatch(TimestampMixin, Base):
     uploaded_by_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="previewed")
     files_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_files: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     files: Mapped[list["SmartImportPreviewFile"]] = relationship(
@@ -873,15 +876,25 @@ class SmartImportPreviewFile(TimestampMixin, Base):
             check_in_constraint("recommended_action", SMART_IMPORT_RECOMMENDED_ACTIONS),
             name="ck_smart_import_preview_files_recommended_action",
         ),
+        CheckConstraint(
+            check_in_constraint("status", SMART_IMPORT_FILE_STATUSES),
+            name="ck_smart_import_preview_files_status",
+        ),
         Index("ix_smart_import_preview_files_batch_id", "batch_id"),
         Index("ix_smart_import_preview_files_detected_category", "detected_category"),
         Index("ix_smart_import_preview_files_recommended_action", "recommended_action"),
+        Index("ix_smart_import_preview_files_status", "status"),
+        Index("ix_smart_import_preview_files_checksum_sha256", "checksum_sha256"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     batch_id: Mapped[int] = mapped_column(ForeignKey("smart_import_preview_batches.id"), nullable=False)
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     file_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    temp_storage_path: Mapped[str | None] = mapped_column(Text)
+    mime_type: Mapped[str | None] = mapped_column(String(255))
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    checksum_sha256: Mapped[str | None] = mapped_column(String(64))
     detected_category: Mapped[str] = mapped_column(String(50), nullable=False)
     detected_report_type: Mapped[str | None] = mapped_column(String(50))
     detected_evidence_type: Mapped[str | None] = mapped_column(String(50))
@@ -892,6 +905,11 @@ class SmartImportPreviewFile(TimestampMixin, Base):
     skipped_preamble_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     confidence: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("0"))
     recommended_action: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="previewed")
+    destination_type: Mapped[str | None] = mapped_column(String(50))
+    destination_id: Mapped[int | None] = mapped_column(Integer)
+    destination_url: Mapped[str | None] = mapped_column(String(255))
+    error_message: Mapped[str | None] = mapped_column(Text)
     warnings: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     detected_columns: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)

@@ -1,13 +1,24 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO
+from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import ClaimOrder, EvidenceRequestTask, Restaurant, User
+from app.models import (
+    ClaimOrder,
+    EvidenceImportBatch,
+    EvidenceRequestTask,
+    SmartImportPreviewBatch,
+    UberReportingImportBatch,
+    UberReportingImportRow,
+    Restaurant,
+    User,
+)
+from app.models.domain import utc_now
 
 
 def test_health_public_works(unauthenticated_client: TestClient) -> None:
@@ -98,6 +109,134 @@ def test_smart_import_unknown_becomes_manual_review(client: TestClient) -> None:
     file_preview = response.json()["files"][0]
     assert file_preview["detected_category"] == "unknown"
     assert file_preview["recommended_action"] == "manual_review"
+
+
+def test_smart_confirm_routes_uber_report_to_reporting_batch(client: TestClient, db_session: Session) -> None:
+    csv_content = (
+        "Descriptions longues Uber Eats Manager,,,,,,\n"
+        "Id. du restaurant,Nom du restaurant,Id. de la commande,Date de la commande,Statut de la commande,Ventes (TVA incluse),Devise\n"
+        "store-route,Restaurant Route,UBER-ROUTE-001,01/05/2026,canceled,31,EUR\n"
+    )
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("download.csv", csv_content.encode("utf-8"), "text/csv"))],
+    ).json()
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [{"file_id": preview["files"][0]["id"], "action": "import_uber_reporting", "report_type": "orders_report"}],
+        },
+    )
+
+    assert response.status_code == 200
+    routed = response.json()["routed_files"][0]
+    assert routed["destination_type"] == "uber_reporting_batch"
+    assert routed["destination_url"] == f"/uber/reporting/{routed['destination_id']}"
+    batch = db_session.get(UberReportingImportBatch, routed["destination_id"])
+    assert batch is not None
+    assert batch.status == "parsed"
+    assert batch.report_type == "orders_report"
+    rows = db_session.scalars(select(UberReportingImportRow).where(UberReportingImportRow.batch_id == batch.id)).all()
+    assert rows
+    assert all(row.status != "created" for row in rows)
+
+
+def test_smart_confirm_routes_evidence_file_to_evidence_import(client: TestClient, db_session: Session) -> None:
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("ticket-test.jpg", b"fake image bytes", "image/jpeg"))],
+    ).json()
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [{"file_id": preview["files"][0]["id"], "action": "import_evidence_bulk"}],
+        },
+    )
+
+    assert response.status_code == 200
+    routed = response.json()["routed_files"][0]
+    assert routed["destination_type"] == "evidence_import_batch"
+    assert routed["destination_url"] == f"/evidence-imports/{routed['destination_id']}"
+    batch = db_session.get(EvidenceImportBatch, routed["destination_id"])
+    assert batch is not None
+    assert batch.status == "stored"
+    assert batch.stored_files_count == 1
+
+
+def test_smart_confirm_routes_zip_to_evidence_import(client: TestClient, db_session: Session) -> None:
+    archive = BytesIO()
+    with ZipFile(archive, "w") as zip_file:
+        zip_file.writestr("ticket-a.jpg", b"fake image")
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("preuve.zip", archive.getvalue(), "application/zip"))],
+    ).json()
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [{"file_id": preview["files"][0]["id"], "action": "import_evidence_bulk"}],
+        },
+    )
+
+    assert response.status_code == 200
+    routed = response.json()["routed_files"][0]
+    batch = db_session.get(EvidenceImportBatch, routed["destination_id"])
+    assert batch is not None
+    assert batch.source_type == "zip_upload"
+    assert batch.stored_files_count == 1
+
+
+def test_smart_confirm_manual_review_and_ignore_keep_audit_state(client: TestClient, db_session: Session) -> None:
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[
+            ("files", ("unknown.csv", b"foo,bar\nbaz,qux\n", "text/csv")),
+            ("files", ("ignore.jpg", b"fake image bytes", "image/jpeg")),
+        ],
+    ).json()
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [
+                {"file_id": preview["files"][0]["id"], "action": "manual_review"},
+                {"file_id": preview["files"][1]["id"], "action": "ignore"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["manual_review_files"][0]["destination_type"] == "manual_review"
+    assert payload["ignored_files"][0]["destination_type"] == "ignored"
+    batch = db_session.get(SmartImportPreviewBatch, preview["batch_preview_id"])
+    assert batch is not None
+    assert {file.status for file in batch.files} == {"manual_review", "ignored"}
+
+
+def test_smart_confirm_expired_preview_refused(client: TestClient, db_session: Session) -> None:
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("ticket-test.jpg", b"fake image bytes", "image/jpeg"))],
+    ).json()
+    batch = db_session.get(SmartImportPreviewBatch, preview["batch_preview_id"])
+    assert batch is not None
+    batch.expires_at = utc_now() - timedelta(hours=1)
+    db_session.commit()
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={"batch_preview_id": preview["batch_preview_id"]},
+    )
+
+    assert response.status_code == 410
 
 
 def test_workspace_next_actions_returns_priorities_for_owner(client: TestClient, db_session: Session) -> None:

@@ -214,7 +214,7 @@ Before production rollout, repeat the import and reconciliation scenarios with r
 
 ## Smart Import and mobile usage
 
-Open `/smart-import` to drop Uber reports, evidence images, PDFs or ZIP files without renaming them. TENNET detects the content, suggests the likely type and asks for manual review when confidence is low.
+Open `/smart-import` to drop Uber reports, evidence images, PDFs or ZIP files without renaming them. TENNET detects the content, suggests the likely type and asks for manual review when confidence is low. After confirmation, TENNET creates the real Uber import or evidence import and gives a button to open it. Uber financial rows still require a human confirmation in the import batch.
 
 On mobile, use the header menu, evidence cards and sticky action bars to work in the restaurant. Staff users should focus on "Mes preuves a fournir", uploading photos or PDFs only for assigned restaurants.
 

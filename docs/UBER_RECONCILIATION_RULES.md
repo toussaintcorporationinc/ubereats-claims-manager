@@ -54,6 +54,12 @@ Les preuves deja disponibles peuvent aussi etre traitees depuis `/evidence-impor
 
 Les exports Uber peuvent changer de format. TENNET ne doit jamais inventer un montant, un paiement ou une preuve. En cas de doute, le resultat reste en revue manuelle.
 
+## Smart Import handoff
+
+Smart Import peut creer un batch Uber Reporting parse depuis `download.csv`, `export.xlsx` ou tout autre nom accepte. TENNET detecte la ligne d'en-tete, le type de rapport et la periode probable, puis route vers `/uber/reporting/{batch_id}` apres confirmation.
+
+Le batch reste non confirme tant qu'un operateur ne valide pas les lignes. Smart Import ne cree donc pas de snapshots, transactions, dossiers TENNET ou contestations sans l'etape normale de confirmation Uber Reporting.
+
 ## Deductions clients et ajustements negatifs
 
 Les transactions negatives importees peuvent aussi alimenter le module Customer Refund Disputes.
