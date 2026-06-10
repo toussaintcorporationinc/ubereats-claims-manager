@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     max_evidence_file_size_mb: int = 15
     import_max_file_size_mb: int = 10
     import_storage_dir: Path = Path("data/imports")
+    smart_import_preview_expiry_hours: int = 24
     gmail_oauth_client_id: str | None = None
     gmail_oauth_client_secret: str | None = None
     gmail_oauth_redirect_uri: str = "http://localhost:8000/v1/email/gmail/oauth/callback"

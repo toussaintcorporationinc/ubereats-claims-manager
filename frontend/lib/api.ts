@@ -1169,9 +1169,30 @@ export type SmartImportFilePreview = {
   skipped_preamble_rows: number;
   confidence: MoneyValue;
   recommended_action: SmartImportRecommendedAction;
+  status: "previewed" | "confirmed" | "routed" | "ignored" | "failed" | "expired" | "manual_review";
+  destination_type: string | null;
+  destination_id: number | null;
+  destination_url: string | null;
+  error_message: string | null;
   warnings: string[];
   detected_columns: string[];
   metadata_json: Record<string, unknown> | null;
+};
+
+export type SmartImportFileDecision = {
+  file_id: number;
+  action?: SmartImportRecommendedAction | null;
+  report_type?: UberReportingReportType | null;
+  restaurant_id?: number | null;
+};
+
+export type SmartImportRoutedFile = {
+  file_id: number;
+  original_filename: string;
+  action: SmartImportRecommendedAction;
+  destination_type: string | null;
+  destination_id: number | null;
+  destination_url: string | null;
 };
 
 export type SmartImportPreviewResponse = {
@@ -1183,7 +1204,10 @@ export type SmartImportPreviewResponse = {
 export type SmartImportConfirmResponse = {
   batch_preview_id: number;
   status: string;
-  recommended_actions: SmartImportRecommendedAction[];
+  routed_files: SmartImportRoutedFile[];
+  manual_review_files: SmartImportRoutedFile[];
+  ignored_files: SmartImportRoutedFile[];
+  errors: Array<{ file_id: number; original_filename: string; error: string }>;
 };
 
 export type EvidenceImportBatch = {
@@ -2311,10 +2335,13 @@ export const api = {
   },
   getSmartImportPreview: (batchId: number) =>
     request<SmartImportPreviewResponse>(`/v1/smart-import/previews/${batchId}`),
-  confirmSmartImport: (batchPreviewId: number) =>
-    postJson<SmartImportConfirmResponse, { batch_preview_id: number }>("/v1/smart-import/confirm", {
+  confirmSmartImport: (batchPreviewId: number, files: SmartImportFileDecision[] = []) =>
+    postJson<SmartImportConfirmResponse, { batch_preview_id: number; files: SmartImportFileDecision[] }>("/v1/smart-import/confirm", {
       batch_preview_id: batchPreviewId,
+      files,
     }),
+  cancelSmartImport: (batchId: number) =>
+    postJson<SmartImportPreviewResponse, Record<string, never>>(`/v1/smart-import/previews/${batchId}/cancel`, {}),
   downloadRecoverySummaryXlsx: (filters: RecoveryFilters = {}) =>
     downloadBlob(`/v1/recovery/export/summary.xlsx${buildQuery(filters)}`),
   downloadRecoveryCasesCsv: (filters: RecoveryFilters = {}) =>

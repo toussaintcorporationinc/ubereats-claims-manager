@@ -316,6 +316,7 @@ AutopilotActionStatus = Literal[
 ]
 SmartImportCategory = Literal["uber_reporting", "evidence", "zip", "unknown"]
 SmartImportRecommendedAction = Literal["import_uber_reporting", "import_evidence_bulk", "manual_review", "ignore"]
+SmartImportFileStatus = Literal["previewed", "confirmed", "routed", "ignored", "failed", "expired", "manual_review"]
 WorkspaceActionType = Literal[
     "upload_evidence",
     "review_import",
@@ -1727,6 +1728,11 @@ class SmartImportFilePreviewRead(BaseModel):
     skipped_preamble_rows: int
     confidence: Decimal
     recommended_action: SmartImportRecommendedAction
+    status: SmartImportFileStatus = "previewed"
+    destination_type: str | None = None
+    destination_id: int | None = None
+    destination_url: str | None = None
+    error_message: str | None = None
     warnings: list[str]
     detected_columns: list[str]
     metadata_json: dict[str, Any] | None = None
@@ -1738,14 +1744,40 @@ class SmartImportPreviewResponse(BaseModel):
     files: list[SmartImportFilePreviewRead]
 
 
+class SmartImportFileDecision(BaseModel):
+    file_id: int
+    action: SmartImportRecommendedAction | None = None
+    report_type: UberReportingReportType | None = None
+    restaurant_id: int | None = None
+
+
 class SmartImportConfirmRequest(BaseModel):
     batch_preview_id: int
+    files: list[SmartImportFileDecision] = Field(default_factory=list)
+
+
+class SmartImportRoutedFile(BaseModel):
+    file_id: int
+    original_filename: str
+    action: SmartImportRecommendedAction
+    destination_type: str | None = None
+    destination_id: int | None = None
+    destination_url: str | None = None
+
+
+class SmartImportConfirmError(BaseModel):
+    file_id: int
+    original_filename: str
+    error: str
 
 
 class SmartImportConfirmResponse(BaseModel):
     batch_preview_id: int
     status: str
-    recommended_actions: list[SmartImportRecommendedAction]
+    routed_files: list[SmartImportRoutedFile] = Field(default_factory=list)
+    manual_review_files: list[SmartImportRoutedFile] = Field(default_factory=list)
+    ignored_files: list[SmartImportRoutedFile] = Field(default_factory=list)
+    errors: list[SmartImportConfirmError] = Field(default_factory=list)
 
 
 class EvidenceImportBatchRead(BaseModel):

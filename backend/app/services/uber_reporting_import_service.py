@@ -96,14 +96,31 @@ async def create_uber_reporting_preview(
     file: UploadFile,
     report_type: str,
 ) -> UberReportingImportBatch:
+    filename = file.filename or "uber-report"
+    return create_uber_reporting_preview_from_content(
+        db,
+        current_user,
+        filename=filename,
+        content=await file.read(),
+        report_type=report_type,
+    )
+
+
+def create_uber_reporting_preview_from_content(
+    db: Session,
+    current_user: User,
+    *,
+    filename: str,
+    content: bytes,
+    report_type: str,
+) -> UberReportingImportBatch:
     if report_type not in REPORT_TYPES:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported report_type")
-    filename = file.filename or "uber-report"
     suffix = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
     if suffix not in {"csv", "xlsx"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only CSV and XLSX reports are supported")
 
-    parsed_rows = parse_rows(await file.read(), suffix)
+    parsed_rows = parse_rows(content, suffix)
     batch = UberReportingImportBatch(
         uploaded_by_user_id=current_user.id,
         original_filename=filename,

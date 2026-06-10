@@ -2,15 +2,20 @@ import csv
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+from hashlib import sha256
 from io import BytesIO, StringIO
+from mimetypes import guess_type
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models import SmartImportPreviewBatch, SmartImportPreviewFile, User
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
@@ -175,20 +180,32 @@ async def create_smart_import_preview(
     if not files:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="At least one file is required")
 
-    batch = SmartImportPreviewBatch(uploaded_by_user_id=current_user.id, status="previewed", files_count=len(files))
+    expires_at = utc_now() + timedelta(hours=get_settings().smart_import_preview_expiry_hours)
+    batch = SmartImportPreviewBatch(
+        uploaded_by_user_id=current_user.id,
+        status="previewed",
+        files_count=len(files),
+        total_files=len(files),
+        expires_at=expires_at,
+    )
     db.add(batch)
     db.flush()
 
-    previews: list[FileClassification] = []
+    previews: list[tuple[FileClassification, StoredPreviewFile]] = []
     for file in files:
-        previews.append(classify_uploaded_file(file.filename or "fichier", await file.read()))
+        stored = await store_preview_upload(batch.id, file)
+        previews.append((classify_uploaded_file(stored.original_filename, stored.content), stored))
 
-    for preview in previews:
+    for preview, stored in previews:
         db.add(
             SmartImportPreviewFile(
                 batch_id=batch.id,
                 original_filename=preview.original_filename,
                 file_type=preview.file_type,
+                temp_storage_path=stored.relative_path,
+                mime_type=stored.mime_type,
+                file_size=stored.file_size,
+                checksum_sha256=stored.checksum_sha256,
                 detected_category=preview.detected_category,
                 detected_report_type=preview.detected_report_type,
                 detected_evidence_type=preview.detected_evidence_type,
@@ -199,6 +216,7 @@ async def create_smart_import_preview(
                 skipped_preamble_rows=preview.skipped_preamble_rows,
                 confidence=preview.confidence,
                 recommended_action=preview.recommended_action,
+                status="previewed",
                 warnings=preview.warnings,
                 detected_columns=preview.detected_columns,
                 metadata_json=preview.metadata_json,
@@ -213,13 +231,80 @@ async def create_smart_import_preview(
         user_id=current_user.id,
         new_value={
             "files_count": len(files),
-            "categories": [preview.detected_category for preview in previews],
-            "recommended_actions": [preview.recommended_action for preview in previews],
+            "categories": [preview.detected_category for preview, _stored in previews],
+            "recommended_actions": [preview.recommended_action for preview, _stored in previews],
         },
     )
     db.commit()
     db.refresh(batch)
     return batch
+
+
+@dataclass(frozen=True)
+class StoredPreviewFile:
+    original_filename: str
+    content: bytes
+    relative_path: str
+    mime_type: str | None
+    file_size: int
+    checksum_sha256: str
+
+
+async def store_preview_upload(batch_id: int, file: UploadFile) -> StoredPreviewFile:
+    filename = safe_original_filename(file.filename or "fichier")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Smart import file cannot be empty")
+    max_size = get_settings().import_max_file_size_mb * 1024 * 1024
+    if len(content) > max_size:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Smart import file is too large")
+    suffix = file_extension(filename)
+    if suffix not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported smart import file type")
+
+    storage_root = ensure_smart_import_storage_root()
+    relative_dir = Path("smart_import") / "previews" / f"batch_{batch_id}"
+    target_dir = storage_root / relative_dir
+    target_dir.mkdir(parents=True, exist_ok=True)
+    extension = Path(filename).suffix.lower()
+    internal_filename = f"{uuid4().hex}{extension}"
+    relative_path = relative_dir / internal_filename
+    target_path = storage_root / relative_path
+    target_path.write_bytes(content)
+    digest = sha256(content).hexdigest()
+    return StoredPreviewFile(
+        original_filename=filename,
+        content=content,
+        relative_path=relative_path.as_posix(),
+        mime_type=file.content_type or guess_type(filename)[0],
+        file_size=len(content),
+        checksum_sha256=digest,
+    )
+
+
+def ensure_smart_import_storage_root() -> Path:
+    root = get_settings().import_storage_dir
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def resolve_preview_file_path(preview_file: SmartImportPreviewFile) -> Path:
+    if not preview_file.temp_storage_path:
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Smart import preview file is not available")
+    root = ensure_smart_import_storage_root().resolve()
+    target = (root / preview_file.temp_storage_path).resolve()
+    if not target.is_relative_to(root):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Smart import preview storage path is invalid")
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=status.HTTP_410_GONE, detail="Smart import preview file has expired")
+    return target
+
+
+def safe_original_filename(filename: str) -> str:
+    original = Path(filename).name.strip()
+    if not original or original in {".", ".."}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Filename is invalid")
+    return original
 
 
 def confirm_smart_import_preview(

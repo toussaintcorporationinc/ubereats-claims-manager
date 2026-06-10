@@ -245,7 +245,7 @@ Rules:
 
 ## Premium UX administration
 
-Use `/smart-import` when an operator has a report, screenshot, PDF or ZIP but does not know the format. TENNET detects the content and recommends the next action without requiring a renamed file.
+Use `/smart-import` when an operator has a report, screenshot, PDF or ZIP but does not know the format. TENNET detects the content and recommends the next action without requiring a renamed file. Confirming Smart Import routes files to `/uber/reporting/{batch_id}` or `/evidence-imports/{batch_id}`; it does not auto-confirm Uber financial imports.
 
 Staff mobile usage should stay focused on proof tasks. Staff must not receive financial cockpit, Gmail, appeal or AutoPilot permissions.
 

@@ -31,4 +31,21 @@ Le resultat affiche :
 - niveau de confiance ;
 - action recommandee.
 
+Depuis Mission 31, la confirmation lance le vrai workflow TENNET :
+- un rapport Uber cree un `UberReportingImportBatch` en statut `parsed`, puis renvoie vers `/uber/reporting/{batch_id}` ;
+- une preuve, un PDF ou un ZIP cree un `EvidenceImportBatch`, puis renvoie vers `/evidence-imports/{batch_id}` ;
+- un fichier douteux reste en revue manuelle ;
+- un fichier ignore est audite.
+
+Exemple :
+1. L'utilisateur depose `download.csv`.
+2. TENNET detecte "Rapport Uber detecte".
+3. L'utilisateur confirme.
+4. TENNET cree l'import Uber.
+5. L'utilisateur ouvre le batch et confirme les lignes valides.
+
+Smart Import ne confirme jamais automatiquement les lignes financieres Uber. Les preuves ne sont pas auto-attachees, sauf reglage explicite ulterieur et confiance suffisante. OpenAI reste desactive par defaut.
+
+Les fichiers de preview sont conserves temporairement jusqu'a confirmation, avec expiration par defaut apres 24 heures (`SMART_IMPORT_PREVIEW_EXPIRY_HOURS=24`).
+
 Quand TENNET doute, l'action recommandee devient `manual_review`. Aucune preuve, aucun montant et aucun numero de commande ne sont inventes.

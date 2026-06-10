@@ -11,7 +11,7 @@ export default function SmartImportPreviewCard({ file }: Props) {
   const confidence = Number(file.confidence ?? 0);
 
   return (
-    <article className="premium-card">
+    <div>
       <div className="card-row">
         <div>
           <h3>{file.original_filename}</h3>
@@ -49,7 +49,7 @@ export default function SmartImportPreviewCard({ file }: Props) {
         </div>
       ) : null}
       {file.warnings.length > 0 ? <p className="muted">A verifier : {file.warnings.join(", ")}</p> : null}
-    </article>
+    </div>
   );
 }
 

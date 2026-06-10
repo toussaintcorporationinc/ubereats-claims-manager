@@ -1671,7 +1671,32 @@ Smart Import permet de deposer un fichier sans renommage obligatoire.
 
 - `POST /v1/smart-import/preview` : multipart `files[]`, accepte CSV, XLSX, PDF, JPG, JPEG, PNG, WEBP, HEIC, HEIF et ZIP. Retourne un `batch_preview_id`, les types detectes, la ligne d'en-tete, les colonnes reconnues, la confiance et l'action recommandee.
 - `GET /v1/smart-import/previews/{batch_id}` : relit une preview accessible a l'utilisateur.
-- `POST /v1/smart-import/confirm` : confirme une preview avec body `{ "batch_preview_id": 123 }`.
+- `POST /v1/smart-import/confirm` : confirme et route une preview vers les vrais workflows. Body minimal `{ "batch_preview_id": 123 }`, ou decisions par fichier `{ "files": [{ "file_id": 1, "action": "import_uber_reporting", "report_type": "combined_report", "restaurant_id": null }] }`.
+- `POST /v1/smart-import/previews/{batch_id}/cancel` : annule une preview non confirmee.
+- `POST /v1/smart-import/cleanup-expired` : owner seulement, marque les previews expirees et nettoie les temporaires non routes.
+
+Reponse confirm :
+
+```json
+{
+  "batch_preview_id": 123,
+  "status": "confirmed",
+  "routed_files": [
+    {
+      "original_filename": "download.csv",
+      "action": "import_uber_reporting",
+      "destination_type": "uber_reporting_batch",
+      "destination_id": 456,
+      "destination_url": "/uber/reporting/456"
+    }
+  ],
+  "manual_review_files": [],
+  "ignored_files": [],
+  "errors": []
+}
+```
+
+Smart Import cree les batches operationnels mais ne confirme pas les lignes financieres Uber a la place de l'utilisateur.
 
 Les exports Uber a deux lignes d'en-tete sont supportes : TENNET scanne les cinq premieres lignes, choisit le meilleur header et ignore le preambule.
 
