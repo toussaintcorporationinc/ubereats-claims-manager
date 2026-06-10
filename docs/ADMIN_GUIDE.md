@@ -243,3 +243,11 @@ Rules:
 - run `scripts/smoke_test_v1_1.sh` before acceptance;
 - validate with `docs/V1_1_ACCEPTANCE_TEST_PLAN.md`.
 
+## Premium UX administration
+
+Use `/smart-import` when an operator has a report, screenshot, PDF or ZIP but does not know the format. TENNET detects the content and recommends the next action without requiring a renamed file.
+
+Staff mobile usage should stay focused on proof tasks. Staff must not receive financial cockpit, Gmail, appeal or AutoPilot permissions.
+
+See `docs/SMART_IMPORT.md`, `docs/MOBILE_USAGE.md` and `docs/DESIGN_SYSTEM.md`.
+

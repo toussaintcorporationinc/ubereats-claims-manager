@@ -378,3 +378,15 @@ Rappels :
 - aucun email, appel ou relance n'est envoye automatiquement ;
 - OpenAI/Vision est desactive par defaut ;
 - la validation terrain avec de vrais exports Uber reste necessaire avant exploitation commerciale.
+
+## UX premium et Smart Import
+
+Mission 30 ajoute une couche UX premium :
+
+- `/smart-import` accepte CSV, XLSX, PDF, images et ZIP sans renommage obligatoire ;
+- les exports Uber avec preambule et deux lignes d'en-tete sont detectes proprement ;
+- `/v1/workspace/next-actions` alimente le bloc "A faire maintenant" ;
+- mobile et tablette disposent de navigation, cartes responsives et actions principales plus lisibles ;
+- une PWA legere permet l'ajout a l'ecran d'accueil sans stockage sensible offline.
+
+Voir `docs/SMART_IMPORT.md`, `docs/MOBILE_USAGE.md`, `docs/DESIGN_SYSTEM.md` et `docs/PREMIUM_UX_PRINCIPLES.md`.

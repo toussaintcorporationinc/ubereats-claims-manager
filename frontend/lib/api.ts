@@ -265,6 +265,20 @@ export type AutopilotActionStatus =
   | "sent"
   | "failed"
   | "manual_review";
+export type SmartImportCategory = "uber_reporting" | "evidence" | "zip" | "unknown";
+export type SmartImportRecommendedAction = "import_uber_reporting" | "import_evidence_bulk" | "manual_review" | "ignore";
+export type WorkspaceActionType =
+  | "upload_evidence"
+  | "review_import"
+  | "create_claim_order"
+  | "create_draft"
+  | "connect_gmail"
+  | "send_manual"
+  | "appeal_refusal"
+  | "map_uber_store"
+  | "review_customer_refund"
+  | "export_report"
+  | "manual_review";
 
 export type Restaurant = {
   id: number;
@@ -1121,6 +1135,55 @@ export type RecoveryActionsResponse = {
   actions: RecoveryAction[];
   limit: number;
   offset: number;
+};
+
+export type WorkspaceAction = {
+  title: string;
+  description: string;
+  restaurant: string | null;
+  amount: MoneyValue;
+  priority: string;
+  action_url: string;
+  action_type: WorkspaceActionType;
+};
+
+export type WorkspaceNextActionsResponse = {
+  urgent: WorkspaceAction[];
+  today: WorkspaceAction[];
+  this_week: WorkspaceAction[];
+  blocked: WorkspaceAction[];
+  high_value: WorkspaceAction[];
+};
+
+export type SmartImportFilePreview = {
+  id: number;
+  original_filename: string;
+  file_type: string;
+  detected_category: SmartImportCategory;
+  detected_report_type: UberReportingReportType | null;
+  detected_evidence_type: string | null;
+  detected_restaurant_name: string | null;
+  detected_date_from: string | null;
+  detected_date_to: string | null;
+  header_row_number: number | null;
+  skipped_preamble_rows: number;
+  confidence: MoneyValue;
+  recommended_action: SmartImportRecommendedAction;
+  warnings: string[];
+  detected_columns: string[];
+  metadata_json: Record<string, unknown> | null;
+};
+
+export type SmartImportPreviewResponse = {
+  batch_preview_id: number;
+  status: string;
+  files: SmartImportFilePreview[];
+};
+
+export type SmartImportConfirmResponse = {
+  batch_preview_id: number;
+  status: string;
+  recommended_actions: SmartImportRecommendedAction[];
 };
 
 export type EvidenceImportBatch = {
@@ -2237,6 +2300,21 @@ export const api = {
     request<RecoveryCasesResponse>(`/v1/recovery/cases${buildQuery(filters)}`),
   getRecoveryActions: (filters: RecoveryFilters = {}) =>
     request<RecoveryActionsResponse>(`/v1/recovery/actions${buildQuery(filters)}`),
+  getWorkspaceNextActions: () => request<WorkspaceNextActionsResponse>("/v1/workspace/next-actions"),
+  previewSmartImport: (files: File[]) => {
+    const formData = new FormData();
+    files.forEach((file) => formData.append("files", file));
+    return request<SmartImportPreviewResponse>("/v1/smart-import/preview", {
+      method: "POST",
+      body: formData,
+    });
+  },
+  getSmartImportPreview: (batchId: number) =>
+    request<SmartImportPreviewResponse>(`/v1/smart-import/previews/${batchId}`),
+  confirmSmartImport: (batchPreviewId: number) =>
+    postJson<SmartImportConfirmResponse, { batch_preview_id: number }>("/v1/smart-import/confirm", {
+      batch_preview_id: batchPreviewId,
+    }),
   downloadRecoverySummaryXlsx: (filters: RecoveryFilters = {}) =>
     downloadBlob(`/v1/recovery/export/summary.xlsx${buildQuery(filters)}`),
   downloadRecoveryCasesCsv: (filters: RecoveryFilters = {}) =>

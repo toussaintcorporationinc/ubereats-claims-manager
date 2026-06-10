@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import ApiError from "@/components/ApiError";
 import EmptyState from "@/components/EmptyState";
+import EvidenceTaskCard from "@/components/EvidenceTaskCard";
 import LoadingState from "@/components/LoadingState";
+import ResponsiveDataList from "@/components/ResponsiveDataList";
 import StatusBadge from "@/components/StatusBadge";
 import {
   api,
@@ -179,69 +181,72 @@ export default function EvidenceTasksPage() {
         </div>
       </section>
 
-      {tasks.length > 0 ? (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Restaurant</th>
-                <th>Commande</th>
-                <th>Preuve</th>
-                <th>Priorite</th>
-                <th>Statut</th>
-                <th>Montant</th>
-                <th>Contexte</th>
-                <th>Echeance</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tasks.map((task) => (
-                <tr key={task.id}>
-                  <td>{task.restaurant_name}</td>
-                  <td>
-                    <Link href={`/orders/${task.order_id}`} className="secondary-button">
-                      {task.uber_order_number}
-                    </Link>
-                  </td>
-                  <td>
-                    <div className="stack-sm">
-                      <strong>{task.title}</strong>
-                      <span className="muted">{task.required_evidence_type}</span>
-                    </div>
-                  </td>
-                  <td>
-                    <StatusBadge status={task.priority} />
-                  </td>
-                  <td>
-                    <StatusBadge status={task.status} />
-                  </td>
-                  <td>{formatCurrency(task.order_amount, task.currency)}</td>
-                  <td>
-                    {task.customer_refund_dispute_id ? (
-                      <Link href={`/customer-refunds/${task.customer_refund_dispute_id}`} className="secondary-button">
-                        Deduction
-                      </Link>
-                    ) : task.reconciliation_result_id ? (
-                      <span className="muted">Reconciliation</span>
-                    ) : (
-                      <span className="muted">Dossier</span>
-                    )}
-                  </td>
-                  <td>{formatDate(task.due_at)}</td>
-                  <td>
-                    <Link href={`/evidence-tasks/${task.id}`} className="button">
-                      Ouvrir
-                    </Link>
-                  </td>
+      <ResponsiveDataList
+        items={tasks}
+        empty={<EmptyState title="Aucune preuve a fournir" />}
+        renderMobileCard={(task) => <EvidenceTaskCard key={task.id} task={task} />}
+        desktop={
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Restaurant</th>
+                  <th>Commande</th>
+                  <th>Preuve</th>
+                  <th>Priorite</th>
+                  <th>Statut</th>
+                  <th>Montant</th>
+                  <th>Contexte</th>
+                  <th>Echeance</th>
+                  <th>Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <EmptyState title="Aucune preuve a fournir" />
-      )}
+              </thead>
+              <tbody>
+                {tasks.map((task) => (
+                  <tr key={task.id}>
+                    <td>{task.restaurant_name}</td>
+                    <td>
+                      <Link href={`/orders/${task.order_id}`} className="secondary-button">
+                        {task.uber_order_number}
+                      </Link>
+                    </td>
+                    <td>
+                      <div className="stack-sm">
+                        <strong>{task.title}</strong>
+                        <span className="muted">{task.required_evidence_type}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <StatusBadge status={task.priority} />
+                    </td>
+                    <td>
+                      <StatusBadge status={task.status} />
+                    </td>
+                    <td>{formatCurrency(task.order_amount, task.currency)}</td>
+                    <td>
+                      {task.customer_refund_dispute_id ? (
+                        <Link href={`/customer-refunds/${task.customer_refund_dispute_id}`} className="secondary-button">
+                          Deduction
+                        </Link>
+                      ) : task.reconciliation_result_id ? (
+                        <span className="muted">Reconciliation</span>
+                      ) : (
+                        <span className="muted">Dossier</span>
+                      )}
+                    </td>
+                    <td>{formatDate(task.due_at)}</td>
+                    <td>
+                      <Link href={`/evidence-tasks/${task.id}`} className="button">
+                        Ouvrir
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        }
+      />
     </section>
   );
 }

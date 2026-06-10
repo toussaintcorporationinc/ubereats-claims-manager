@@ -1,12 +1,9 @@
-import csv
 from collections import Counter
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
-from io import BytesIO, StringIO
 from typing import Any
 
 from fastapi import HTTPException, UploadFile, status
-from openpyxl import load_workbook
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -22,6 +19,7 @@ from app.models import (
 )
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
+from app.services.smart_import_classifier_service import read_tabular_rows, rows_to_dicts_with_detected_header
 
 REPORT_TYPES = {"orders_report", "payments_report", "adjustments_report", "combined_report"}
 ROW_PREVIEW_LIMIT = 100
@@ -468,14 +466,9 @@ def refresh_batch_counts(db: Session, batch: UberReportingImportBatch) -> None:
 
 
 def parse_rows(content: bytes, suffix: str) -> list[dict[str, Any]]:
-    if suffix == "csv":
-        text = content.decode("utf-8-sig")
-        return list(csv.DictReader(StringIO(text)))
-    workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
-    sheet = workbook.active
-    rows_iter = sheet.iter_rows(values_only=True)
-    headers = [str(value).strip() if value is not None else "" for value in next(rows_iter)]
-    return [dict(zip(headers, values, strict=False)) for values in rows_iter]
+    rows = read_tabular_rows(content, suffix)
+    parsed_rows, _header_detection = rows_to_dicts_with_detected_header(rows)
+    return parsed_rows
 
 
 def normalize_keys(row: dict[str, Any]) -> dict[str, Any]:

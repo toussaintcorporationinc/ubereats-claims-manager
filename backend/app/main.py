@@ -27,8 +27,10 @@ from app.routes import (
     reports,
     response_reviews,
     restaurants,
+    smart_import,
     uber,
     users,
+    workspace,
 )
 from app.services.file_storage_service import ensure_evidence_storage
 from app.services.local_storage import ensure_local_storage
@@ -105,4 +107,6 @@ app.include_router(imports.router)
 app.include_router(dashboard.router)
 app.include_router(response_reviews.router)
 app.include_router(users.router)
+app.include_router(smart_import.router)
 app.include_router(uber.router)
+app.include_router(workspace.router)

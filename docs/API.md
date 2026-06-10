@@ -1665,6 +1665,24 @@ Permissions :
 
 Les endpoints ne retournent aucun secret Uber et ne stockent aucun mot de passe Uber.
 
+## Smart Import Et Workspace
+
+Smart Import permet de deposer un fichier sans renommage obligatoire.
+
+- `POST /v1/smart-import/preview` : multipart `files[]`, accepte CSV, XLSX, PDF, JPG, JPEG, PNG, WEBP, HEIC, HEIF et ZIP. Retourne un `batch_preview_id`, les types detectes, la ligne d'en-tete, les colonnes reconnues, la confiance et l'action recommandee.
+- `GET /v1/smart-import/previews/{batch_id}` : relit une preview accessible a l'utilisateur.
+- `POST /v1/smart-import/confirm` : confirme une preview avec body `{ "batch_preview_id": 123 }`.
+
+Les exports Uber a deux lignes d'en-tete sont supportes : TENNET scanne les cinq premieres lignes, choisit le meilleur header et ignore le preambule.
+
+- `GET /v1/workspace/next-actions` : retourne les actions prioritaires par bucket `urgent`, `today`, `this_week`, `blocked` et `high_value`.
+
+Permissions :
+
+- `owner` et `manager` peuvent utiliser Smart Import.
+- `staff` voit seulement les actions de preuves autorisees dans `next-actions`.
+- Aucun endpoint Smart Import n'expose de secret, token, chemin disque brut ou contenu client reel.
+
 ## Hors perimetre V1 actuelle
 
 - pas d'integration OpenAI API ;

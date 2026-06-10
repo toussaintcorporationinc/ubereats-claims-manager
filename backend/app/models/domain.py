@@ -289,6 +289,14 @@ AUTOPILOT_ACTION_STATUSES = (
     "failed",
     "manual_review",
 )
+SMART_IMPORT_PREVIEW_STATUSES = ("previewed", "confirmed", "cancelled")
+SMART_IMPORT_FILE_CATEGORIES = ("uber_reporting", "evidence", "zip", "unknown")
+SMART_IMPORT_RECOMMENDED_ACTIONS = (
+    "import_uber_reporting",
+    "import_evidence_bulk",
+    "manual_review",
+    "ignore",
+)
 
 
 def utc_now() -> datetime:
@@ -829,6 +837,66 @@ class AutopilotAction(TimestampMixin, Base):
     restaurant: Mapped[Restaurant] = relationship(back_populates="autopilot_actions")
     email_draft: Mapped[EmailDraft | None] = relationship(foreign_keys=[email_draft_id])
     provider_draft: Mapped[EmailProviderDraft | None] = relationship(foreign_keys=[provider_draft_id])
+
+
+class SmartImportPreviewBatch(TimestampMixin, Base):
+    __tablename__ = "smart_import_preview_batches"
+    __table_args__ = (
+        CheckConstraint(
+            check_in_constraint("status", SMART_IMPORT_PREVIEW_STATUSES),
+            name="ck_smart_import_preview_batches_status",
+        ),
+        Index("ix_smart_import_preview_batches_uploaded_by_user_id", "uploaded_by_user_id"),
+        Index("ix_smart_import_preview_batches_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    uploaded_by_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="previewed")
+    files_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    files: Mapped[list["SmartImportPreviewFile"]] = relationship(
+        back_populates="batch",
+        cascade="all, delete-orphan",
+    )
+
+
+class SmartImportPreviewFile(TimestampMixin, Base):
+    __tablename__ = "smart_import_preview_files"
+    __table_args__ = (
+        CheckConstraint(
+            check_in_constraint("detected_category", SMART_IMPORT_FILE_CATEGORIES),
+            name="ck_smart_import_preview_files_category",
+        ),
+        CheckConstraint(
+            check_in_constraint("recommended_action", SMART_IMPORT_RECOMMENDED_ACTIONS),
+            name="ck_smart_import_preview_files_recommended_action",
+        ),
+        Index("ix_smart_import_preview_files_batch_id", "batch_id"),
+        Index("ix_smart_import_preview_files_detected_category", "detected_category"),
+        Index("ix_smart_import_preview_files_recommended_action", "recommended_action"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("smart_import_preview_batches.id"), nullable=False)
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    detected_category: Mapped[str] = mapped_column(String(50), nullable=False)
+    detected_report_type: Mapped[str | None] = mapped_column(String(50))
+    detected_evidence_type: Mapped[str | None] = mapped_column(String(50))
+    detected_restaurant_name: Mapped[str | None] = mapped_column(String(255))
+    detected_date_from: Mapped[date | None] = mapped_column(Date)
+    detected_date_to: Mapped[date | None] = mapped_column(Date)
+    header_row_number: Mapped[int | None] = mapped_column(Integer)
+    skipped_preamble_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=Decimal("0"))
+    recommended_action: Mapped[str] = mapped_column(String(50), nullable=False)
+    warnings: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    detected_columns: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+
+    batch: Mapped[SmartImportPreviewBatch] = relationship(back_populates="files")
 
 
 class UberIntegrationAccount(TimestampMixin, Base):

@@ -1,0 +1,179 @@
+from datetime import datetime, timezone
+from decimal import Decimal
+from io import BytesIO
+
+from fastapi.testclient import TestClient
+from openpyxl import Workbook
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models import ClaimOrder, EvidenceRequestTask, Restaurant, User
+
+
+def test_health_public_works(unauthenticated_client: TestClient) -> None:
+    response = unauthenticated_client.get("/health")
+    assert response.status_code == 200
+
+
+def test_smart_import_detects_uber_report_without_filename(client: TestClient) -> None:
+    csv_content = (
+        "Store id,Nom du restaurant,Id. de la commande,Date de la commande,Statut de la commande,Ventes (TVA incluse),Devise\n"
+        "store-1,Restaurant Test TENNET,UBER-SMART-001,2026-05-01,canceled,24.90,EUR\n"
+    )
+    response = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("download.csv", csv_content.encode("utf-8"), "text/csv"))],
+    )
+
+    assert response.status_code == 201
+    file_preview = response.json()["files"][0]
+    assert file_preview["detected_category"] == "uber_reporting"
+    assert file_preview["recommended_action"] == "import_uber_reporting"
+
+
+def test_smart_import_detects_two_line_uber_header_and_restaurant_period(client: TestClient) -> None:
+    csv_content = (
+        "Descriptions longues Uber Eats Manager,,,,,,\n"
+        "Id. du restaurant,Nom du restaurant,Id. de la commande,Date de la commande,Statut de la commande,Ventes (TVA incluse),Devise\n"
+        "store-2,Restaurant Test Header,UBER-SMART-002,01/05/2026,annule,31,EUR\n"
+        "store-2,Restaurant Test Header,UBER-SMART-003,03/05/2026,canceled,18.50,EUR\n"
+    )
+    response = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("897e7ee9-f500.csv", csv_content.encode("utf-8"), "text/csv"))],
+    )
+
+    assert response.status_code == 201
+    file_preview = response.json()["files"][0]
+    assert file_preview["header_row_number"] == 2
+    assert file_preview["skipped_preamble_rows"] == 1
+    assert file_preview["detected_restaurant_name"] == "Restaurant Test Header"
+    assert file_preview["detected_date_from"] == "2026-05-01"
+    assert file_preview["detected_date_to"] == "2026-05-03"
+
+
+def test_smart_import_detects_xlsx_two_line_header(client: TestClient) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["Descriptions longues Uber"])
+    sheet.append(["Id. du restaurant", "Nom du restaurant", "Id. de la commande", "Date de la commande", "Montant total"])
+    sheet.append(["store-3", "Restaurant XLSX", "UBER-XLSX-001", "2026-05-10", "12,50"])
+    buffer = BytesIO()
+    workbook.save(buffer)
+
+    response = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("export.xlsx", buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))],
+    )
+
+    assert response.status_code == 201
+    file_preview = response.json()["files"][0]
+    assert file_preview["detected_category"] == "uber_reporting"
+    assert file_preview["header_row_number"] == 2
+
+
+def test_smart_import_detects_zip_and_evidence_image(client: TestClient) -> None:
+    response = client.post(
+        "/v1/smart-import/preview",
+        files=[
+            ("files", ("preuve.zip", b"PK\x03\x04", "application/zip")),
+            ("files", ("IMG_1234.jpg", b"fake-image", "image/jpeg")),
+        ],
+    )
+
+    assert response.status_code == 201
+    files = response.json()["files"]
+    assert files[0]["detected_category"] == "zip"
+    assert files[0]["recommended_action"] == "import_evidence_bulk"
+    assert files[1]["detected_category"] == "evidence"
+
+
+def test_smart_import_unknown_becomes_manual_review(client: TestClient) -> None:
+    response = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("export.csv", b"foo,bar\nbaz,qux\n", "text/csv"))],
+    )
+
+    assert response.status_code == 201
+    file_preview = response.json()["files"][0]
+    assert file_preview["detected_category"] == "unknown"
+    assert file_preview["recommended_action"] == "manual_review"
+
+
+def test_workspace_next_actions_returns_priorities_for_owner(client: TestClient, db_session: Session) -> None:
+    restaurant, order = create_restaurant_order_and_task(db_session)
+
+    response = client.get("/v1/workspace/next-actions")
+
+    assert response.status_code == 200
+    payload = response.json()
+    urgent_titles = [item["title"] for item in payload["urgent"]]
+    all_urls = [item["action_url"] for bucket in payload.values() for item in bucket]
+    assert any("Ticket" in title or "preuve" in title.lower() for title in urgent_titles)
+    assert "/smart-import" in all_urls
+    assert "/recovery" in all_urls
+    assert "/reports" in all_urls
+    assert "/autopilot" in all_urls
+    assert restaurant.id == order.restaurant_id
+
+
+def test_staff_next_actions_limited_to_evidence(client: TestClient, db_session: Session) -> None:
+    restaurant, _order = create_restaurant_order_and_task(db_session)
+    staff = client.post(
+        "/v1/users",
+        json={
+            "email": "staff-next-actions@example.com",
+            "password": "staff-password",
+            "full_name": "Staff Next Actions",
+            "role": "staff",
+            "active": True,
+        },
+    ).json()
+    assign_response = client.post(f"/v1/users/{staff['id']}/restaurants", json={"restaurant_id": restaurant.id})
+    assert assign_response.status_code == 201
+    login_response = client.post("/v1/auth/login", json={"email": "staff-next-actions@example.com", "password": "staff-password"})
+    token = login_response.json()["access_token"]
+
+    response = client.get("/v1/workspace/next-actions", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    actions = [item for bucket in response.json().values() for item in bucket]
+    assert actions
+    assert {item["action_type"] for item in actions} == {"upload_evidence"}
+
+
+def create_restaurant_order_and_task(db: Session) -> tuple[Restaurant, ClaimOrder]:
+    owner = db.scalar(select(User).where(User.email == "owner@example.com"))
+    restaurant = Restaurant(name="Restaurant Next Actions", sender_email="claims@example.com")
+    db.add(restaurant)
+    db.flush()
+    order = ClaimOrder(
+        restaurant_id=restaurant.id,
+        uber_order_number="UBER-NEXT-001",
+        customer_name="Client Test",
+        order_amount=Decimal("125.00"),
+        currency="EUR",
+        notes="Annulation test",
+        status="missing_evidence",
+    )
+    db.add(order)
+    db.flush()
+    db.add(
+        EvidenceRequestTask(
+            order_id=order.id,
+            restaurant_id=restaurant.id,
+            task_type="missing_receipt",
+            required_evidence_type="receipt",
+            status="pending",
+            priority="urgent",
+            title="Ticket a fournir",
+            description="Ticket fictif requis",
+            due_at=datetime.now(timezone.utc),
+            reason="missing_receipt",
+            created_by_user_id=owner.id if owner else None,
+        )
+    )
+    db.commit()
+    db.refresh(restaurant)
+    db.refresh(order)
+    return restaurant, order

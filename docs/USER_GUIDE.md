@@ -212,3 +212,11 @@ Use `docs/examples/v1_1` as the starting dataset.
 
 Before production rollout, repeat the import and reconciliation scenarios with real-format Uber exports supplied by the operator, while keeping customer data minimized.
 
+## Smart Import and mobile usage
+
+Open `/smart-import` to drop Uber reports, evidence images, PDFs or ZIP files without renaming them. TENNET detects the content, suggests the likely type and asks for manual review when confidence is low.
+
+On mobile, use the header menu, evidence cards and sticky action bars to work in the restaurant. Staff users should focus on "Mes preuves a fournir", uploading photos or PDFs only for assigned restaurants.
+
+TENNET always prefers a clear action, readable status and guided workflow over a technical table. It does not guarantee reimbursement and does not invent proof, amounts or order numbers.
+
