@@ -380,6 +380,10 @@ class Restaurant(TimestampMixin, Base):
     evidence_import_batches: Mapped[list["EvidenceImportBatch"]] = relationship(back_populates="restaurant")
     appeal_workflows: Mapped[list["AppealWorkflow"]] = relationship(back_populates="restaurant")
     autopilot_actions: Mapped[list["AutopilotAction"]] = relationship(back_populates="restaurant")
+    email_account_mapping: Mapped["EmailAccountRestaurantMapping | None"] = relationship(
+        back_populates="restaurant",
+        cascade="all, delete-orphan",
+    )
 
 
 class ClaimOrder(TimestampMixin, Base):
@@ -614,6 +618,27 @@ class EmailAccount(TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
     inbound_messages: Mapped[list["InboundEmailMessage"]] = relationship(back_populates="email_account")
+    restaurant_mappings: Mapped[list["EmailAccountRestaurantMapping"]] = relationship(
+        back_populates="email_account",
+        cascade="all, delete-orphan",
+    )
+
+
+class EmailAccountRestaurantMapping(TimestampMixin, Base):
+    __tablename__ = "email_account_restaurant_mappings"
+    __table_args__ = (
+        UniqueConstraint("restaurant_id", name="uq_email_account_restaurant_mapping_restaurant"),
+        Index("ix_email_account_restaurant_mappings_email_account_id", "email_account_id"),
+        Index("ix_email_account_restaurant_mappings_restaurant_id", "restaurant_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    restaurant_id: Mapped[int] = mapped_column(ForeignKey("restaurants.id"), nullable=False)
+    email_account_id: Mapped[int] = mapped_column(ForeignKey("email_accounts.id"), nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer)
+
+    restaurant: Mapped[Restaurant] = relationship(back_populates="email_account_mapping")
+    email_account: Mapped[EmailAccount] = relationship(back_populates="restaurant_mappings")
 
 
 class GmailSyncState(TimestampMixin, Base):
@@ -762,11 +787,13 @@ class EmailProviderDraft(TimestampMixin, Base):
             name="ck_email_provider_drafts_status",
         ),
         Index("ix_email_provider_drafts_email_draft_id", "email_draft_id"),
+        Index("ix_email_provider_drafts_email_account_id", "email_account_id"),
         Index("ix_email_provider_drafts_created_by_user_id", "created_by_user_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email_draft_id: Mapped[int] = mapped_column(ForeignKey("email_drafts.id"), nullable=False)
+    email_account_id: Mapped[int | None] = mapped_column(ForeignKey("email_accounts.id"))
     provider: Mapped[str] = mapped_column(String(50), nullable=False)
     provider_draft_id: Mapped[str | None] = mapped_column(String(255))
     provider_thread_id: Mapped[str | None] = mapped_column(String(255))
@@ -781,6 +808,7 @@ class EmailProviderDraft(TimestampMixin, Base):
     last_error: Mapped[str | None] = mapped_column(Text)
 
     email_draft: Mapped[EmailDraft] = relationship(back_populates="provider_drafts")
+    email_account: Mapped[EmailAccount | None] = relationship()
 
 
 class AutopilotRun(Base):

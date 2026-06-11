@@ -17,6 +17,7 @@ from app.models import (
     ClaimResponseReview,
     CustomerRefundDisputeReview,
     EmailAccount,
+    EmailAccountRestaurantMapping,
     EmailDraft,
     EmailProviderDraft,
     EvidenceRequestTask,
@@ -437,18 +438,30 @@ def create_appeal_gmail_draft(
         raise AppealWorkflowError("email_provider_disabled", 503)
     gmail_account = db.scalar(
         select(EmailAccount.id)
+        .join(EmailAccountRestaurantMapping, EmailAccountRestaurantMapping.email_account_id == EmailAccount.id)
         .where(
+            EmailAccountRestaurantMapping.restaurant_id == workflow.restaurant_id,
             EmailAccount.user_id == user.id,
             EmailAccount.provider == "gmail",
             EmailAccount.disconnected_at.is_(None),
         )
-        .order_by(EmailAccount.id.desc())
     )
+    if gmail_account is None:
+        gmail_account = db.scalar(
+            select(EmailAccount.id)
+            .where(
+                EmailAccount.user_id == user.id,
+                EmailAccount.provider == "gmail",
+                EmailAccount.disconnected_at.is_(None),
+            )
+            .order_by(EmailAccount.id.desc())
+        )
     if gmail_account is None:
         raise AppealWorkflowError("gmail_account_not_connected", 409)
 
     provider_draft = EmailProviderDraft(
         email_draft_id=attempt.email_draft.id,
+        email_account_id=gmail_account,
         provider="gmail",
         provider_draft_id=f"tennet-appeal-{workflow.id}-{attempt.id}",
         provider_thread_id=None,

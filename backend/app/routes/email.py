@@ -8,6 +8,7 @@ from app.core.auth import (
     ensure_can_access_order,
     get_accessible_restaurant_ids,
     get_current_user,
+    require_owner,
     require_owner_or_manager,
 )
 from app.core.config import get_settings
@@ -15,16 +16,19 @@ from app.core.database import get_db
 from app.models import (
     ClaimOrder,
     EmailAccount,
+    EmailAccountRestaurantMapping,
     EmailDraft,
     EmailProviderDraft,
     EmailThread,
     GmailSyncState,
     InboundEmailMessage,
+    Restaurant,
     User,
 )
 from app.models.domain import utc_now
 from app.schemas.domain import (
     EmailProviderDraftRead,
+    EmailAccountRead,
     EmailThreadRead,
     GmailConnectionStatus,
     GmailDraftCreate,
@@ -34,6 +38,8 @@ from app.schemas.domain import (
     GmailInboundSyncRequest,
     GmailInboundSyncResponse,
     GmailOAuthStartResponse,
+    GmailRestaurantMappingRead,
+    GmailRestaurantMappingUpdate,
     InboundEmailMessageRead,
     InboundManualLinkRequest,
     InboundMessagesResponse,
@@ -65,7 +71,133 @@ def gmail_status(
     current_user: User = Depends(get_current_user),
     provider: EmailProvider = Depends(get_gmail_provider),
 ) -> GmailConnectionStatus:
-    return GmailConnectionStatus.model_validate(provider.get_connection_status(db, current_user).__dict__)
+    status_payload = provider.get_connection_status(db, current_user).__dict__
+    status_payload["accounts"] = [
+        EmailAccountRead.model_validate(account)
+        for account in get_connected_gmail_accounts(db, current_user)
+    ]
+    return GmailConnectionStatus.model_validate(status_payload)
+
+
+@router.get("/v1/email/gmail/accounts", response_model=list[EmailAccountRead])
+def list_gmail_accounts(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+) -> list[EmailAccountRead]:
+    return [EmailAccountRead.model_validate(account) for account in get_connected_gmail_accounts(db, current_user)]
+
+
+@router.get("/v1/email/gmail/restaurant-mappings", response_model=list[GmailRestaurantMappingRead])
+def list_gmail_restaurant_mappings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+) -> list[GmailRestaurantMappingRead]:
+    restaurants = get_visible_restaurants_for_email_settings(db, current_user)
+    rows: list[GmailRestaurantMappingRead] = []
+    for restaurant in restaurants:
+        mapping = restaurant.email_account_mapping
+        account = mapping.email_account if mapping else None
+        if account is not None and account.disconnected_at is not None:
+            account = None
+        rows.append(
+            GmailRestaurantMappingRead(
+                id=mapping.id if mapping else None,
+                restaurant_id=restaurant.id,
+                restaurant_name=restaurant.name,
+                email_account_id=account.id if account else None,
+                email_address=account.email_address if account else None,
+                created_at=mapping.created_at if mapping else None,
+                updated_at=mapping.updated_at if mapping else None,
+            )
+        )
+    return rows
+
+
+@router.put("/v1/email/gmail/restaurant-mappings/{restaurant_id}", response_model=GmailRestaurantMappingRead)
+def update_gmail_restaurant_mapping(
+    restaurant_id: int,
+    payload: GmailRestaurantMappingUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner),
+) -> GmailRestaurantMappingRead:
+    restaurant = db.get(Restaurant, restaurant_id)
+    if restaurant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found")
+
+    existing_mapping = db.scalar(
+        select(EmailAccountRestaurantMapping).where(EmailAccountRestaurantMapping.restaurant_id == restaurant_id)
+    )
+    if payload.email_account_id is None:
+        if existing_mapping is not None:
+            old_value = {
+                "restaurant_id": restaurant_id,
+                "email_account_id": existing_mapping.email_account_id,
+            }
+            db.delete(existing_mapping)
+            add_audit_log(
+                db,
+                entity_type="email_account_restaurant_mapping",
+                entity_id=restaurant_id,
+                action="gmail_restaurant_mapping.deleted",
+                user_id=current_user.id,
+                old_value=old_value,
+            )
+            db.commit()
+        return GmailRestaurantMappingRead(
+            id=None,
+            restaurant_id=restaurant.id,
+            restaurant_name=restaurant.name,
+            email_account_id=None,
+            email_address=None,
+        )
+
+    account = db.get(EmailAccount, payload.email_account_id)
+    if (
+        account is None
+        or account.user_id != current_user.id
+        or account.provider != "gmail"
+        or account.disconnected_at is not None
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connected Gmail account not found")
+
+    if existing_mapping is None:
+        existing_mapping = EmailAccountRestaurantMapping(
+            restaurant_id=restaurant_id,
+            email_account_id=account.id,
+            created_by_user_id=current_user.id,
+        )
+        db.add(existing_mapping)
+        action = "gmail_restaurant_mapping.created"
+        old_value = None
+    else:
+        old_value = {
+            "restaurant_id": restaurant_id,
+            "email_account_id": existing_mapping.email_account_id,
+        }
+        existing_mapping.email_account_id = account.id
+        action = "gmail_restaurant_mapping.updated"
+
+    db.flush()
+    add_audit_log(
+        db,
+        entity_type="email_account_restaurant_mapping",
+        entity_id=existing_mapping.id,
+        action=action,
+        user_id=current_user.id,
+        old_value=old_value,
+        new_value={"restaurant_id": restaurant_id, "email_account_id": account.id, "email_address": account.email_address},
+    )
+    db.commit()
+    db.refresh(existing_mapping)
+    return GmailRestaurantMappingRead(
+        id=existing_mapping.id,
+        restaurant_id=restaurant.id,
+        restaurant_name=restaurant.name,
+        email_account_id=account.id,
+        email_address=account.email_address,
+        created_at=existing_mapping.created_at,
+        updated_at=existing_mapping.updated_at,
+    )
 
 
 @router.get("/v1/email/resend/status", response_model=GmailConnectionStatus)
@@ -523,6 +655,30 @@ def get_active_gmail_account(db: Session, user: User) -> EmailAccount | None:
         )
         .order_by(EmailAccount.id.desc())
     )
+
+
+def get_connected_gmail_accounts(db: Session, user: User) -> list[EmailAccount]:
+    return list(
+        db.scalars(
+            select(EmailAccount)
+            .where(
+                EmailAccount.user_id == user.id,
+                EmailAccount.provider == "gmail",
+                EmailAccount.disconnected_at.is_(None),
+            )
+            .order_by(EmailAccount.connected_at.desc(), EmailAccount.id.desc())
+        ).all()
+    )
+
+
+def get_visible_restaurants_for_email_settings(db: Session, user: User) -> list[Restaurant]:
+    statement = select(Restaurant).order_by(Restaurant.name, Restaurant.id)
+    accessible_ids = get_accessible_restaurant_ids(db, user)
+    if accessible_ids is not None:
+        if not accessible_ids:
+            return []
+        statement = statement.where(Restaurant.id.in_(accessible_ids))
+    return list(db.scalars(statement).all())
 
 
 def visible_inbound_messages_query(db: Session, user: User):

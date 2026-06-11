@@ -7,10 +7,21 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.main import app
-from app.models import AuditLog, ClaimOrder, EmailAccount, EmailDraft, EmailProviderDraft, EmailThread, User
+from app.core.security import create_access_token
+from app.models import (
+    AuditLog,
+    ClaimOrder,
+    EmailAccount,
+    EmailAccountRestaurantMapping,
+    EmailDraft,
+    EmailProviderDraft,
+    EmailThread,
+    User,
+)
 from app.models.domain import utc_now
 from app.routes.email import get_gmail_provider
 from app.services.email_provider import EmailConnectionStatus, EmailProviderError, EmailSendResult
+from app.services.gmail_email_provider import GmailEmailProvider
 
 
 def get_active_account(db: Session, user_id: int) -> EmailAccount | None:
@@ -188,18 +199,19 @@ def get_user(db_session: Session, email: str) -> User:
     return user
 
 
-def connect_gmail_account(db_session: Session, user_id: int, email_address: str = "connected@example.com") -> None:
-    db_session.add(
-        EmailAccount(
-            user_id=user_id,
-            provider="gmail",
-            email_address=email_address,
-            access_token_encrypted="encrypted-access-token",
-            refresh_token_encrypted="encrypted-refresh-token",
-            scopes="https://www.googleapis.com/auth/gmail.compose",
-        )
+def connect_gmail_account(db_session: Session, user_id: int, email_address: str = "connected@example.com") -> EmailAccount:
+    account = EmailAccount(
+        user_id=user_id,
+        provider="gmail",
+        email_address=email_address,
+        access_token_encrypted="encrypted-access-token",
+        refresh_token_encrypted="encrypted-refresh-token",
+        scopes="https://www.googleapis.com/auth/gmail.compose",
     )
+    db_session.add(account)
     db_session.commit()
+    db_session.refresh(account)
+    return account
 
 
 def create_provider_draft_record(
@@ -289,6 +301,93 @@ def test_oauth_callback_refuses_invalid_state(unauthenticated_client: TestClient
     response = unauthenticated_client.get("/v1/email/gmail/oauth/callback?code=test-code&state=invalid-state")
 
     assert response.status_code == 400
+
+
+def test_oauth_callback_keeps_multiple_gmail_accounts(
+    db_session: Session,
+    gmail_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = User(email="multi-owner@example.com", full_name="Multi Owner", role="owner", hashed_password="hash")
+    db_session.add(owner)
+    db_session.commit()
+    db_session.refresh(owner)
+    provider = GmailEmailProvider()
+    emails = iter(["tiramisumaisonfrance@gmail.com", "toussaintetchau1@gmail.com"])
+
+    monkeypatch.setattr(
+        provider,
+        "exchange_code_for_tokens",
+        lambda code: {
+            "access_token": f"access-{code}",
+            "refresh_token": f"refresh-{code}",
+            "expires_in": 3600,
+            "scope": "https://www.googleapis.com/auth/gmail.compose",
+        },
+    )
+    monkeypatch.setattr(provider, "fetch_email_address", lambda access_token: next(emails))
+
+    state = create_access_token(str(owner.id), {"purpose": "gmail_oauth_state", "provider": "gmail"})
+    first = provider.handle_oauth_callback(db_session, state, "first-code")
+    second = provider.handle_oauth_callback(db_session, state, "second-code")
+
+    accounts = db_session.scalars(
+        select(EmailAccount).where(EmailAccount.user_id == owner.id).order_by(EmailAccount.id)
+    ).all()
+    assert first.id != second.id
+    assert [account.email_address for account in accounts] == [
+        "tiramisumaisonfrance@gmail.com",
+        "toussaintetchau1@gmail.com",
+    ]
+
+
+def test_gmail_provider_uses_restaurant_mapped_account_for_draft(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    default_account = connect_gmail_account(db_session, owner.id, "default-claims@example.com")
+    mapped_account = connect_gmail_account(db_session, owner.id, "tiramisumaisonfrance@gmail.com")
+    restaurant = create_restaurant(client, "Mapped Gmail Restaurant")
+    draft_payload = create_ready_order_and_draft(client, restaurant["id"], "UBER-GMAIL-MAPPED")
+    draft = db_session.get(EmailDraft, draft_payload["id"])
+    assert draft is not None
+    db_session.add(
+        EmailAccountRestaurantMapping(
+            restaurant_id=restaurant["id"],
+            email_account_id=mapped_account.id,
+            created_by_user_id=owner.id,
+        )
+    )
+    db_session.commit()
+
+    selected_account = GmailEmailProvider().get_account_for_draft(db_session, owner.id, draft)
+
+    assert selected_account is not None
+    assert selected_account.id == mapped_account.id
+    assert selected_account.id != default_account.id
+
+
+def test_owner_can_map_restaurant_to_connected_gmail_account(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    account = connect_gmail_account(db_session, owner.id, "tiramisumaisonfrance@gmail.com")
+    restaurant = create_restaurant(client, "Tiramisu Mapping")
+
+    response = client.put(
+        f"/v1/email/gmail/restaurant-mappings/{restaurant['id']}",
+        json={"email_account_id": account.id},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["restaurant_id"] == restaurant["id"]
+    assert data["email_account_id"] == account.id
+    assert data["email_address"] == "tiramisumaisonfrance@gmail.com"
 
 
 def test_staff_cannot_create_gmail_draft(

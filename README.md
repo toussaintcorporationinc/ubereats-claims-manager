@@ -42,6 +42,7 @@ Le backend expose maintenant les premiers objets metier :
 - import massif CSV/XLSX des commandes annulees ;
 - detection et suivi des deductions Uber / remboursements clients depuis transactions importees ;
 - creation de vrais brouillons Gmail via OAuth ;
+- routage multi-Gmail par restaurant pour utiliser la bonne boite Uber ;
 - envoi manuel approuve de brouillons Gmail, sans automatisation ;
 - lecture et rattachement manuel des reponses Gmail entrantes ;
 - envoi transactionnel Resend optionnel, desactive par defaut et confirme manuellement ;
