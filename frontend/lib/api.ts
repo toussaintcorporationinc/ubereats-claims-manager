@@ -61,6 +61,7 @@ export type EmailDraftType =
 export type ImportBatchStatus = "uploaded" | "parsed" | "confirmed" | "partially_imported" | "failed" | "cancelled";
 export type ImportRowStatus = "valid" | "invalid" | "duplicate" | "unauthorized" | "created" | "skipped";
 export type EmailProviderDraftStatus = "provider_draft_created" | "send_requested" | "sent" | "failed";
+export type EmailProviderName = "gmail" | "resend";
 export type GmailSyncStatus = "idle" | "running" | "success" | "failed";
 export type InboundEmailMatchStatus = "linked" | "unlinked" | "ignored";
 export type InboundEmailReviewStatus = "unreviewed" | "reviewed" | "ignored";
@@ -343,7 +344,7 @@ export type EmailDraft = {
   subject: string;
   body: string;
   status: string;
-  provider: "gmail" | null;
+  provider: EmailProviderName | null;
   provider_status: string | null;
   provider_draft_id: string | null;
   provider_message_id: string | null;
@@ -362,7 +363,7 @@ export type EmailDraftSummary = {
   created_at: string;
   restaurant_name: string | null;
   uber_order_number: string | null;
-  provider: "gmail" | null;
+  provider: EmailProviderName | null;
   provider_status: string | null;
   provider_draft_id: string | null;
   provider_message_id: string | null;
@@ -373,7 +374,7 @@ export type EmailDraftSummary = {
 export type GmailConnectionStatus = {
   connected: boolean;
   email_address: string | null;
-  provider: "gmail";
+  provider: EmailProviderName;
   enabled: boolean;
 };
 
@@ -388,6 +389,12 @@ export type GmailDraftCreatePayload = {
 
 export type GmailDraftSendPayload = {
   confirm_send: boolean;
+};
+
+export type ResendSendPayload = {
+  confirm_send: boolean;
+  to_email?: string | null;
+  include_evidence: boolean;
 };
 
 export type GmailDraftSendResponse = {
@@ -425,7 +432,7 @@ export type InboundEmailMessage = {
   id: number;
   email_account_id: number;
   order_id: number | null;
-  provider: "gmail";
+  provider: EmailProviderName;
   provider_message_id: string;
   provider_thread_id: string | null;
   gmail_history_id: string | null;
@@ -2107,6 +2114,7 @@ export const api = {
   getOrderDrafts: (id: number) => request<EmailDraft[]>(`/v1/orders/${id}/drafts`),
   getDrafts: () => request<EmailDraftSummary[]>("/v1/drafts"),
   getGmailStatus: () => request<GmailConnectionStatus>("/v1/email/gmail/status"),
+  getResendStatus: () => request<GmailConnectionStatus>("/v1/email/resend/status"),
   startGmailOAuth: () => request<GmailOAuthStartResponse>("/v1/email/gmail/oauth/start"),
   disconnectGmail: () =>
     request<{ disconnected: boolean }>("/v1/email/gmail/disconnect", {
@@ -2119,6 +2127,8 @@ export const api = {
       `/v1/email/gmail/provider-drafts/${encodeURIComponent(providerDraftId)}/send`,
       payload,
     ),
+  sendResendDraft: (draftId: number, payload: ResendSendPayload) =>
+    postJson<EmailProviderDraft, ResendSendPayload>(`/v1/drafts/${draftId}/resend-send`, payload),
   getInboundStatus: () => request<GmailInboundStatus>("/v1/email/gmail/inbound/status"),
   syncInboundGmail: (payload: GmailInboundSyncPayload = {}) =>
     postJson<GmailInboundSyncResponse, GmailInboundSyncPayload>("/v1/email/gmail/inbound/sync", payload),

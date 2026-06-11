@@ -1,6 +1,6 @@
 # Email Rules
 
-Ce document cadre les regles de brouillons email internes, de brouillons Gmail et d'envoi Gmail manuel approuve.
+Ce document cadre les regles de brouillons email internes, de brouillons Gmail, de Resend transactionnel et d'envoi manuel approuve.
 
 ## Principes cible
 
@@ -10,6 +10,7 @@ Ce document cadre les regles de brouillons email internes, de brouillons Gmail e
 - separer la generation de contenu, la validation et l'envoi.
 - creer un brouillon Gmail uniquement apres action explicite d'un utilisateur autorise.
 - envoyer un brouillon Gmail uniquement apres confirmation manuelle explicite.
+- envoyer via Resend uniquement apres confirmation manuelle explicite.
 - lire les reponses Gmail uniquement apres sync manuelle explicite, sans reponse automatique.
 - preparer les relances uniquement sous forme de taches et brouillons, jamais sous forme d'envoi automatique.
 
@@ -149,6 +150,30 @@ Regles :
 - un `EmailThread` outbound conserve le sujet, le corps, le message id et le thread id disponibles ;
 - un `AuditLog` trace le succes ou l'echec controle ;
 - les tokens Gmail, secrets et mots de passe ne sont jamais stockes dans l'audit.
+
+## Envoi Resend manuel
+
+Resend peut etre utilise comme provider transactionnel serveur apres verification du domaine `mail.thetennet.com`.
+
+Variables attendues :
+
+- `EMAIL_PROVIDER_ENABLED=true` ;
+- `RESEND_ENABLED=true` ;
+- `RESEND_API_KEY` configure uniquement sur le serveur ;
+- `RESEND_FROM_EMAIL=TENNET <notifications@mail.thetennet.com>` ;
+- `RESEND_DOMAIN=mail.thetennet.com`.
+
+Regles :
+
+- Resend est desactive par defaut dans tous les exemples ;
+- aucun token ou cle API Resend n'est commite ;
+- `POST /v1/drafts/{draft_id}/resend-send` exige `confirm_send=true` ;
+- `owner` et `manager` peuvent envoyer uniquement les dossiers autorises ;
+- `staff` ne peut pas envoyer ;
+- les commandes finales `accepted`, `payment_confirmed`, `refused` et `closed` bloquent l'envoi ;
+- l'envoi cree un `EmailProviderDraft` avec `provider=resend`, un `EmailThread` outbound et un `AuditLog` ;
+- Resend ne gere pas les brouillons distants ni la sync inbound dans cette version ;
+- AutoPilot reste desactive par defaut et n'utilise pas Resend sans mission dediee.
 
 ## Relances controlees V1
 

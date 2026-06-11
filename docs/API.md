@@ -846,6 +846,61 @@ Regles :
 - un envoi reussi met `EmailProviderDraft.status` a `sent`, renseigne `sent_at`, `sent_by_user_id`, `provider_message_id` si disponible, passe la commande a `sent`, cree un `EmailThread` outbound et ajoute un `AuditLog` ;
 - un echec provider controle met le brouillon a `failed`, renseigne `last_error` et ajoute un `AuditLog` `send_gmail_draft_failed`.
 
+## Resend transactional email
+
+Resend est un provider transactionnel serveur. Il ne cree pas de brouillon distant et ne synchronise pas les reponses inbound.
+
+Variables attendues :
+
+- `EMAIL_PROVIDER_ENABLED=false` par defaut ;
+- `RESEND_ENABLED=false` par defaut ;
+- `RESEND_API_KEY` uniquement dans l'environnement serveur ;
+- `RESEND_FROM_EMAIL=TENNET <notifications@mail.thetennet.com>` ;
+- `RESEND_REPLY_TO` optionnel ;
+- `RESEND_DOMAIN=mail.thetennet.com`.
+
+### Status Resend
+
+- `GET /v1/email/resend/status`
+
+Retour :
+
+```json
+{
+  "connected": false,
+  "email_address": null,
+  "provider": "resend",
+  "enabled": false
+}
+```
+
+### Envoyer manuellement via Resend
+
+- `POST /v1/drafts/{draft_id}/resend-send`
+
+Body :
+
+```json
+{
+  "confirm_send": true,
+  "to_email": "merchants@uber.com",
+  "include_evidence": true
+}
+```
+
+Regles :
+
+- aucun envoi n'est automatique ;
+- `confirm_send` doit valoir `true` ;
+- `EMAIL_PROVIDER_ENABLED` et `RESEND_ENABLED` doivent etre actifs ;
+- `RESEND_API_KEY` doit etre configure cote serveur ;
+- `owner` peut envoyer pour tous les restaurants ;
+- `manager` peut envoyer uniquement pour ses restaurants assignes ;
+- `staff` ne peut pas envoyer ;
+- les commandes finales sont refusees ;
+- chaque succes cree un `EmailProviderDraft`, un `EmailThread` outbound et un `AuditLog` ;
+- chaque echec controle cree un `AuditLog` sans cle API, token ni secret.
+
 ## Gmail inbound replies
 
 La sync inbound lit les reponses Gmail apres envoi manuel d'une reclamation. Elle ne repond jamais automatiquement et ne modifie pas Gmail cote utilisateur.

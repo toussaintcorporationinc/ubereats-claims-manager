@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     default_uber_eats_support_email: str = "merchants@uber.com"
     email_provider_enabled: bool = False
     email_max_attachment_total_mb: int = 20
+    resend_enabled: bool = False
+    resend_api_key: str | None = None
+    resend_from_email: str = "TENNET <notifications@mail.thetennet.com>"
+    resend_reply_to: str | None = None
+    resend_domain: str = "mail.thetennet.com"
+    resend_api_url: str = "https://api.resend.com/emails"
     gmail_inbound_sync_enabled: bool = False
     gmail_inbound_sync_lookback_days: int = 30
     gmail_inbound_max_messages_per_sync: int = 100
