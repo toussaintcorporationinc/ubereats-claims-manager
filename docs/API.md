@@ -909,7 +909,7 @@ Gmail reste separe pour les conversations Uber, les brouillons Gmail et la lectu
 
 ## Gmail inbound replies
 
-La sync inbound lit les reponses Gmail apres envoi manuel d'une reclamation. Elle ne repond jamais automatiquement et ne modifie pas Gmail cote utilisateur.
+La sync inbound lit les reponses Gmail apres envoi d'une reclamation. Elle peut analyser et appliquer les decisions fiables. Si AutoPilot est explicitement active, une reponse negative rattachee peut declencher un appel automatique controle.
 
 Variables attendues :
 
@@ -948,7 +948,8 @@ Body optionnel :
   "lookback_days": 30,
   "max_messages": 100,
   "analyze_responses": true,
-  "apply_reviews": true
+  "apply_reviews": true,
+  "run_autopilot_after_sync": true
 }
 ```
 
@@ -964,6 +965,11 @@ Reponse :
   "analyzed_messages": 2,
   "applied_reviews": 5,
   "manual_review_messages": 1,
+  "negative_responses_detected": 1,
+  "autopilot_run_id": 12,
+  "autopilot_sent_count": 1,
+  "autopilot_skipped_count": 0,
+  "autopilot_failed_count": 0,
   "errors": []
 }
 ```
@@ -980,8 +986,11 @@ Regles :
 - si aucun rattachement fiable n'existe, le message reste `unlinked` ;
 - les messages sortants de notre propre compte Gmail sont marques `ignored`.
 - par defaut, les messages rattaches sont analyses et les decisions fiables sont appliquees en `ClaimResponseReview` ;
+- un refus fiable ouvre ou met a jour un `AppealWorkflow` ;
+- si `run_autopilot_after_sync=true` et que `AUTOPILOT_ENABLED`, `AUTOPILOT_APPEALS_ENABLED`, Gmail et le restaurant sont actifs, TENNET lance un run AutoPilot `appeals` ;
+- AutoPilot bloque l'envoi si le destinataire support configure ne correspond pas au filtre Uber attendu ;
 - les emails ambigus restent en revue manuelle ;
-- aucun email n'est envoye et aucune decision irreversible n'est prise.
+- aucune decision irreversible n'est prise et aucun dossier n'est clos automatiquement sur refus.
 
 Si un message inbound est rattache et que la commande est `sent` ou `waiting_uber_response`, le statut passe a `response_received`. Les statuts finaux `accepted`, `payment_confirmed`, `refused` et `closed` restent inchanges.
 

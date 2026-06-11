@@ -400,6 +400,10 @@ def candidate_skip_reason(
             return "email_provider_disabled"
         if not connection.connected:
             return "gmail_account_not_connected"
+    if candidate.action_type in {"send_initial_claim", "send_followup_1", "send_followup_2", "send_escalation", "send_appeal"}:
+        recipient_error = safe_autopilot_recipient_error()
+        if recipient_error is not None:
+            return recipient_error
 
     if candidate.action_type == "send_initial_claim":
         if not settings.autopilot_initial_claims_enabled:
@@ -569,6 +573,24 @@ def mark_skipped(action: AutopilotAction, reason: str, *, dry_run: bool) -> None
     action.updated_at = utc_now()
 
 
+def safe_autopilot_recipient_error() -> str | None:
+    settings = get_settings()
+    recipient = (settings.default_uber_eats_support_email or "").strip()
+    if not recipient or "@" not in recipient:
+        return "invalid_autopilot_recipient"
+    sender_filter = (settings.gmail_support_sender_filter or "").strip().casefold()
+    if sender_filter and sender_filter not in recipient.casefold():
+        return "recipient_not_matching_support_filter"
+    return None
+
+
+def safe_autopilot_recipient() -> str:
+    error = safe_autopilot_recipient_error()
+    if error is not None:
+        raise AutopilotError(error, 409)
+    return get_settings().default_uber_eats_support_email.strip()
+
+
 def send_candidate(
     db: Session,
     user: User,
@@ -603,7 +625,7 @@ def send_initial_claim(
         db,
         user,
         draft,
-        to_email=get_settings().default_uber_eats_support_email,
+        to_email=safe_autopilot_recipient(),
         include_evidence=True,
     )
     action.status = "provider_draft_created"
@@ -648,7 +670,7 @@ def send_followup(
             db,
             user,
             draft,
-            to_email=get_settings().default_uber_eats_support_email,
+            to_email=safe_autopilot_recipient(),
             include_evidence=True,
         )
         task.generated_provider_draft_id = provider_draft.id
@@ -696,7 +718,7 @@ def send_appeal(
             db,
             user,
             attempt.email_draft,
-            to_email=get_settings().default_uber_eats_support_email,
+            to_email=safe_autopilot_recipient(),
             include_evidence=True,
         )
         attempt.provider_draft_id = provider_draft.id

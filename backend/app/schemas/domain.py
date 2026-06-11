@@ -759,6 +759,7 @@ class GmailInboundSyncRequest(BaseModel):
     max_messages: int | None = Field(default=None, ge=1, le=500)
     analyze_responses: bool = True
     apply_reviews: bool = True
+    run_autopilot_after_sync: bool = True
 
 
 class GmailInboundSyncResponse(BaseModel):
@@ -770,6 +771,11 @@ class GmailInboundSyncResponse(BaseModel):
     analyzed_messages: int = 0
     applied_reviews: int = 0
     manual_review_messages: int = 0
+    negative_responses_detected: int = 0
+    autopilot_run_id: int | None = None
+    autopilot_sent_count: int = 0
+    autopilot_skipped_count: int = 0
+    autopilot_failed_count: int = 0
     errors: list[str]
 
 

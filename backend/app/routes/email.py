@@ -568,6 +568,7 @@ def sync_gmail_inbound(
             max_messages=max_messages,
             analyze_responses=request_payload.analyze_responses,
             apply_reviews=request_payload.apply_reviews,
+            run_autopilot_after_sync=request_payload.run_autopilot_after_sync,
         )
     except EmailProviderError as exc:
         db.commit()

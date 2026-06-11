@@ -10,9 +10,10 @@ The engine reduces manual triage after Gmail sync:
 - classify clear positive and negative replies;
 - record a `ClaimResponseReview`;
 - update recovery reporting through the existing order statuses;
-- keep refusals alive through the persistent appeal workflow.
+- keep refusals alive through the persistent appeal workflow;
+- optionally trigger AutoPilot appeals when a clear refusal is detected and every AutoPilot safety rule is enabled.
 
-No email is sent automatically by this feature.
+The analysis engine itself does not send email. When `AUTOPILOT_ENABLED=true`, `AUTOPILOT_APPEALS_ENABLED=true`, Gmail is connected, and the restaurant has `autopilot_enabled=true`, a newly detected refusal can trigger an AutoPilot appeal run.
 
 ## Decisions
 
@@ -41,6 +42,8 @@ If Uber mentions a payment without an amount, TENNET uses `payment_to_verify`.
 
 A refusal never closes the claim automatically. When a `refused` review is created, TENNET opens or updates the existing appeal workflow so the case remains visible in the recovery cockpit.
 
+If AutoPilot appeals are enabled, TENNET can create and send the next appeal automatically after Gmail sync. The appeal still uses the existing cooldown, max-attempt, daily-limit, per-restaurant-limit, no-duplicate-template, Gmail-connected, and safe-recipient checks.
+
 ## Gmail Scope
 
 TENNET analyzes messages synchronized through connected Gmail accounts. Messages must be linked to a TENNET order before a decision can be applied.
@@ -49,8 +52,9 @@ Unlinked messages remain visible in the inbox and can be manually linked.
 
 ## Safety
 
-- No automatic email sending.
+- No email is sent unless AutoPilot is explicitly enabled globally and on the restaurant.
 - No automatic irreversible close.
+- No sending for unlinked messages, ignored senders, unrelated emails, invalid recipients, duplicate Gmail message ids, unresolved inbound replies, cooldown-active workflows, or final statuses.
 - No fabricated amounts, order numbers, or proof.
 - Ambiguous replies stay in manual review.
 - Audit logs are created for analysis and applied reviews.

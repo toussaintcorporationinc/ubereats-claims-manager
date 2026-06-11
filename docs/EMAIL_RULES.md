@@ -95,8 +95,9 @@ Les reponses Gmail peuvent etre synchronisees depuis l'application uniquement si
 
 Regles :
 
-- aucune reponse automatique n'est envoyee ;
-- aucune relance automatique n'est creee ;
+- aucune reponse automatique n'est envoyee hors AutoPilot explicitement active ;
+- une reponse `refused` fiable peut declencher AutoPilot `appeals` si les flags, Gmail et le restaurant sont actifs ;
+- aucune relance automatique n'est creee hors AutoPilot controle ;
 - aucune classification IA n'est executee ;
 - la sync est lancee manuellement par `owner` ou `manager` ;
 - `staff` ne peut pas lancer la sync ;
@@ -244,6 +245,8 @@ Regles :
 - les limites `AUTOPILOT_DAILY_SEND_LIMIT` et `AUTOPILOT_PER_RESTAURANT_DAILY_LIMIT` limitent le volume ;
 - `AUTOPILOT_COOLDOWN_HOURS` espace les relances et appels ;
 - un refus Uber ne cloture jamais automatiquement un dossier ;
+- les emails hors sujet, non rattaches, ambigus ou venant d'un mauvais expediteur ne declenchent pas d'envoi ;
+- le destinataire AutoPilot est bloque s'il ne correspond pas au filtre support Uber configure ;
 - un renvoi identique sans nouvel argument est bloque quand `APPEAL_ALLOW_SAME_TEMPLATE_RESEND=false` ;
 - `POST /v1/autopilot/dry-run` previsualise sans envoyer ;
 - `POST /v1/autopilot/stop` active un arret d'urgence.
