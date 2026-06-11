@@ -439,6 +439,7 @@ export type GmailInboundSyncPayload = {
   max_messages?: number;
   analyze_responses?: boolean;
   apply_reviews?: boolean;
+  run_autopilot_after_sync?: boolean;
 };
 
 export type GmailInboundSyncResponse = {
@@ -450,6 +451,11 @@ export type GmailInboundSyncResponse = {
   analyzed_messages: number;
   applied_reviews: number;
   manual_review_messages: number;
+  negative_responses_detected: number;
+  autopilot_run_id: number | null;
+  autopilot_sent_count: number;
+  autopilot_skipped_count: number;
+  autopilot_failed_count: number;
   errors: string[];
 };
 

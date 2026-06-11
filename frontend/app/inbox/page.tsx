@@ -101,6 +101,7 @@ export default function InboxPage() {
         max_messages: 100,
         analyze_responses: true,
         apply_reviews: true,
+        run_autopilot_after_sync: true,
       });
       setSyncResult(result);
       await loadData();
@@ -244,7 +245,10 @@ export default function InboxPage() {
           <DetailItem label="Compte" value={status?.connected ? "connecte" : "non connecte"} />
           <DetailItem label="Dernier succes" value={formatDate(status?.last_success_at ?? null)} />
         </div>
-        <p className="muted">Lecture et rattachement uniquement. Aucune reponse automatique n'est envoyee.</p>
+        <p className="muted">
+          TENNET traite les reponses liees. AutoPilot envoie uniquement si Gmail, AutoPilot et le restaurant sont
+          explicitement actives.
+        </p>
         {syncResult ? (
           <div className="success-box">
             <strong>Synchronisation terminee</strong>
@@ -253,6 +257,13 @@ export default function InboxPage() {
               {syncResult.unlinked_messages} non rattache(s), {syncResult.ignored_messages} ignore(s),{" "}
               {syncResult.applied_reviews} decision(s) appliquee(s), {syncResult.manual_review_messages} a verifier
             </span>
+            {syncResult.negative_responses_detected > 0 ? (
+              <span>
+                Reponses negatives: {syncResult.negative_responses_detected}. AutoPilot:{" "}
+                {syncResult.autopilot_sent_count} envoyee(s), {syncResult.autopilot_skipped_count} bloquee(s),{" "}
+                {syncResult.autopilot_failed_count} erreur(s).
+              </span>
+            ) : null}
           </div>
         ) : null}
         {analysisResult ? (

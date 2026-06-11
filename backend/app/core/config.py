@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     gmail_inbound_sync_enabled: bool = False
     gmail_inbound_sync_lookback_days: int = 30
     gmail_inbound_max_messages_per_sync: int = 100
+    gmail_inbound_auto_sync_enabled: bool = False
+    gmail_inbound_auto_sync_interval_seconds: int = 900
+    gmail_inbound_auto_sync_initial_delay_seconds: int = 30
+    gmail_inbound_auto_sync_run_autopilot: bool = True
     gmail_support_sender_filter: str = "uber.com"
     followup_1_delay_days: int = 2
     followup_2_delay_days: int = 5

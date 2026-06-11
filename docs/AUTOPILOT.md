@@ -44,10 +44,16 @@ Un appel automatique peut etre envoye seulement si :
 
 - `AUTOPILOT_APPEALS_ENABLED=true` ;
 - un `AppealWorkflow` actif existe apres refus ;
+- la reponse Gmail refusee est rattachee a un dossier TENNET par thread Gmail connu ou numero de commande fiable ;
 - le dossier n'est pas `accepted` ou `payment_confirmed` ;
+- le destinataire AutoPilot correspond au filtre support configure (`GMAIL_SUPPORT_SENDER_FILTER`, `uber.com` par defaut) ;
 - le cooldown est respecte ;
 - `AUTOPILOT_MAX_APPEAL_ATTEMPTS` n'est pas depasse ;
 - la meme template n'est pas renvoyee sans nouvel argument si `APPEAL_ALLOW_SAME_TEMPLATE_RESEND=false`.
+
+Quand la sync Gmail applique une decision `refused`, TENNET peut lancer automatiquement un run AutoPilot `appeals` si AutoPilot est active. Les emails non rattaches, ignores, ambigus ou hors Uber ne declenchent pas d'envoi.
+
+Avec `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true`, cette sync peut tourner sans clic utilisateur a intervalle regulier. Les memes garde-fous s'appliquent.
 
 ## Limites anti-spam
 
@@ -56,6 +62,8 @@ Un appel automatique peut etre envoye seulement si :
 - `AUTOPILOT_COOLDOWN_HOURS` espace les relances et appels.
 - `AUTOPILOT_MAX_APPEAL_ATTEMPTS` bloque les boucles d'appel.
 - Un refus Uber ne cloture jamais automatiquement un dossier.
+- Les messages Gmail sont dedupliques par compte + message id.
+- Les appels sont bloques si le destinataire support configure ne correspond pas au filtre Uber attendu.
 
 ## Dry-run et audit
 

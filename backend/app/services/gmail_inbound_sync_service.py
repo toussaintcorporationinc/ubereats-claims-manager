@@ -16,12 +16,14 @@ from app.models import (
 )
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
+from app.services.autopilot_service import AutopilotError, run_autopilot
 from app.services.email_provider import EmailProvider, EmailProviderError, InboundEmailPayload
 from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
 
 FINAL_ORDER_STATUSES = {"accepted", "payment_confirmed", "refused", "closed"}
 RESPONSE_UPDATABLE_ORDER_STATUSES = {"sent", "waiting_uber_response"}
 MAX_BODY_TEXT_LENGTH = 20000
+ACTIONABLE_NEGATIVE_REVIEW_TYPES = {"refused"}
 
 
 @dataclass
@@ -34,6 +36,11 @@ class GmailInboundSyncResult:
     analyzed_messages: int = 0
     applied_reviews: int = 0
     manual_review_messages: int = 0
+    negative_responses_detected: int = 0
+    autopilot_run_id: int | None = None
+    autopilot_sent_count: int = 0
+    autopilot_skipped_count: int = 0
+    autopilot_failed_count: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -90,6 +97,7 @@ class GmailInboundSyncService:
         max_messages: int,
         analyze_responses: bool = True,
         apply_reviews: bool = True,
+        run_autopilot_after_sync: bool = True,
     ) -> GmailInboundSyncResult:
         accounts = self.get_active_accounts(db, user)
         if not accounts:
@@ -113,9 +121,12 @@ class GmailInboundSyncService:
             result.analyzed_messages += account_result.analyzed_messages
             result.applied_reviews += account_result.applied_reviews
             result.manual_review_messages += account_result.manual_review_messages
+            result.negative_responses_detected += account_result.negative_responses_detected
             result.errors.extend(account_result.errors)
             if account_result.status == "failed":
                 result.status = "failed"
+        if run_autopilot_after_sync and apply_reviews and result.negative_responses_detected > 0:
+            self.run_autopilot_for_negative_responses(db, user, result)
         return result
 
     def sync_account(
@@ -211,12 +222,41 @@ class GmailInboundSyncService:
         )
         if analysis.status == "applied":
             result.applied_reviews += 1
+            if analysis.recommended_review_type in ACTIONABLE_NEGATIVE_REVIEW_TYPES:
+                result.negative_responses_detected += 1
         elif analysis.status == "manual_review":
             result.manual_review_messages += 1
         elif analysis.status == "failed":
             result.errors.append(analysis.error_message or "Gmail response analysis failed")
         else:
             result.analyzed_messages += 1
+
+    def run_autopilot_for_negative_responses(
+        self,
+        db: Session,
+        user: User,
+        result: GmailInboundSyncResult,
+    ) -> None:
+        settings = get_settings()
+        if not settings.autopilot_enabled or not settings.autopilot_appeals_enabled:
+            return
+        try:
+            autopilot_result = run_autopilot(
+                db,
+                user,
+                mode="appeals",
+                restaurant_id=None,
+                dry_run=False,
+                provider=self.provider,
+            )
+        except AutopilotError as exc:
+            result.errors.append(f"autopilot:{exc.message}")
+            return
+
+        result.autopilot_run_id = autopilot_result.run.id
+        result.autopilot_sent_count = autopilot_result.run.sent_count
+        result.autopilot_skipped_count = autopilot_result.run.skipped_count
+        result.autopilot_failed_count = autopilot_result.run.failed_count
 
     def message_exists(self, db: Session, account: EmailAccount, provider_message_id: str) -> bool:
         return (

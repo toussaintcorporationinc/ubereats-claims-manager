@@ -33,6 +33,7 @@ from app.routes import (
     workspace,
 )
 from app.services.file_storage_service import ensure_evidence_storage
+from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncScheduler
 from app.services.local_storage import ensure_local_storage
 from app.services.order_import_service import ensure_import_storage
 
@@ -42,7 +43,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     ensure_local_storage()
     ensure_evidence_storage()
     ensure_import_storage()
-    yield
+    gmail_auto_sync_scheduler = GmailInboundAutoSyncScheduler()
+    await gmail_auto_sync_scheduler.start()
+    try:
+        yield
+    finally:
+        await gmail_auto_sync_scheduler.stop()
 
 
 settings = get_settings()

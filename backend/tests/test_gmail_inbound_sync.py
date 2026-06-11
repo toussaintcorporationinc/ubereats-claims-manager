@@ -10,6 +10,7 @@ from app.main import app
 from app.models import (
     AuditLog,
     AppealWorkflow,
+    AutopilotAction,
     ClaimOrder,
     ClaimResponseReview,
     EmailAccount,
@@ -18,11 +19,13 @@ from app.models import (
     EmailThread,
     GmailResponseAnalysis,
     InboundEmailMessage,
+    Restaurant,
     User,
 )
 from app.models.domain import utc_now
 from app.routes.email import get_gmail_provider
 from app.services.email_provider import EmailConnectionStatus, EmailProviderError, EmailSendResult, InboundEmailPayload
+from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncService
 
 
 class FakeInboundGmailProvider:
@@ -55,10 +58,26 @@ class FakeInboundGmailProvider:
         to_email: str,
         include_evidence: bool,
     ) -> EmailProviderDraft:
-        raise EmailProviderError("Draft creation is not used by inbound sync tests", 500)
+        provider_draft = EmailProviderDraft(
+            email_draft_id=email_draft.id,
+            provider="gmail",
+            provider_draft_id=f"fake-inbound-autopilot-{email_draft.id}-{utc_now().timestamp()}",
+            provider_thread_id=f"fake-inbound-thread-{email_draft.id}",
+            to_email=to_email,
+            subject=email_draft.subject,
+            status="provider_draft_created",
+            created_by_user_id=user.id,
+        )
+        db.add(provider_draft)
+        db.flush()
+        return provider_draft
 
     def send_draft(self, db: Session, user: User, provider_draft: EmailProviderDraft) -> EmailSendResult:
-        raise EmailProviderError("Draft sending is not used by inbound sync tests", 500)
+        return EmailSendResult(
+            provider_message_id=f"fake-inbound-message-{provider_draft.id}",
+            provider_thread_id=provider_draft.provider_thread_id or f"fake-inbound-thread-{provider_draft.id}",
+            sent_at=utc_now(),
+        )
 
     def list_messages(self, db: Session, user: User, query: str, max_results: int) -> list[str]:
         return [message.provider_message_id for message in self.messages[:max_results]]
@@ -106,6 +125,23 @@ def gmail_inbound_enabled(
     monkeypatch.setenv("GMAIL_INBOUND_SYNC_LOOKBACK_DAYS", "30")
     monkeypatch.setenv("GMAIL_INBOUND_MAX_MESSAGES_PER_SYNC", "100")
     monkeypatch.setenv("GMAIL_SUPPORT_SENDER_FILTER", "uber.com")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture()
+def gmail_autopilot_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    gmail_inbound_enabled: None,
+) -> Generator[None, None, None]:
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_INITIAL_CLAIMS_ENABLED", "false")
+    monkeypatch.setenv("AUTOPILOT_FOLLOWUPS_ENABLED", "false")
+    monkeypatch.setenv("AUTOPILOT_DAILY_SEND_LIMIT", "50")
+    monkeypatch.setenv("AUTOPILOT_PER_RESTAURANT_DAILY_LIMIT", "20")
+    monkeypatch.setenv("AUTOPILOT_COOLDOWN_HOURS", "48")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -488,6 +524,149 @@ def test_sync_refused_response_creates_review_and_appeal(
     workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
     assert workflow is not None
     assert workflow.status == "appeal_needed"
+
+
+def test_sync_refused_response_can_run_autopilot_appeal(
+    client: TestClient,
+    db_session: Session,
+    gmail_autopilot_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client, "Inbound AutoPilot Restaurant")
+    restaurant_record = db_session.get(Restaurant, restaurant["id"])
+    assert restaurant_record is not None
+    restaurant_record.autopilot_enabled = True
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-INBOUND-AUTO-APPEAL",
+        thread_id="thread-auto-appeal",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-auto-appeal",
+            thread_id="thread-auto-appeal",
+            body_text="We cannot reimburse this order. No compensation is available.",
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["negative_responses_detected"] == 1
+    assert payload["autopilot_run_id"] is not None
+    assert payload["autopilot_sent_count"] == 1
+    workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
+    assert workflow is not None
+    assert workflow.status == "appeal_sent"
+    assert workflow.appeal_attempt_count == 1
+    sent_draft = db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent"))
+    assert sent_draft is not None
+    assert sent_draft.to_email == "merchants@uber.com"
+
+
+def test_sync_autopilot_blocks_recipient_outside_support_filter(
+    client: TestClient,
+    db_session: Session,
+    gmail_autopilot_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEFAULT_UBER_EATS_SUPPORT_EMAIL", "support@example.invalid")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client, "Inbound AutoPilot Recipient Guard")
+    restaurant_record = db_session.get(Restaurant, restaurant["id"])
+    assert restaurant_record is not None
+    restaurant_record.autopilot_enabled = True
+    create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-INBOUND-BAD-RECIPIENT",
+        thread_id="thread-bad-recipient",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-bad-recipient",
+            thread_id="thread-bad-recipient",
+            body_text="This order is not eligible and we cannot reimburse it.",
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["negative_responses_detected"] == 1
+    assert payload["autopilot_sent_count"] == 0
+    assert payload["autopilot_skipped_count"] == 1
+    action = db_session.scalar(select(AutopilotAction).where(AutopilotAction.action_type == "send_appeal"))
+    assert action is not None
+    assert action.skipped_reason == "recipient_not_matching_support_filter"
+    assert action.provider_draft_id is None
+    get_settings.cache_clear()
+
+
+def test_auto_sync_service_is_disabled_by_default(
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    result = GmailInboundAutoSyncService(fake_gmail_provider).sync_due_accounts(db_session)
+
+    assert result.status == "disabled"
+    assert result.accounts_checked == 0
+
+
+def test_auto_sync_service_processes_refusals_and_runs_autopilot(
+    client: TestClient,
+    db_session: Session,
+    gmail_autopilot_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS", "60")
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client, "Auto Sync AutoPilot Restaurant")
+    restaurant_record = db_session.get(Restaurant, restaurant["id"])
+    assert restaurant_record is not None
+    restaurant_record.autopilot_enabled = True
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-AUTO-SYNC-REFUSED",
+        thread_id="thread-auto-sync-refused",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-auto-sync-refused",
+            thread_id="thread-auto-sync-refused",
+            body_text="We are unable to reimburse this order. No compensation is available.",
+        )
+    ]
+
+    result = GmailInboundAutoSyncService(fake_gmail_provider).sync_due_accounts(db_session)
+
+    assert result.status == "success"
+    assert result.accounts_checked == 1
+    assert result.accounts_synced == 1
+    assert result.negative_responses_detected == 1
+    assert result.autopilot_sent_count == 1
+    workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
+    assert workflow is not None
+    assert workflow.status == "appeal_sent"
+    get_settings.cache_clear()
 
 
 def test_sync_payment_confirmed_response_updates_recovered_amount(
