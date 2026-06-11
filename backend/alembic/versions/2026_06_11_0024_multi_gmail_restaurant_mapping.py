@@ -1,6 +1,6 @@
 """add restaurant gmail account mapping
 
-Revision ID: 0024_multi_gmail_restaurant_mapping
+Revision ID: 0024_multi_gmail_routing
 Revises: 0023_resend_provider
 Create Date: 2026-06-11 22:45:00.000000
 """
@@ -10,7 +10,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0024_multi_gmail_restaurant_mapping"
+revision: str = "0024_multi_gmail_routing"
 down_revision: str | None = "0023_resend_provider"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
