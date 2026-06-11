@@ -82,7 +82,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml exec backen
 6. Run health checks:
 
 ```bash
-API_URL=https://api.example.com FRONTEND_URL=https://app.example.com ./scripts/healthcheck.sh
+API_URL=https://api.thetennet.com FRONTEND_URL=https://app.thetennet.com ./scripts/healthcheck.sh
 ```
 
 ## Files restore

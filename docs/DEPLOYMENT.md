@@ -4,7 +4,8 @@ This guide describes a Docker-based production deployment for TENNET.
 
 ## Target architecture
 
-- Caddy terminates HTTPS for `app.example.com` and `api.example.com`.
+- Caddy terminates HTTPS for `app.thetennet.com` and `api.thetennet.com`.
+- `app.leboxerfrancais.com` and `api.leboxerfrancais.com` remain temporary fallbacks until the domain migration is fully validated.
 - Frontend runs Next.js production server on the internal Docker network.
 - Backend runs FastAPI/Uvicorn on the internal Docker network.
 - PostgreSQL stores application data.
@@ -38,17 +39,14 @@ Required changes:
 - replace `SECRET_KEY` with a long random value;
 - replace `POSTGRES_PASSWORD`;
 - update `DATABASE_URL` with the same PostgreSQL password;
-- set real domains in `BACKEND_CORS_ORIGINS`, `FRONTEND_URL`, `API_BASE_URL` and `NEXT_PUBLIC_API_BASE_URL`;
+- keep `FRONTEND_URL=https://app.thetennet.com`, `API_BASE_URL=https://api.thetennet.com` and `NEXT_PUBLIC_API_BASE_URL=https://api.thetennet.com`;
+- keep `BACKEND_CORS_ORIGINS=https://app.thetennet.com,https://app.leboxerfrancais.com` while the fallback is active;
+- keep `RESEND_ENABLED=false` unless Resend is intentionally enabled with a server-only API key;
 - configure Gmail OAuth only when ready.
 
-3. Update `deploy/Caddyfile`.
+3. Review `deploy/Caddyfile`.
 
-Replace:
-
-- `app.example.com`
-- `api.example.com`
-
-with production domains.
+It should include the official `thetennet.com` production routes and the temporary `leboxerfrancais.com` fallback routes. Do not add `auto_https on`; Caddy manages HTTPS automatically.
 
 4. Start production services.
 
@@ -65,13 +63,13 @@ docker compose --env-file .env.production -f docker-compose.prod.yml exec backen
 6. Verify readiness.
 
 ```bash
-API_URL=https://api.example.com FRONTEND_URL=https://app.example.com ./scripts/healthcheck.sh
-API_URL=https://api.example.com FRONTEND_URL=https://app.example.com ./scripts/smoke_test.sh
+API_URL=https://api.thetennet.com FRONTEND_URL=https://app.thetennet.com ./scripts/healthcheck.sh
+API_URL=https://api.thetennet.com FRONTEND_URL=https://app.thetennet.com ./scripts/smoke_test.sh
 ```
 
 7. Create the first owner.
 
-Open `https://app.example.com/setup-owner` and create the first owner account.
+Open `https://app.thetennet.com/setup-owner` and create the first owner account.
 
 ## Production safeguards
 

@@ -33,27 +33,27 @@ docker compose --env-file .env.production -f docker-compose.prod.yml logs -f cad
 Backend:
 
 ```bash
-curl -fsS https://api.example.com/health
-curl -fsS https://api.example.com/ready
-curl -fsS https://api.example.com/version
+curl -fsS https://api.thetennet.com/health
+curl -fsS https://api.thetennet.com/ready
+curl -fsS https://api.thetennet.com/version
 ```
 
 Frontend:
 
 ```bash
-curl -fsS https://app.example.com/health
+curl -fsS https://app.thetennet.com/health
 ```
 
 Script:
 
 ```bash
-API_URL=https://api.example.com FRONTEND_URL=https://app.example.com ./scripts/healthcheck.sh
+API_URL=https://api.thetennet.com FRONTEND_URL=https://app.thetennet.com ./scripts/healthcheck.sh
 ```
 
 Full smoke test:
 
 ```bash
-API_URL=https://api.example.com FRONTEND_URL=https://app.example.com ./scripts/smoke_test.sh
+API_URL=https://api.thetennet.com FRONTEND_URL=https://app.thetennet.com ./scripts/smoke_test.sh
 ```
 
 ## Database
@@ -122,7 +122,7 @@ docker compose --env-file .env.production -f docker-compose.prod.yml restart cad
 Open:
 
 ```text
-https://app.example.com/setup-owner
+https://app.thetennet.com/setup-owner
 ```
 
 The public setup endpoint closes after the first owner exists.
@@ -133,7 +133,7 @@ Connect Gmail:
 
 1. Set `EMAIL_PROVIDER_ENABLED=true`.
 2. Set Google OAuth client id, secret and redirect URI.
-3. Ensure Google Console allows `https://api.example.com/v1/email/gmail/oauth/callback`.
+3. Ensure Google Console allows the configured production callback when Gmail is intentionally enabled.
 4. Open `/settings/email` as owner or manager.
 
 Emergency disable Gmail provider:
@@ -151,6 +151,12 @@ docker compose --env-file .env.production -f docker-compose.prod.yml up -d backe
 ```
 
 Manual Gmail send remains guarded by explicit user confirmation. There is no automatic send path.
+
+## Domains and Resend
+
+The official production URLs are `https://app.thetennet.com` and `https://api.thetennet.com`. The `leboxerfrancais.com` URLs remain temporary fallbacks during migration and should not be removed until validation is complete.
+
+Resend uses `mail.thetennet.com` when enabled. `RESEND_ENABLED=false` remains the default, `RESEND_API_KEY` must exist only on the server, and Resend does not replace Gmail conversations for Uber dispute threads.
 
 ## Followups
 

@@ -4,7 +4,7 @@ Use this plan to validate TENNET V1.1 RC on staging before any production releas
 
 ## Entry Criteria
 
-- `VERSION` is `1.1.0-tennet` for final staging, or the accepted RC2 version during release-candidate validation.
+- `VERSION` is `1.1.1-tennet` for the domain/Resend patch, `1.1.0-tennet` for final V1.1 staging, or the accepted RC2 version during release-candidate validation.
 - Staging URLs respond on `/health`, `/ready` and `/version`.
 - `EMAIL_PROVIDER_ENABLED=false` unless Gmail staging is intentionally tested.
 - `GMAIL_INBOUND_SYNC_ENABLED=false` unless Gmail staging is intentionally tested.

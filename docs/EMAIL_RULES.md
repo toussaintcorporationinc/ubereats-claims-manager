@@ -167,6 +167,8 @@ Regles :
 
 - Resend est desactive par defaut dans tous les exemples ;
 - aucun token ou cle API Resend n'est commite ;
+- `RESEND_API_KEY` reste uniquement dans l'environnement serveur ;
+- Gmail reste separe pour les fils de contestation Uber, les brouillons Gmail et la lecture inbound ;
 - `POST /v1/drafts/{draft_id}/resend-send` exige `confirm_send=true` ;
 - `owner` et `manager` peuvent envoyer uniquement les dossiers autorises ;
 - `staff` ne peut pas envoyer ;

@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-V1_1_VERSION = "1.1.0-tennet"
+V1_1_VERSION = "1.1.1-tennet"
 
 
 def read(path: str) -> str:
@@ -21,6 +21,8 @@ def test_v1_1_release_docs_exist() -> None:
         "docs/STAGING_DEPLOYMENT.md",
         "docs/STAGING_ACCEPTANCE_PLAN.md",
         "docs/V1_1_ACCEPTANCE_TEST_PLAN.md",
+        "docs/DOMAIN_MIGRATION_THETENNET.md",
+        "docs/RESEND_SETUP.md",
     ]
     missing = [path for path in required if not (REPO_ROOT / path).is_file()]
     assert missing == []
@@ -82,6 +84,7 @@ def test_v1_1_dangerous_defaults_are_disabled() -> None:
     required = [
         "EMAIL_PROVIDER_ENABLED=false",
         "GMAIL_INBOUND_SYNC_ENABLED=false",
+        "RESEND_ENABLED=false",
         "AI_EVIDENCE_ANALYSIS_ENABLED=false",
         "AI_EVIDENCE_AUTO_ATTACH_ENABLED=false",
         "FOLLOWUP_AUTOMATIC_SEND_ENABLED=false",

@@ -8,7 +8,7 @@ Core rule: no email, reply or follow-up is sent automatically. Gmail sends requi
 
 1. Confirm the production host is ready for Docker and Docker Compose.
 2. Configure DNS for the frontend and API domains.
-3. Replace `app.example.com` and `api.example.com` in `deploy/Caddyfile`.
+3. Verify `app.thetennet.com`, `api.thetennet.com` and the temporary `leboxerfrancais.com` fallbacks in `deploy/Caddyfile`.
 4. Copy `.env.production.example` to `.env.production` on the host.
 5. Replace every placeholder secret in `.env.production`.
 6. Confirm `SECRET_KEY` is long, random and unique to production.
@@ -29,10 +29,10 @@ docker compose --env-file .env.production -f docker-compose.prod.yml exec backen
 Then verify:
 
 ```bash
-curl -fsS https://api.example.com/health
-curl -fsS https://api.example.com/ready
-curl -fsS https://api.example.com/version
-curl -fsS https://app.example.com/health
+curl -fsS https://api.thetennet.com/health
+curl -fsS https://api.thetennet.com/ready
+curl -fsS https://api.thetennet.com/version
+curl -fsS https://app.thetennet.com/health
 ```
 
 Create the first owner at `/setup-owner`, then create restaurants, managers and staff users.
@@ -92,7 +92,7 @@ GMAIL_INBOUND_SYNC_ENABLED=false
 
 Before any V1.1 production rollout, run the staging release candidate flow:
 
-1. Deploy `1.1.0-tennet` with `docker-compose.staging.yml` or keep the previously accepted RC2 staging environment as evidence.
+1. Deploy `1.1.1-tennet` with `docker-compose.staging.yml` or keep the previously accepted RC2 staging environment as evidence.
 2. Use only fictitious examples from `docs/examples/v1_1` first.
 3. Run `scripts/smoke_test_v1_1.sh`.
 4. Execute `docs/V1_1_ACCEPTANCE_TEST_PLAN.md`.

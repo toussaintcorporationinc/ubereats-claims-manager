@@ -10,7 +10,7 @@ Use a dedicated Gmail account controlled by the business. Validate in sandbox be
 4. Add the production redirect URI:
 
 ```text
-https://api.example.com/v1/email/gmail/oauth/callback
+https://api.thetennet.com/v1/email/gmail/oauth/callback
 ```
 
 5. Store the client id and secret only in `.env.production`.
@@ -42,7 +42,7 @@ http://localhost:8000/v1/email/gmail/oauth/callback
 Production redirect URI:
 
 ```text
-https://api.example.com/v1/email/gmail/oauth/callback
+https://api.thetennet.com/v1/email/gmail/oauth/callback
 ```
 
 ## Validation steps
