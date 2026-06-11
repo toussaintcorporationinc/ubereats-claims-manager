@@ -2,6 +2,16 @@
 
 Application V1 pour gerer les reclamations Uber Eats de restaurants lorsque des commandes sont annulees apres preparation.
 
+## Domaines officiels
+
+Le domaine officiel TENNET est `thetennet.com`.
+
+- Production : `https://app.thetennet.com` et `https://api.thetennet.com`
+- Staging : `https://staging-app.thetennet.com` et `https://staging-api.thetennet.com`
+- Fallback temporaire : `app.leboxerfrancais.com`, `api.leboxerfrancais.com`, `staging-app.leboxerfrancais.com` et `staging-api.leboxerfrancais.com`
+
+Le domaine Resend verifie est `mail.thetennet.com`. Resend reste desactive par defaut, sans cle API dans le depot. Gmail reste separe pour les conversations Uber et les envois Gmail controles. Aucun envoi automatique, aucune relance automatique et aucune analyse OpenAI reelle ne sont actives par defaut.
+
 Cette base contient :
 
 - un backend Python FastAPI ;
@@ -292,6 +302,7 @@ docker compose down -v
 Documentation CI et developpement : `docs/CI.md`.
 Documentation securite et roles : `docs/SECURITY.md`.
 Documentation production : `docs/DEPLOYMENT.md`, `docs/OPERATIONS.md`, `docs/BACKUP_RESTORE.md` et `docs/PRODUCTION_CHECKLIST.md`.
+Documentation domaines et Resend : `docs/DOMAIN_MIGRATION_THETENNET.md` et `docs/RESEND_SETUP.md`.
 Documentation go-live V1 : `docs/GO_LIVE_RUNBOOK.md`, `docs/ACCEPTANCE_TEST_PLAN.md`, `docs/USER_GUIDE.md`, `docs/ADMIN_GUIDE.md`, `docs/GMAIL_PRODUCTION_VALIDATION.md`, `docs/ROLLBACK_PLAN.md`, `docs/RELEASE_NOTES_V1.md` et `docs/KNOWN_LIMITATIONS_V1.md`.
 Documentation V1.1 : `docs/BULK_EVIDENCE_IMPORT.md`, `docs/AI_EVIDENCE_ANALYSIS.md`, `docs/PERSISTENT_APPEALS.md`, `docs/CUSTOMER_REFUND_DISPUTES.md`, `docs/RECOVERY_COCKPIT.md` et `docs/UBER_RECONCILIATION_RULES.md`.
 Documentation V1.1 finale et staging : `docs/RELEASE_NOTES_V1_1.md`, `docs/RELEASE_NOTES_V1_1_RC.md`, `docs/KNOWN_LIMITATIONS_V1_1.md`, `docs/STAGING_DEPLOYMENT.md`, `docs/STAGING_ACCEPTANCE_PLAN.md` et `docs/V1_1_ACCEPTANCE_TEST_PLAN.md`.
@@ -322,7 +333,7 @@ En production, le backend refuse les secrets placeholders, SQLite, CORS wildcard
 Avant lancement, executer le plan de recette `docs/ACCEPTANCE_TEST_PLAN.md`, le runbook `docs/GO_LIVE_RUNBOOK.md` et le smoke test :
 
 ```bash
-API_URL=https://api.example.com FRONTEND_URL=https://app.example.com ./scripts/smoke_test.sh
+API_URL=https://api.thetennet.com FRONTEND_URL=https://app.thetennet.com ./scripts/smoke_test.sh
 ```
 
 ## Perimetre actuel
@@ -365,9 +376,11 @@ Exemples fictifs disponibles :
 
 ## V1.1 Final Release
 
-`VERSION` vaut `1.1.0-tennet`.
+`VERSION` vaut `1.1.1-tennet`.
 
 La V1.1 finale ajoute les imports Uber Reporting, la reconciliation 6 mois, les detections de commandes annulees non compensees, les deductions Uber / remboursements clients, les demandes de preuves, l'import massif de preuves, le matching controle, les appels persistants et le cockpit recuperation.
+
+La release patch `1.1.1-tennet` aligne le depot avec les domaines premium `thetennet.com`, conserve les fallbacks `leboxerfrancais.com` et documente Resend sur `mail.thetennet.com` en mode desactive par defaut.
 
 Les donnees fictives de recette sont dans `docs/examples/v1_1`. Elles ne doivent pas etre remplacees par des donnees client reelles dans le depot.
 

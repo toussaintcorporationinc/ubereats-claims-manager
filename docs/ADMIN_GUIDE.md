@@ -2,6 +2,12 @@
 
 This guide is for owners and operators managing production.
 
+## Official domains
+
+Use `https://app.thetennet.com` for production and `https://staging-app.thetennet.com` for staging. The `leboxerfrancais.com` domains remain temporary fallbacks during migration and must not be removed until validation is complete.
+
+Resend uses the verified domain `mail.thetennet.com` and remains disabled by default. Its API key must exist only in the host environment. Gmail remains the separate provider for Uber conversation threads when intentionally configured.
+
 ## Roles
 
 `owner`:
@@ -39,7 +45,7 @@ This guide is for owners and operators managing production.
 
 1. Create a Google Cloud OAuth client.
 2. Register the production redirect URI:
-   `https://api.example.com/v1/email/gmail/oauth/callback`.
+   `https://api.thetennet.com/v1/email/gmail/oauth/callback`.
 3. Configure scopes needed for compose, send and readonly.
 4. Set `EMAIL_PROVIDER_ENABLED=true` only after OAuth is ready.
 5. Connect Gmail from `/settings/email`.

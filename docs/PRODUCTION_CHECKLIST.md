@@ -4,11 +4,12 @@ Use this checklist before launching a TENNET commercial production instance.
 
 ## Infrastructure
 
-- [ ] Domain for frontend configured.
-- [ ] Domain for API configured.
+- [ ] Official frontend domain `app.thetennet.com` configured.
+- [ ] Official API domain `api.thetennet.com` configured.
+- [ ] Temporary fallback domains `app.leboxerfrancais.com` and `api.leboxerfrancais.com` still available during migration.
 - [ ] DNS points to the production host.
 - [ ] HTTPS active through Caddy.
-- [ ] `deploy/Caddyfile` updated with real domains.
+- [ ] `deploy/Caddyfile` includes official and fallback domains, without `auto_https on`.
 - [ ] `docker-compose.prod.yml` validated.
 - [ ] Persistent PostgreSQL volume mounted.
 - [ ] Persistent evidence volume mounted.
@@ -28,6 +29,9 @@ Use this checklist before launching a TENNET commercial production instance.
 - [ ] `FOLLOWUP_AUTOMATIC_SEND_ENABLED=false`.
 - [ ] `EMAIL_PROVIDER_ENABLED` reviewed.
 - [ ] `GMAIL_INBOUND_SYNC_ENABLED` reviewed.
+- [ ] `RESEND_ENABLED=false` unless Resend is intentionally enabled.
+- [ ] `RESEND_API_KEY` exists only on the host, never in GitHub.
+- [ ] `RESEND_DOMAIN=mail.thetennet.com` if Resend is used.
 
 ## Database and backups
 
@@ -66,6 +70,13 @@ Use this checklist before launching a TENNET commercial production instance.
 - [ ] Inbound sync test OK if enabled.
 - [ ] Emergency Gmail disable procedure known.
 
+## Resend
+
+- [ ] Domain `mail.thetennet.com` verified in Resend.
+- [ ] Resend DNS records documented outside secrets.
+- [ ] Resend stays disabled by default.
+- [ ] Resend is used only for transactional/manual sends when explicitly enabled.
+
 ## Operations
 
 - [ ] Backend `/health` OK.
@@ -81,7 +92,7 @@ Use this checklist before launching a TENNET commercial production instance.
 
 ## V1.1 RC pre-production checklist
 
-- [ ] Staging acceptance completed with RC2 or final `1.1.0-tennet`.
+- [ ] Staging acceptance completed with RC2, final `1.1.0-tennet`, or patch `1.1.1-tennet`.
 - [ ] `.env.staging` uses staging-only secrets.
 - [ ] `EMAIL_PROVIDER_ENABLED=false` unless Gmail staging test is explicit.
 - [ ] `GMAIL_INBOUND_SYNC_ENABLED=false` unless Gmail staging test is explicit.

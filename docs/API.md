@@ -1,6 +1,10 @@
 # API - TENNET
 
 Base URL locale backend : `http://localhost:8000`
+Base URL production officielle : `https://api.thetennet.com`
+Base URL staging officielle : `https://staging-api.thetennet.com`
+
+Les anciens domaines `api.leboxerfrancais.com` et `staging-api.leboxerfrancais.com` restent des fallbacks temporaires pendant la migration.
 
 ## Health
 
@@ -37,7 +41,7 @@ Retour attendu :
 ```json
 {
   "app": "TENNET",
-  "version": "1.1.0-tennet",
+  "version": "1.1.1-tennet",
   "environment": "production",
   "commit": "unknown"
 }
@@ -502,7 +506,7 @@ Retour :
   "max_uses": 3,
   "use_count": 0,
   "token": "raw-token-returned-once",
-  "upload_url": "https://app.example.com/evidence-upload/raw-token-returned-once"
+  "upload_url": "https://app.thetennet.com/evidence-upload/raw-token-returned-once"
 }
 ```
 
@@ -848,7 +852,7 @@ Regles :
 
 ## Resend transactional email
 
-Resend est un provider transactionnel serveur. Il ne cree pas de brouillon distant et ne synchronise pas les reponses inbound.
+Resend est un provider transactionnel serveur sur le domaine verifie `mail.thetennet.com`. Il ne cree pas de brouillon distant et ne synchronise pas les reponses inbound.
 
 Variables attendues :
 
@@ -900,6 +904,8 @@ Regles :
 - les commandes finales sont refusees ;
 - chaque succes cree un `EmailProviderDraft`, un `EmailThread` outbound et un `AuditLog` ;
 - chaque echec controle cree un `AuditLog` sans cle API, token ni secret.
+
+Gmail reste separe pour les conversations Uber, les brouillons Gmail et la lecture inbound quand il est configure. Aucun secret Resend ou Gmail ne doit etre present dans GitHub.
 
 ## Gmail inbound replies
 

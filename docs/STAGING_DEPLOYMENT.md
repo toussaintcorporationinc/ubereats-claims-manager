@@ -4,7 +4,12 @@ This guide prepares a TENNET V1.1 RC staging deployment. It must not replace pro
 
 ## Domains
 
-Placeholders:
+Official staging domains:
+
+- `https://staging-app.thetennet.com`
+- `https://staging-api.thetennet.com`
+
+Temporary fallback domains:
 
 - `https://staging-app.leboxerfrancais.com`
 - `https://staging-api.leboxerfrancais.com`
@@ -33,6 +38,7 @@ Required manual changes:
 - update `DATABASE_URL` with the same password;
 - keep `EMAIL_PROVIDER_ENABLED=false` unless Gmail staging is intentionally tested;
 - keep `GMAIL_INBOUND_SYNC_ENABLED=false` unless Gmail staging is intentionally tested;
+- keep `RESEND_ENABLED=false` unless Resend staging is intentionally tested with a server-only API key;
 - keep `AI_EVIDENCE_ANALYSIS_ENABLED=false`;
 - keep `FOLLOWUP_AUTOMATIC_SEND_ENABLED=false`;
 - keep `APPEAL_AUTO_SEND_ENABLED=false`.
@@ -60,9 +66,9 @@ docker compose --env-file .env.staging -f docker-compose.staging.yml exec backen
 6. Run smoke test.
 
 ```bash
-API_URL=https://staging-api.leboxerfrancais.com \
-FRONTEND_URL=https://staging-app.leboxerfrancais.com \
-EXPECTED_VERSION=1.1.0-tennet \
+API_URL=https://staging-api.thetennet.com \
+FRONTEND_URL=https://staging-app.thetennet.com \
+EXPECTED_VERSION=1.1.1-tennet \
 ./scripts/smoke_test_v1_1.sh
 ```
 

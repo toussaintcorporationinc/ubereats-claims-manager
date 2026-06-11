@@ -23,6 +23,16 @@ Variables attendues :
 
 Le frontend ne recoit aucun secret. `NEXT_PUBLIC_API_BASE_URL` reste la seule variable publique attendue.
 
+## Domaines officiels et migration
+
+Le domaine officiel TENNET est `thetennet.com`.
+
+- Production : `https://app.thetennet.com` et `https://api.thetennet.com`.
+- Staging : `https://staging-app.thetennet.com` et `https://staging-api.thetennet.com`.
+- Fallback temporaire : les domaines `leboxerfrancais.com` restent actifs pendant la migration.
+
+`BACKEND_CORS_ORIGINS` doit autoriser le domaine officiel et, tant que la migration n'est pas close, le fallback correspondant. Les domaines fallback ne doivent pas etre supprimes sans validation d'exploitation.
+
 ## Production deployment security
 
 Regles minimales :
@@ -230,15 +240,17 @@ TENNET ne garantit pas le remboursement. AutoPilot automatise une execution cont
 
 ## Resend
 
-Resend est supporte comme provider transactionnel serveur, desactive par defaut.
+Resend est supporte comme provider transactionnel serveur sur le domaine verifie `mail.thetennet.com`, desactive par defaut.
 
 Regles de securite :
 
 - `RESEND_ENABLED=false` par defaut ;
 - `RESEND_API_KEY` ne doit jamais etre commitee, affichee dans l'UI ou stockee dans l'audit ;
 - `RESEND_FROM_EMAIL` doit utiliser un domaine verifie, par exemple `TENNET <notifications@mail.thetennet.com>` ;
+- `RESEND_DOMAIN=mail.thetennet.com` ;
 - l'envoi via Resend exige une action manuelle avec `confirm_send=true` ;
 - Resend ne remplace pas Gmail inbound et ne lit pas les reponses ;
+- Gmail reste le provider separe pour les conversations Uber quand il est configure ;
 - AutoPilot ne bascule pas automatiquement sur Resend ;
 - les logs d'echec ne doivent contenir que des erreurs controlees sans secret.
 
