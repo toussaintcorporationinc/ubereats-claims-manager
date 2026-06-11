@@ -16,6 +16,7 @@ const positiveStatuses = new Set([
   "reviewed",
   "completed",
   "analyzed",
+  "applied",
   "auto_attached",
   "accepted",
 ]);

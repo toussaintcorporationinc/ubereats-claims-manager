@@ -1,0 +1,531 @@
+from __future__ import annotations
+
+import re
+import unicodedata
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.auth import can_access_restaurant, get_accessible_restaurant_ids
+from app.models import ClaimOrder, GmailResponseAnalysis, InboundEmailMessage, User
+from app.models.domain import utc_now
+from app.schemas.domain import ClaimResponseReviewCreate
+from app.services.audit import add_audit_log
+from app.services.response_review_service import ResponseReviewError, create_response_review
+
+AUTO_APPLY_REVIEW_TYPES = {
+    "accepted",
+    "payment_to_verify",
+    "payment_confirmed",
+    "refused",
+    "evidence_requested",
+    "information_requested",
+}
+MIN_AUTO_APPLY_CONFIDENCE = Decimal("0.70")
+MAX_NOTES_LENGTH = 1200
+
+
+@dataclass(frozen=True)
+class GmailResponseClassification:
+    review_type: str
+    confidence_score: Decimal
+    reason: str
+    detected_amount: Decimal | None = None
+    evidence_requested: bool | None = None
+    matched_keywords: dict[str, list[str]] | None = None
+    notes: str | None = None
+
+
+@dataclass(frozen=True)
+class GmailResponseAnalyzeSummary:
+    analyzed_messages: int = 0
+    applied_reviews: int = 0
+    manual_review_messages: int = 0
+    ignored_messages: int = 0
+    failed_messages: int = 0
+    errors: tuple[str, ...] = ()
+
+
+class GmailResponseIntelligenceService:
+    def analyze_inbox(
+        self,
+        db: Session,
+        user: User,
+        *,
+        apply_reviews: bool,
+        limit: int = 100,
+        only_unreviewed: bool = True,
+    ) -> tuple[GmailResponseAnalyzeSummary, list[GmailResponseAnalysis]]:
+        query = self.visible_messages_query(db, user).where(InboundEmailMessage.match_status == "linked")
+        if only_unreviewed:
+            query = query.where(InboundEmailMessage.review_status == "unreviewed")
+        messages = db.scalars(
+            query.order_by(InboundEmailMessage.received_at.desc().nullslast(), InboundEmailMessage.id.desc()).limit(limit)
+        ).all()
+
+        analyses: list[GmailResponseAnalysis] = []
+        analyzed = applied = manual = ignored = failed = 0
+        errors: list[str] = []
+        for message in messages:
+            try:
+                analysis = self.analyze_message(db, user, message, apply_review=apply_reviews)
+                analyses.append(analysis)
+                if analysis.status == "applied":
+                    applied += 1
+                elif analysis.status == "manual_review":
+                    manual += 1
+                elif analysis.status == "ignored":
+                    ignored += 1
+                elif analysis.status == "failed":
+                    failed += 1
+                else:
+                    analyzed += 1
+            except ResponseReviewError as exc:
+                failed += 1
+                errors.append(exc.message)
+            except ValueError as exc:
+                failed += 1
+                errors.append(str(exc))
+
+        return (
+            GmailResponseAnalyzeSummary(
+                analyzed_messages=analyzed,
+                applied_reviews=applied,
+                manual_review_messages=manual,
+                ignored_messages=ignored,
+                failed_messages=failed,
+                errors=tuple(errors),
+            ),
+            analyses,
+        )
+
+    def analyze_message(
+        self,
+        db: Session,
+        user: User,
+        message: InboundEmailMessage,
+        *,
+        apply_review: bool,
+    ) -> GmailResponseAnalysis:
+        self.ensure_message_access(db, user, message)
+        order = message.order if message.order_id else None
+        classification = self.classify_message(message)
+        analysis = self.upsert_analysis(db, user, message, order, classification)
+
+        if message.match_status != "linked" or order is None:
+            analysis.status = "manual_review"
+            analysis.reason = "message_not_linked_to_order"
+            analysis.error_message = None
+            db.flush()
+            return analysis
+
+        if message.review_status != "unreviewed":
+            analysis.status = "ignored"
+            analysis.reason = "already_reviewed"
+            analysis.error_message = None
+            db.flush()
+            return analysis
+
+        if not apply_review or not self.should_apply(analysis):
+            analysis.status = "manual_review" if analysis.recommended_review_type == "manual_review" else "analyzed"
+            db.flush()
+            return analysis
+
+        payload = ClaimResponseReviewCreate(
+            inbound_message_id=message.id,
+            review_type=analysis.recommended_review_type,  # type: ignore[arg-type]
+            recovered_amount=analysis.detected_amount if analysis.recommended_review_type == "payment_confirmed" else None,
+            expected_payment_date=analysis.expected_payment_date,
+            refusal_reason=analysis.notes if analysis.recommended_review_type == "refused" else None,
+            evidence_requested=True if analysis.recommended_review_type == "evidence_requested" else None,
+            notes=analysis.notes,
+        )
+        try:
+            review = create_response_review(db, order=order, user=user, payload=payload)
+        except ResponseReviewError as exc:
+            analysis.status = "failed"
+            analysis.error_message = exc.message
+            db.flush()
+            raise
+
+        analysis.status = "applied"
+        analysis.response_review_id = review.id
+        analysis.applied_by_user_id = user.id
+        analysis.applied_at = utc_now()
+        analysis.error_message = None
+        db.flush()
+        add_audit_log(
+            db,
+            entity_type="gmail_response_analysis",
+            entity_id=analysis.id,
+            action="gmail_response_analysis.applied",
+            user_id=user.id,
+            new_value={
+                "inbound_message_id": message.id,
+                "order_id": order.id,
+                "review_type": analysis.recommended_review_type,
+                "response_review_id": review.id,
+            },
+        )
+        return analysis
+
+    def classify_message(self, message: InboundEmailMessage) -> GmailResponseClassification:
+        text = normalize_text(
+            " ".join(
+                value
+                for value in [message.subject, message.snippet, message.body_text]
+                if value
+            )
+        )
+        amount = detect_amount(text)
+        matches = {key: matching_keywords(text, keywords) for key, keywords in KEYWORDS.items()}
+        strong_groups = {key for key, values in matches.items() if values}
+
+        if not text.strip():
+            return GmailResponseClassification(
+                review_type="manual_review",
+                confidence_score=Decimal("0.20"),
+                reason="empty_message",
+                matched_keywords=matches,
+                notes="Email vide ou non lisible. Revue humaine requise.",
+            )
+
+        if "evidence_requested" in strong_groups:
+            return GmailResponseClassification(
+                review_type="evidence_requested",
+                confidence_score=Decimal("0.86"),
+                reason="evidence_requested_keywords",
+                detected_amount=amount,
+                evidence_requested=True,
+                matched_keywords=matches,
+                notes=build_notes("Uber demande des preuves ou informations justificatives.", message, matches),
+            )
+
+        positive_groups = strong_groups.intersection({"payment_confirmed", "payment_to_verify", "accepted"})
+        negative_groups = strong_groups.intersection({"refused"})
+        if positive_groups and negative_groups:
+            return GmailResponseClassification(
+                review_type="manual_review",
+                confidence_score=Decimal("0.45"),
+                reason="conflicting_positive_negative_keywords",
+                detected_amount=amount,
+                matched_keywords=matches,
+                notes=build_notes("Signaux positifs et negatifs detectes dans le meme email.", message, matches),
+            )
+
+        if "payment_confirmed" in strong_groups:
+            if amount is not None:
+                return GmailResponseClassification(
+                    review_type="payment_confirmed",
+                    confidence_score=Decimal("0.92"),
+                    reason="payment_confirmed_with_amount",
+                    detected_amount=amount,
+                    matched_keywords=matches,
+                    notes=build_notes("Paiement confirme avec montant detecte.", message, matches),
+                )
+            return GmailResponseClassification(
+                review_type="payment_to_verify",
+                confidence_score=Decimal("0.78"),
+                reason="payment_confirmed_without_amount",
+                matched_keywords=matches,
+                notes=build_notes("Paiement annonce sans montant exploitable.", message, matches),
+            )
+
+        if "payment_to_verify" in strong_groups:
+            return GmailResponseClassification(
+                review_type="payment_to_verify",
+                confidence_score=Decimal("0.82"),
+                reason="payment_to_verify_keywords",
+                detected_amount=amount,
+                matched_keywords=matches,
+                notes=build_notes("Uber annonce une regularisation ou un paiement a verifier.", message, matches),
+            )
+
+        if "accepted" in strong_groups:
+            return GmailResponseClassification(
+                review_type="accepted",
+                confidence_score=Decimal("0.80"),
+                reason="accepted_keywords",
+                detected_amount=amount,
+                matched_keywords=matches,
+                notes=build_notes("Uber semble accepter la demande.", message, matches),
+            )
+
+        if "refused" in strong_groups:
+            return GmailResponseClassification(
+                review_type="refused",
+                confidence_score=Decimal("0.84"),
+                reason="refused_keywords",
+                matched_keywords=matches,
+                notes=build_notes("Uber semble refuser la demande. Le dossier reste appelable.", message, matches),
+            )
+
+        if "information_requested" in strong_groups:
+            return GmailResponseClassification(
+                review_type="information_requested",
+                confidence_score=Decimal("0.74"),
+                reason="information_requested_keywords",
+                matched_keywords=matches,
+                notes=build_notes("Uber demande des informations complementaires.", message, matches),
+            )
+
+        if "followup_needed" in strong_groups:
+            return GmailResponseClassification(
+                review_type="followup_needed",
+                confidence_score=Decimal("0.62"),
+                reason="waiting_or_under_review_keywords",
+                matched_keywords=matches,
+                notes=build_notes("Uber indique que le dossier est en cours de traitement.", message, matches),
+            )
+
+        return GmailResponseClassification(
+            review_type="manual_review",
+            confidence_score=Decimal("0.35"),
+            reason="no_reliable_decision_detected",
+            matched_keywords=matches,
+            notes=build_notes("Aucune decision Uber fiable detectee.", message, matches),
+        )
+
+    def upsert_analysis(
+        self,
+        db: Session,
+        user: User,
+        message: InboundEmailMessage,
+        order: ClaimOrder | None,
+        classification: GmailResponseClassification,
+    ) -> GmailResponseAnalysis:
+        analysis = db.scalar(
+            select(GmailResponseAnalysis).where(GmailResponseAnalysis.inbound_message_id == message.id)
+        )
+        if analysis is None:
+            analysis = GmailResponseAnalysis(inbound_message_id=message.id)
+            db.add(analysis)
+        analysis.order_id = order.id if order else None
+        analysis.analyzed_by_user_id = user.id
+        analysis.recommended_review_type = classification.review_type
+        analysis.status = "manual_review" if classification.review_type == "manual_review" else "analyzed"
+        analysis.confidence_score = classification.confidence_score
+        analysis.reason = classification.reason
+        analysis.detected_amount = classification.detected_amount
+        analysis.expected_payment_date = None
+        analysis.evidence_requested = classification.evidence_requested
+        analysis.matched_keywords_json = classification.matched_keywords
+        analysis.notes = classification.notes
+        analysis.error_message = None
+        analysis.updated_at = utc_now()
+        db.flush()
+        add_audit_log(
+            db,
+            entity_type="gmail_response_analysis",
+            entity_id=analysis.id,
+            action="gmail_response_analysis.analyzed",
+            user_id=user.id,
+            new_value={
+                "inbound_message_id": message.id,
+                "order_id": analysis.order_id,
+                "recommended_review_type": analysis.recommended_review_type,
+                "confidence_score": str(analysis.confidence_score),
+                "reason": analysis.reason,
+            },
+        )
+        return analysis
+
+    def should_apply(self, analysis: GmailResponseAnalysis) -> bool:
+        if analysis.recommended_review_type not in AUTO_APPLY_REVIEW_TYPES:
+            return False
+        if analysis.confidence_score is None or analysis.confidence_score < MIN_AUTO_APPLY_CONFIDENCE:
+            return False
+        if analysis.recommended_review_type == "payment_confirmed" and analysis.detected_amount is None:
+            return False
+        return True
+
+    def ensure_message_access(self, db: Session, user: User, message: InboundEmailMessage) -> None:
+        if user.role == "staff":
+            raise ValueError("Staff cannot analyze Gmail responses")
+        if message.order_id is not None:
+            if not message.order or not can_access_restaurant(db, user, message.order.restaurant_id):
+                raise ValueError("Inbound message access denied")
+            return
+        accessible_ids = get_accessible_restaurant_ids(db, user)
+        if accessible_ids == []:
+            raise ValueError("Inbound message access denied")
+
+    def visible_messages_query(self, db: Session, user: User):
+        query = select(InboundEmailMessage)
+        accessible_ids = get_accessible_restaurant_ids(db, user)
+        if accessible_ids is None:
+            return query
+        if not accessible_ids:
+            return query.where(InboundEmailMessage.id == -1)
+        return query.outerjoin(ClaimOrder, InboundEmailMessage.order_id == ClaimOrder.id).where(
+            (InboundEmailMessage.order_id.is_(None)) | (ClaimOrder.restaurant_id.in_(accessible_ids))
+        )
+
+
+KEYWORDS: dict[str, tuple[str, ...]] = {
+    "evidence_requested": (
+        "please provide proof",
+        "please provide evidence",
+        "send us proof",
+        "send evidence",
+        "additional evidence",
+        "supporting evidence",
+        "upload proof",
+        "provide a photo",
+        "provide photos",
+        "receipt",
+        "screenshot",
+        "preuve",
+        "preuves",
+        "justificatif",
+        "justificatifs",
+        "capture",
+        "photo",
+        "ticket",
+        "details de commande",
+        "informations justificatives",
+    ),
+    "payment_confirmed": (
+        "payment has been issued",
+        "payment was processed",
+        "payment processed",
+        "we have paid",
+        "we paid",
+        "credited to your account",
+        "amount has been added",
+        "paid out",
+        "payout completed",
+        "paiement effectue",
+        "paiement confirme",
+        "reglement effectue",
+        "montant verse",
+        "compensation versee",
+        "remboursement effectue",
+        "credite sur votre compte",
+    ),
+    "payment_to_verify": (
+        "will be paid",
+        "will receive",
+        "you will receive",
+        "we will reimburse",
+        "we will compensate",
+        "approved a payment",
+        "next payout",
+        "sera verse",
+        "vous recevrez",
+        "prochain versement",
+        "regularisation sera",
+        "paiement a venir",
+        "compensation a venir",
+    ),
+    "accepted": (
+        "claim approved",
+        "approved your claim",
+        "we approved",
+        "request approved",
+        "accepted your request",
+        "nous acceptons",
+        "demande acceptee",
+        "demande approuvee",
+        "reclamation acceptee",
+        "regularisation acceptee",
+        "eligible au remboursement",
+    ),
+    "refused": (
+        "unable to reimburse",
+        "cannot reimburse",
+        "can't reimburse",
+        "not eligible",
+        "denied",
+        "rejected",
+        "declined",
+        "will not reimburse",
+        "no reimbursement",
+        "no compensation",
+        "not able to compensate",
+        "we are unable",
+        "we cannot",
+        "refuse",
+        "refus",
+        "refusee",
+        "rejetee",
+        "rejete",
+        "pas eligible",
+        "ne pouvons pas",
+        "aucun remboursement",
+        "pas de remboursement",
+        "aucune compensation",
+        "pas de compensation",
+    ),
+    "information_requested": (
+        "need more information",
+        "additional information",
+        "more details",
+        "clarification",
+        "could you confirm",
+        "informations complementaires",
+        "plus d informations",
+        "details supplementaires",
+        "pouvez vous confirmer",
+    ),
+    "followup_needed": (
+        "under review",
+        "we are reviewing",
+        "we are investigating",
+        "we'll get back",
+        "we will get back",
+        "in progress",
+        "en cours d examen",
+        "en cours de traitement",
+        "nous examinons",
+        "nous reviendrons vers vous",
+    ),
+}
+
+
+def normalize_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    ascii_text = "".join(char for char in normalized if not unicodedata.combining(char))
+    return re.sub(r"\s+", " ", ascii_text.casefold()).strip()
+
+
+def matching_keywords(text: str, keywords: tuple[str, ...]) -> list[str]:
+    return [keyword for keyword in keywords if normalize_text(keyword) in text]
+
+
+def detect_amount(text: str) -> Decimal | None:
+    amount_patterns = [
+        r"(?:€\s*)?(-?\d{1,3}(?:[ .]\d{3})*(?:[,.]\d{2})|-?\d+(?:[,.]\d{2}))\s*(?:€|eur|euros)",
+        r"(?:amount|montant|payment|paiement|compensation|reimbursement|remboursement)\D{0,20}"
+        r"(-?\d{1,3}(?:[ .]\d{3})*(?:[,.]\d{2})|-?\d+(?:[,.]\d{2}))",
+    ]
+    for pattern in amount_patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        try:
+            return parse_decimal_amount(match.group(1))
+        except InvalidOperation:
+            continue
+    return None
+
+
+def parse_decimal_amount(value: str) -> Decimal:
+    cleaned = value.strip().replace(" ", "")
+    if "," in cleaned and "." in cleaned:
+        if cleaned.rfind(",") > cleaned.rfind("."):
+            cleaned = cleaned.replace(".", "").replace(",", ".")
+        else:
+            cleaned = cleaned.replace(",", "")
+    elif "," in cleaned:
+        cleaned = cleaned.replace(",", ".")
+    return abs(Decimal(cleaned)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def build_notes(prefix: str, message: InboundEmailMessage, matches: dict[str, list[str]]) -> str:
+    matched = {key: values for key, values in matches.items() if values}
+    snippet = normalize_text(message.snippet or message.subject or "")[:240]
+    notes = f"{prefix} Mots cles: {matched}. Extrait: {snippet}"
+    return notes[:MAX_NOTES_LENGTH]

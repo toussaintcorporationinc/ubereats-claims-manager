@@ -1,0 +1,56 @@
+# Gmail Response Intelligence
+
+TENNET can analyze Gmail replies from Uber support accounts and turn clear responses into tracked internal decisions.
+
+## Goal
+
+The engine reduces manual triage after Gmail sync:
+
+- link Uber replies to existing TENNET claim orders;
+- classify clear positive and negative replies;
+- record a `ClaimResponseReview`;
+- update recovery reporting through the existing order statuses;
+- keep refusals alive through the persistent appeal workflow.
+
+No email is sent automatically by this feature.
+
+## Decisions
+
+TENNET can recommend or apply these outcomes:
+
+- `accepted`: Uber appears to accept the claim.
+- `payment_to_verify`: Uber announces a payment or payout that still needs verification.
+- `payment_confirmed`: Uber confirms payment and a monetary amount is detected in the email.
+- `refused`: Uber refuses or denies compensation.
+- `evidence_requested`: Uber asks for proof, screenshots, receipts, photos, or supporting evidence.
+- `information_requested`: Uber asks for more information.
+- `followup_needed`: Uber says the case is under review or still being investigated.
+- `manual_review`: TENNET is not confident enough to decide.
+
+If signals conflict, TENNET keeps the email in manual review.
+
+## Amount Rules
+
+TENNET never invents a recovered amount.
+
+`payment_confirmed` is applied only when the email contains a strong payment confirmation signal and a detected amount such as `24,90 EUR` or `€24.90`.
+
+If Uber mentions a payment without an amount, TENNET uses `payment_to_verify`.
+
+## Refusals
+
+A refusal never closes the claim automatically. When a `refused` review is created, TENNET opens or updates the existing appeal workflow so the case remains visible in the recovery cockpit.
+
+## Gmail Scope
+
+TENNET analyzes messages synchronized through connected Gmail accounts. Messages must be linked to a TENNET order before a decision can be applied.
+
+Unlinked messages remain visible in the inbox and can be manually linked.
+
+## Safety
+
+- No automatic email sending.
+- No automatic irreversible close.
+- No fabricated amounts, order numbers, or proof.
+- Ambiguous replies stay in manual review.
+- Audit logs are created for analysis and applied reviews.

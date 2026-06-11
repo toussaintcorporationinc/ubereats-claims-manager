@@ -16,6 +16,8 @@ import {
   type ClaimOrder,
   type GmailInboundStatus,
   type GmailInboundSyncResponse,
+  type GmailResponseAnalysis,
+  type GmailResponseAnalyzeResponse,
   type InboundEmailMatchStatus,
   type InboundEmailMessage,
 } from "@/lib/api";
@@ -55,6 +57,7 @@ export default function InboxPage() {
   const [orders, setOrders] = useState<ClaimOrder[]>([]);
   const [status, setStatus] = useState<GmailInboundStatus | null>(null);
   const [syncResult, setSyncResult] = useState<GmailInboundSyncResponse | null>(null);
+  const [analysisResult, setAnalysisResult] = useState<GmailResponseAnalyzeResponse | null>(null);
   const [reviewResult, setReviewResult] = useState<ClaimResponseReview | null>(null);
   const [filter, setFilter] = useState<FilterValue>("");
   const [linkSelections, setLinkSelections] = useState<Record<number, string>>({});
@@ -63,6 +66,8 @@ export default function InboxPage() {
   const [actionError, setActionError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzingMessageId, setAnalyzingMessageId] = useState<number | null>(null);
   const [linkingMessageId, setLinkingMessageId] = useState<number | null>(null);
   const [reviewingMessageId, setReviewingMessageId] = useState<number | null>(null);
 
@@ -91,13 +96,47 @@ export default function InboxPage() {
     setSyncResult(null);
 
     try {
-      const result = await api.syncInboundGmail({ lookback_days: 30, max_messages: 100 });
+      const result = await api.syncInboundGmail({
+        lookback_days: 30,
+        max_messages: 100,
+        analyze_responses: true,
+        apply_reviews: true,
+      });
       setSyncResult(result);
       await loadData();
     } catch (apiError) {
       setActionError(apiError);
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function handleAnalyzeInbox() {
+    setAnalyzing(true);
+    setActionError(null);
+    setAnalysisResult(null);
+
+    try {
+      const result = await api.analyzeInboundGmail({ apply_reviews: true, limit: 100, only_unreviewed: true });
+      setAnalysisResult(result);
+      await loadData();
+    } catch (apiError) {
+      setActionError(apiError);
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
+  async function handleAnalyzeMessage(messageId: number) {
+    setAnalyzingMessageId(messageId);
+    setActionError(null);
+    try {
+      await api.analyzeInboundMessage(messageId, { apply_reviews: true });
+      await loadData();
+    } catch (apiError) {
+      setActionError(apiError);
+    } finally {
+      setAnalyzingMessageId(null);
     }
   }
 
@@ -181,9 +220,14 @@ export default function InboxPage() {
           <h1>Inbox Gmail</h1>
         </div>
         {canSync ? (
-          <button type="button" className="button" onClick={handleSync} disabled={syncing || !status?.enabled}>
-            {syncing ? "Synchronisation" : "Synchroniser les reponses Gmail"}
-          </button>
+          <div className="button-row">
+            <button type="button" className="button" onClick={handleSync} disabled={syncing || !status?.enabled}>
+              {syncing ? "Synchronisation" : "Synchroniser et traiter"}
+            </button>
+            <button type="button" className="secondary-button" onClick={handleAnalyzeInbox} disabled={analyzing}>
+              {analyzing ? "Analyse" : "Analyser les reponses liees"}
+            </button>
+          </div>
         ) : null}
       </div>
 
@@ -206,7 +250,17 @@ export default function InboxPage() {
             <strong>Synchronisation terminee</strong>
             <span>
               {syncResult.synced_messages} message(s), {syncResult.linked_messages} rattache(s),{" "}
-              {syncResult.unlinked_messages} non rattache(s), {syncResult.ignored_messages} ignore(s)
+              {syncResult.unlinked_messages} non rattache(s), {syncResult.ignored_messages} ignore(s),{" "}
+              {syncResult.applied_reviews} decision(s) appliquee(s), {syncResult.manual_review_messages} a verifier
+            </span>
+          </div>
+        ) : null}
+        {analysisResult ? (
+          <div className="success-box">
+            <strong>Analyse terminee</strong>
+            <span>
+              {analysisResult.applied_reviews} decision(s) appliquee(s), {analysisResult.manual_review_messages} a
+              verifier, {analysisResult.failed_messages} erreur(s)
             </span>
           </div>
         ) : null}
@@ -245,6 +299,7 @@ export default function InboxPage() {
                 <th>Extrait</th>
                 <th>Reception</th>
                 <th>Match</th>
+                <th>Decision TENNET</th>
                 <th>Revue</th>
                 <th>Commande</th>
                 <th>Action</th>
@@ -264,6 +319,9 @@ export default function InboxPage() {
                         <StatusBadge status={message.match_status} />
                         <span className="muted">{message.match_reason}</span>
                       </div>
+                    </td>
+                    <td>
+                      <AnalysisSummary analysis={message.response_analysis} />
                     </td>
                     <td>
                       <div className="stack-sm">
@@ -308,6 +366,15 @@ export default function InboxPage() {
                         </div>
                       ) : null}
                       {message.match_status === "linked" && message.order_id && canSync ? (
+                        <div className="stack-sm">
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => handleAnalyzeMessage(message.id)}
+                            disabled={analyzingMessageId === message.id || message.review_status === "reviewed"}
+                          >
+                            {analyzingMessageId === message.id ? "Analyse" : "Analyser et traiter"}
+                          </button>
                         <form className="inline-form" onSubmit={(event) => handleReview(event, message)}>
                           <select
                             aria-label={`Type traitement message ${message.id}`}
@@ -355,6 +422,7 @@ export default function InboxPage() {
                             {reviewingMessageId === message.id ? "Traitement" : "Traiter la reponse"}
                           </button>
                         </form>
+                        </div>
                       ) : null}
                       {message.match_status !== "unlinked" && !(message.match_status === "linked" && canSync) ? "-" : null}
                     </td>
@@ -369,6 +437,38 @@ export default function InboxPage() {
       )}
     </section>
   );
+}
+
+function AnalysisSummary({ analysis }: { analysis: GmailResponseAnalysis | null }) {
+  if (!analysis) {
+    return <span className="muted">Non analysee</span>;
+  }
+  return (
+    <div className="stack-sm">
+      <StatusBadge status={analysis.status} />
+      <strong>{reviewTypeLabel(analysis.recommended_review_type)}</strong>
+      <span className="muted">
+        Confiance {analysis.confidence_score ?? "-"}
+        {analysis.detected_amount ? ` · Montant ${analysis.detected_amount} EUR` : ""}
+      </span>
+      {analysis.reason ? <span className="muted">{analysis.reason}</span> : null}
+    </div>
+  );
+}
+
+function reviewTypeLabel(value: ClaimResponseReviewType) {
+  const labels: Record<ClaimResponseReviewType, string> = {
+    accepted: "Acceptée",
+    payment_to_verify: "Paiement à vérifier",
+    payment_confirmed: "Paiement confirmé",
+    refused: "Refusée",
+    evidence_requested: "Preuves demandées",
+    information_requested: "Informations demandées",
+    followup_needed: "Suivi nécessaire",
+    ignored: "Ignorée",
+    manual_review: "À vérifier",
+  };
+  return labels[value];
 }
 
 function DetailItem({ label, value }: { label: string; value: string }) {

@@ -946,7 +946,9 @@ Body optionnel :
 ```json
 {
   "lookback_days": 30,
-  "max_messages": 100
+  "max_messages": 100,
+  "analyze_responses": true,
+  "apply_reviews": true
 }
 ```
 
@@ -959,6 +961,9 @@ Reponse :
   "linked_messages": 7,
   "unlinked_messages": 2,
   "ignored_messages": 1,
+  "analyzed_messages": 2,
+  "applied_reviews": 5,
+  "manual_review_messages": 1,
   "errors": []
 }
 ```
@@ -974,8 +979,50 @@ Regles :
 - sinon, le numero Uber est recherche dans le sujet puis le corps ;
 - si aucun rattachement fiable n'existe, le message reste `unlinked` ;
 - les messages sortants de notre propre compte Gmail sont marques `ignored`.
+- par defaut, les messages rattaches sont analyses et les decisions fiables sont appliquees en `ClaimResponseReview` ;
+- les emails ambigus restent en revue manuelle ;
+- aucun email n'est envoye et aucune decision irreversible n'est prise.
 
 Si un message inbound est rattache et que la commande est `sent` ou `waiting_uber_response`, le statut passe a `response_received`. Les statuts finaux `accepted`, `payment_confirmed`, `refused` et `closed` restent inchanges.
+
+### Analyser les reponses Gmail rattachees
+
+- `POST /v1/email/gmail/inbound/analyze`
+
+Body optionnel :
+
+```json
+{
+  "apply_reviews": true,
+  "limit": 100,
+  "only_unreviewed": true
+}
+```
+
+Retour :
+
+```json
+{
+  "analyzed_messages": 2,
+  "applied_reviews": 5,
+  "manual_review_messages": 1,
+  "ignored_messages": 0,
+  "failed_messages": 0,
+  "errors": [],
+  "analyses": []
+}
+```
+
+`POST /v1/email/inbound-messages/{message_id}/analyze` applique la meme logique sur un seul message.
+
+Regles :
+
+- `owner` et `manager` peuvent analyser les messages autorises ;
+- `staff` ne peut pas analyser ;
+- `payment_confirmed` exige un montant detecte dans l'email ;
+- un refus ouvre ou met a jour le workflow d'appel ;
+- un message non rattache ou ambigu reste a verifier ;
+- aucun email n'est envoye automatiquement.
 
 ### Liste messages inbound
 

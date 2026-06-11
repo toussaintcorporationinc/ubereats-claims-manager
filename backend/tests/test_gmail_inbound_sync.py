@@ -9,11 +9,14 @@ from app.core.config import get_settings
 from app.main import app
 from app.models import (
     AuditLog,
+    AppealWorkflow,
     ClaimOrder,
+    ClaimResponseReview,
     EmailAccount,
     EmailDraft,
     EmailProviderDraft,
     EmailThread,
+    GmailResponseAnalysis,
     InboundEmailMessage,
     User,
 )
@@ -443,6 +446,237 @@ def test_message_with_known_thread_id_is_linked_and_audited(
         )
     )
     assert audit_log is not None
+
+
+def test_sync_refused_response_creates_review_and_appeal(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-INBOUND-REFUSED",
+        thread_id="thread-refused",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-refused",
+            thread_id="thread-refused",
+            body_text="We are unable to reimburse this order. It is not eligible for compensation.",
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    assert response.json()["applied_reviews"] == 1
+    db_session.refresh(order)
+    assert order.status == "refused"
+    review = db_session.scalar(select(ClaimResponseReview).where(ClaimResponseReview.order_id == order.id))
+    assert review is not None
+    assert review.review_type == "refused"
+    analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
+    assert analysis is not None
+    assert analysis.recommended_review_type == "refused"
+    assert analysis.status == "applied"
+    workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
+    assert workflow is not None
+    assert workflow.status == "appeal_needed"
+
+
+def test_sync_payment_confirmed_response_updates_recovered_amount(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-INBOUND-PAID",
+        thread_id="thread-paid",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-paid",
+            thread_id="thread-paid",
+            body_text="Payment has been issued for 24,90 EUR and credited to your account.",
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    assert response.json()["applied_reviews"] == 1
+    db_session.refresh(order)
+    assert order.status == "payment_confirmed"
+    assert str(order.recovered_amount) == "24.90"
+    analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
+    assert analysis is not None
+    assert analysis.recommended_review_type == "payment_confirmed"
+    assert str(analysis.detected_amount) == "24.90"
+
+
+def test_sync_payment_without_amount_requires_verification(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-INBOUND-PAYMENT-VERIFY",
+        thread_id="thread-payment-verify",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-payment-verify",
+            thread_id="thread-payment-verify",
+            body_text="Payment has been issued and will appear in your next payout.",
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    db_session.refresh(order)
+    assert order.status == "payment_to_verify"
+    assert order.recovered_amount is None
+    analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
+    assert analysis is not None
+    assert analysis.recommended_review_type == "payment_to_verify"
+
+
+def test_sync_evidence_request_marks_manual_review(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-INBOUND-EVIDENCE",
+        thread_id="thread-evidence",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-evidence",
+            thread_id="thread-evidence",
+            body_text="Please provide proof, receipt and screenshot for this order.",
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    db_session.refresh(order)
+    assert order.status == "manual_review"
+    review = db_session.scalar(select(ClaimResponseReview).where(ClaimResponseReview.order_id == order.id))
+    assert review is not None
+    assert review.review_type == "evidence_requested"
+    assert review.evidence_requested is True
+
+
+def test_sync_unknown_response_does_not_invent_decision(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-INBOUND-UNKNOWN",
+        thread_id="thread-unknown-decision",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-unknown-decision",
+            thread_id="thread-unknown-decision",
+            body_text="Hello, thank you for contacting us about this order.",
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    assert response.json()["manual_review_messages"] == 1
+    db_session.refresh(order)
+    assert order.status == "response_received"
+    assert db_session.scalar(select(ClaimResponseReview).where(ClaimResponseReview.order_id == order.id)) is None
+    analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
+    assert analysis is not None
+    assert analysis.recommended_review_type == "manual_review"
+    assert analysis.status == "manual_review"
+
+
+def test_analyze_endpoint_can_preview_without_applying_review(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-INBOUND-PREVIEW",
+        thread_id="thread-preview",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-preview",
+            thread_id="thread-preview",
+            body_text="Claim approved. You will receive this amount in your next payout.",
+        )
+    ]
+    sync_response = client.post(
+        "/v1/email/gmail/inbound/sync",
+        json={"lookback_days": 30, "max_messages": 100, "analyze_responses": False},
+    )
+    assert sync_response.status_code == 200
+
+    response = client.post(
+        "/v1/email/gmail/inbound/analyze",
+        json={"apply_reviews": False, "only_unreviewed": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["analyzed_messages"] == 1
+    db_session.refresh(order)
+    assert order.status == "response_received"
+    assert db_session.scalar(select(ClaimResponseReview).where(ClaimResponseReview.order_id == order.id)) is None
+    analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
+    assert analysis is not None
+    assert analysis.recommended_review_type == "payment_to_verify"
+    assert analysis.status == "analyzed"
 
 
 def test_message_with_order_number_in_subject_is_linked(

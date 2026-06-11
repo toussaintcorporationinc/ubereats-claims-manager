@@ -45,6 +45,7 @@ Le backend expose maintenant les premiers objets metier :
 - routage multi-Gmail par restaurant pour utiliser la bonne boite Uber ;
 - envoi manuel approuve de brouillons Gmail, sans automatisation ;
 - lecture et rattachement manuel des reponses Gmail entrantes ;
+- analyse controlee des reponses Gmail Uber, avec decisions positives/negatives tracees et appels ouverts apres refus ;
 - envoi transactionnel Resend optionnel, desactive par defaut et confirme manuellement ;
 - traitement manuel des reponses Uber et mise a jour des statuts de reclamation ;
 - workflow d'appels persistants apres refus Uber ;
@@ -133,7 +134,9 @@ Les endpoints principaux sont :
 - `POST /v1/email/gmail/provider-drafts/{id}/send`
 - `GET /v1/email/gmail/inbound/status`
 - `POST /v1/email/gmail/inbound/sync`
+- `POST /v1/email/gmail/inbound/analyze`
 - `GET /v1/email/inbound-messages`
+- `POST /v1/email/inbound-messages/{id}/analyze`
 - `POST /v1/email/inbound-messages/{id}/link`
 - `GET /v1/orders/{id}/email-messages`
 - `POST /v1/orders/{id}/response-reviews`

@@ -125,6 +125,26 @@ Regles :
 - `payment_confirmed` et `closed` protegent la commande contre une nouvelle decision non ignoree ;
 - chaque traitement ajoute un `AuditLog` sans token, secret, mot de passe ni contenu sensible inutile.
 
+## Analyse controlee des reponses Gmail V1.2
+
+TENNET peut analyser les reponses Gmail Uber rattachees a un dossier pour proposer ou appliquer une decision interne.
+
+Regles :
+
+- l'analyse est deterministe et n'appelle pas OpenAI ;
+- l'analyse ne repond jamais a l'email Gmail ;
+- l'analyse ne cree aucun brouillon Gmail et n'envoie aucun email ;
+- seuls les messages rattaches a une commande TENNET peuvent etre appliques automatiquement ;
+- les messages non rattaches ou ambigus restent en revue manuelle ;
+- `payment_confirmed` exige un indice fort de paiement et un montant detecte dans l'email ;
+- si un paiement est annonce sans montant, TENNET utilise `payment_to_verify` ;
+- un refus cree un `ClaimResponseReview` refuse et garde le dossier ouvert via le workflow d'appel ;
+- aucun refus ne cloture definitivement un dossier ;
+- aucune promesse de remboursement n'est faite par TENNET ;
+- chaque analyse cree un `GmailResponseAnalysis` et un `AuditLog`.
+
+Voir aussi `docs/GMAIL_RESPONSE_INTELLIGENCE.md`.
+
 ## Traitement manuel des deductions Uber V1.1
 
 Les deductions Uber et remboursements clients peuvent recevoir une decision manuelle depuis le detail de la dispute.
