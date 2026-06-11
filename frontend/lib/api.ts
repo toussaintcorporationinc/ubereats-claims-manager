@@ -376,6 +376,25 @@ export type GmailConnectionStatus = {
   email_address: string | null;
   provider: EmailProviderName;
   enabled: boolean;
+  accounts: EmailAccount[];
+};
+
+export type EmailAccount = {
+  id: number;
+  provider: EmailProviderName;
+  email_address: string | null;
+  connected_at: string;
+  disconnected_at: string | null;
+};
+
+export type GmailRestaurantMapping = {
+  id: number | null;
+  restaurant_id: number;
+  restaurant_name: string;
+  email_account_id: number | null;
+  email_address: string | null;
+  created_at: string | null;
+  updated_at: string | null;
 };
 
 export type GmailOAuthStartResponse = {
@@ -480,6 +499,7 @@ export type OrderEmailMessagesResponse = {
 export type EmailProviderDraft = {
   id: number;
   email_draft_id: number;
+  email_account_id: number | null;
   provider: "gmail";
   provider_draft_id: string | null;
   provider_thread_id: string | null;
@@ -2115,6 +2135,13 @@ export const api = {
   getDrafts: () => request<EmailDraftSummary[]>("/v1/drafts"),
   getGmailStatus: () => request<GmailConnectionStatus>("/v1/email/gmail/status"),
   getResendStatus: () => request<GmailConnectionStatus>("/v1/email/resend/status"),
+  getGmailAccounts: () => request<EmailAccount[]>("/v1/email/gmail/accounts"),
+  getGmailRestaurantMappings: () => request<GmailRestaurantMapping[]>("/v1/email/gmail/restaurant-mappings"),
+  updateGmailRestaurantMapping: (restaurantId: number, emailAccountId: number | null) =>
+    request<GmailRestaurantMapping>(`/v1/email/gmail/restaurant-mappings/${restaurantId}`, {
+      method: "PUT",
+      body: JSON.stringify({ email_account_id: emailAccountId }),
+    }),
   startGmailOAuth: () => request<GmailOAuthStartResponse>("/v1/email/gmail/oauth/start"),
   disconnectGmail: () =>
     request<{ disconnected: boolean }>("/v1/email/gmail/disconnect", {

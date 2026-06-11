@@ -59,6 +59,9 @@ Un brouillon interne peut etre transforme en vrai brouillon Gmail via OAuth si `
 Regles :
 
 - aucun email n'est envoye automatiquement ;
+- plusieurs comptes Gmail peuvent etre connectes a un meme utilisateur autorise ;
+- si un restaurant est mappe a un compte Gmail, TENNET utilise ce compte pour les brouillons Gmail de ce restaurant ;
+- si aucun mapping restaurant n'existe, TENNET utilise le compte Gmail actif par defaut de l'utilisateur ;
 - les scopes Gmail attendus incluent `https://www.googleapis.com/auth/gmail.compose` et `https://www.googleapis.com/auth/gmail.readonly` ;
 - `owner` peut creer un brouillon Gmail pour tous les restaurants ;
 - `manager` peut creer un brouillon Gmail pour ses restaurants assignes ;
@@ -68,6 +71,8 @@ Regles :
 - seules les preuves existantes et accessibles via le service de stockage sont jointes ;
 - la taille totale des pieces jointes est limitee par `EMAIL_MAX_ATTACHMENT_TOTAL_MB` ;
 - chaque creation cree un `EmailProviderDraft` et un `AuditLog`.
+
+Voir aussi `docs/MULTI_GMAIL_RESTAURANT_ROUTING.md`.
 
 ## Appels apres refus V1.1
 

@@ -49,6 +49,9 @@ Resend uses the verified domain `mail.thetennet.com` and remains disabled by def
 3. Configure scopes needed for compose, send and readonly.
 4. Set `EMAIL_PROVIDER_ENABLED=true` only after OAuth is ready.
 5. Connect Gmail from `/settings/email`.
+6. If restaurants use different Uber/Gmail accounts, connect each Gmail account from `/settings/email`, then map each restaurant to the correct Gmail account in `Gmail par restaurant`.
+
+TENNET stores OAuth tokens encrypted and never stores Gmail passwords. Mapping a restaurant to a Gmail account does not enable automatic sending. It only chooses the correct mailbox when an authorized user creates or sends a Gmail draft.
 
 Emergency disable:
 

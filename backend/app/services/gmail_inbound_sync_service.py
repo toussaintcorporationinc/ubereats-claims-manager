@@ -55,6 +55,19 @@ class GmailInboundSyncService:
             .order_by(EmailAccount.id.desc())
         )
 
+    def get_active_accounts(self, db: Session, user: User) -> list[EmailAccount]:
+        return list(
+            db.scalars(
+                select(EmailAccount)
+                .where(
+                    EmailAccount.user_id == user.id,
+                    EmailAccount.provider == "gmail",
+                    EmailAccount.disconnected_at.is_(None),
+                )
+                .order_by(EmailAccount.connected_at.desc(), EmailAccount.id.desc())
+            ).all()
+        )
+
     def get_or_create_sync_state(self, db: Session, account: EmailAccount) -> GmailSyncState:
         sync_state = db.scalar(select(GmailSyncState).where(GmailSyncState.email_account_id == account.id))
         if sync_state is not None:
@@ -72,10 +85,37 @@ class GmailInboundSyncService:
         lookback_days: int,
         max_messages: int,
     ) -> GmailInboundSyncResult:
-        account = self.get_active_account(db, user)
-        if account is None:
+        accounts = self.get_active_accounts(db, user)
+        if not accounts:
             raise EmailProviderError("Gmail account is not connected", 409)
 
+        result = GmailInboundSyncResult(status="success")
+        for account in accounts:
+            account_result = self.sync_account(
+                db,
+                user,
+                account,
+                lookback_days=lookback_days,
+                max_messages=max_messages,
+            )
+            result.synced_messages += account_result.synced_messages
+            result.linked_messages += account_result.linked_messages
+            result.unlinked_messages += account_result.unlinked_messages
+            result.ignored_messages += account_result.ignored_messages
+            result.errors.extend(account_result.errors)
+            if account_result.status == "failed":
+                result.status = "failed"
+        return result
+
+    def sync_account(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        *,
+        lookback_days: int,
+        max_messages: int,
+    ) -> GmailInboundSyncResult:
         sync_state = self.get_or_create_sync_state(db, account)
         sync_state.status = "running"
         sync_state.last_sync_at = utc_now()
@@ -93,7 +133,11 @@ class GmailInboundSyncService:
         query = f"newer_than:{lookback_days}d"
         result = GmailInboundSyncResult(status="success")
         try:
-            payloads = self.provider.sync_inbound_replies(db, user, query=query, max_results=max_messages)
+            sync_for_account = getattr(self.provider, "sync_inbound_replies_for_account", None)
+            if callable(sync_for_account):
+                payloads = sync_for_account(db, account, query=query, max_results=max_messages)
+            else:
+                payloads = self.provider.sync_inbound_replies(db, user, query=query, max_results=max_messages)
             for payload in payloads:
                 if not payload.provider_message_id:
                     result.errors.append("Skipped Gmail message without provider_message_id")

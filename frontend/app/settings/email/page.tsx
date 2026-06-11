@@ -4,23 +4,40 @@ import { useEffect, useState } from "react";
 import ApiError from "@/components/ApiError";
 import LoadingState from "@/components/LoadingState";
 import StatusBadge from "@/components/StatusBadge";
-import { api, formatDate, type GmailConnectionStatus, type GmailInboundStatus } from "@/lib/api";
+import {
+  api,
+  formatDate,
+  type EmailAccount,
+  type GmailConnectionStatus,
+  type GmailInboundStatus,
+  type GmailRestaurantMapping,
+} from "@/lib/api";
 
 export default function EmailSettingsPage() {
   const [status, setStatus] = useState<GmailConnectionStatus | null>(null);
   const [inboundStatus, setInboundStatus] = useState<GmailInboundStatus | null>(null);
+  const [accounts, setAccounts] = useState<EmailAccount[]>([]);
+  const [mappings, setMappings] = useState<GmailRestaurantMapping[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [savingRestaurantId, setSavingRestaurantId] = useState<number | null>(null);
 
   async function loadStatus() {
     setLoading(true);
     setError(null);
     try {
-      const [gmailStatus, gmailInboundStatus] = await Promise.all([api.getGmailStatus(), api.getInboundStatus()]);
+      const [gmailStatus, gmailInboundStatus, gmailAccounts, gmailMappings] = await Promise.all([
+        api.getGmailStatus(),
+        api.getInboundStatus(),
+        api.getGmailAccounts(),
+        api.getGmailRestaurantMappings(),
+      ]);
       setStatus(gmailStatus);
       setInboundStatus(gmailInboundStatus);
+      setAccounts(gmailAccounts);
+      setMappings(gmailMappings);
     } catch (apiError) {
       setError(apiError);
     } finally {
@@ -59,6 +76,20 @@ export default function EmailSettingsPage() {
     }
   }
 
+  async function handleMappingChange(restaurantId: number, value: string) {
+    setSavingRestaurantId(restaurantId);
+    setError(null);
+    try {
+      const accountId = value ? Number(value) : null;
+      const updated = await api.updateGmailRestaurantMapping(restaurantId, accountId);
+      setMappings((current) => current.map((mapping) => (mapping.restaurant_id === restaurantId ? updated : mapping)));
+    } catch (apiError) {
+      setError(apiError);
+    } finally {
+      setSavingRestaurantId(null);
+    }
+  }
+
   if (loading) {
     return <LoadingState label="Chargement email" />;
   }
@@ -89,7 +120,7 @@ export default function EmailSettingsPage() {
         ) : (
           <div className="actions">
             <button type="button" className="button" onClick={handleConnect} disabled={connecting}>
-              {connecting ? "Connexion" : "Connecter Gmail"}
+              {connecting ? "Connexion" : status.connected ? "Connecter un autre Gmail" : "Connecter Gmail"}
             </button>
             <button
               type="button"
@@ -101,6 +132,91 @@ export default function EmailSettingsPage() {
             </button>
           </div>
         )}
+      </section>
+
+      <section className="tool-panel">
+        <div className="section-heading">
+          <h2>Comptes Gmail connectes</h2>
+          <StatusBadge status={accounts.length > 0 ? "active" : "inactive"} />
+        </div>
+        {accounts.length === 0 ? (
+          <p className="muted">Aucun compte Gmail connecte.</p>
+        ) : (
+          <div className="responsive-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Compte</th>
+                  <th>Connecte le</th>
+                </tr>
+              </thead>
+              <tbody>
+                {accounts.map((account) => (
+                  <tr key={account.id}>
+                    <td>{account.email_address ?? "-"}</td>
+                    <td>{formatDate(account.connected_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="muted">
+          TENNET peut connecter plusieurs boites Gmail. Le compte utilise pour un dossier est choisi selon le
+          restaurant ci-dessous.
+        </p>
+      </section>
+
+      <section className="tool-panel">
+        <div className="section-heading">
+          <h2>Gmail par restaurant</h2>
+          <StatusBadge status={mappings.some((mapping) => mapping.email_account_id) ? "active" : "manual_review"} />
+        </div>
+        {mappings.length === 0 ? (
+          <p className="muted">Aucun restaurant visible pour cet utilisateur.</p>
+        ) : (
+          <div className="responsive-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Restaurant</th>
+                  <th>Compte Gmail</th>
+                  <th>Etat</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mappings.map((mapping) => (
+                  <tr key={mapping.restaurant_id}>
+                    <td>{mapping.restaurant_name}</td>
+                    <td>
+                      <select
+                        value={mapping.email_account_id ?? ""}
+                        onChange={(event) => void handleMappingChange(mapping.restaurant_id, event.target.value)}
+                        disabled={savingRestaurantId === mapping.restaurant_id || accounts.length === 0}
+                      >
+                        <option value="">Compte actif par defaut</option>
+                        {accounts.map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {account.email_address ?? `Compte #${account.id}`}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      {savingRestaurantId === mapping.restaurant_id
+                        ? "Enregistrement"
+                        : mapping.email_address ?? "Defaut"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <p className="muted">
+          Exemple: assignez les 4 restaurants Tiramisu a tiramisumaisonfrance@gmail.com et les 2 autres a
+          toussaintetchau1@gmail.com apres connexion du second compte.
+        </p>
       </section>
 
       <section className="tool-panel">

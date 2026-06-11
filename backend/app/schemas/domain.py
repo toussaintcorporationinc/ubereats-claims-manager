@@ -685,15 +685,40 @@ class ImportConfirmResponse(BaseModel):
     errors: list[str]
 
 
+class EmailAccountRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    provider: EmailProviderName
+    email_address: str | None
+    connected_at: datetime
+    disconnected_at: datetime | None
+
+
 class GmailConnectionStatus(BaseModel):
     connected: bool
     email_address: str | None
     provider: EmailProviderName
     enabled: bool
+    accounts: list[EmailAccountRead] = Field(default_factory=list)
 
 
 class GmailOAuthStartResponse(BaseModel):
     authorization_url: str
+
+
+class GmailRestaurantMappingRead(BaseModel):
+    id: int | None
+    restaurant_id: int
+    restaurant_name: str
+    email_account_id: int | None
+    email_address: str | None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class GmailRestaurantMappingUpdate(BaseModel):
+    email_account_id: int | None = None
 
 
 class GmailDraftCreate(BaseModel):
@@ -1049,6 +1074,7 @@ class EmailProviderDraftRead(BaseModel):
 
     id: int
     email_draft_id: int
+    email_account_id: int | None
     provider: EmailProviderName
     provider_draft_id: str | None
     provider_thread_id: str | None

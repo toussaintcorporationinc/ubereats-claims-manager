@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.security import create_access_token, decode_access_token
-from app.models import EmailAccount, EmailDraft, EmailProviderDraft, User
+from app.models import EmailAccount, EmailAccountRestaurantMapping, EmailDraft, EmailProviderDraft, User
 from app.models.domain import utc_now
 from app.services.email_provider import EmailConnectionStatus, EmailProviderError, EmailSendResult, InboundEmailPayload
 from app.services.file_storage_service import FileStorageError, resolve_evidence_path
@@ -91,7 +91,7 @@ class GmailEmailProvider:
         scopes = token_payload.get("scope") or settings.gmail_scopes
         email_address = self.fetch_email_address(access_token)
 
-        account = self.get_active_account(db, user.id)
+        account = self.get_account_by_email(db, user.id, email_address)
         if account is None:
             account = EmailAccount(user_id=user.id, provider=self.provider)
             db.add(account)
@@ -125,7 +125,7 @@ class GmailEmailProvider:
         include_evidence: bool,
     ) -> EmailProviderDraft:
         self.ensure_enabled_and_configured(require_secret=True)
-        account = self.get_active_account(db, user.id)
+        account = self.get_account_for_draft(db, user.id, email_draft)
         if account is None:
             raise EmailProviderError("Gmail account is not connected", 409)
 
@@ -136,6 +136,7 @@ class GmailEmailProvider:
             response_payload = self.create_gmail_draft(access_token, raw_message)
             provider_draft = EmailProviderDraft(
                 email_draft_id=email_draft.id,
+                email_account_id=account.id,
                 provider=self.provider,
                 provider_draft_id=str(response_payload.get("id") or ""),
                 provider_thread_id=response_payload.get("message", {}).get("threadId"),
@@ -147,6 +148,7 @@ class GmailEmailProvider:
         except EmailProviderError as exc:
             provider_draft = EmailProviderDraft(
                 email_draft_id=email_draft.id,
+                email_account_id=account.id if account else None,
                 provider=self.provider,
                 to_email=to_email,
                 subject=email_draft.subject,
@@ -169,7 +171,7 @@ class GmailEmailProvider:
         provider_draft: EmailProviderDraft,
     ) -> EmailSendResult:
         self.ensure_enabled_and_configured(require_secret=True)
-        account = self.get_active_account(db, user.id)
+        account = self.get_account_for_provider_draft(db, user.id, provider_draft)
         if account is None:
             raise EmailProviderError("Gmail account is not connected", 409)
         if not provider_draft.provider_draft_id:
@@ -188,6 +190,16 @@ class GmailEmailProvider:
         account = self.get_active_account(db, user.id)
         if account is None:
             raise EmailProviderError("Gmail account is not connected", 409)
+        return self.list_messages_for_account(db, account, query=query, max_results=max_results)
+
+    def list_messages_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        *,
+        query: str,
+        max_results: int,
+    ) -> list[str]:
         access_token = self.ensure_access_token(db, account)
         params = urlencode({"q": query, "maxResults": max_results})
         payload = self.get_json(f"{GMAIL_MESSAGES_URL}?{params}", {"Authorization": f"Bearer {access_token}"})
@@ -198,6 +210,14 @@ class GmailEmailProvider:
         account = self.get_active_account(db, user.id)
         if account is None:
             raise EmailProviderError("Gmail account is not connected", 409)
+        return self.get_message_for_account(db, account, message_id)
+
+    def get_message_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        message_id: str,
+    ) -> InboundEmailPayload:
         access_token = self.ensure_access_token(db, account)
         url = f"{GMAIL_MESSAGES_URL}/{quote(message_id, safe='')}?format=full"
         payload = self.get_json(url, {"Authorization": f"Bearer {access_token}"})
@@ -223,6 +243,17 @@ class GmailEmailProvider:
     ) -> list[InboundEmailPayload]:
         message_ids = self.list_messages(db, user, query, max_results)
         return [self.get_message(db, user, message_id) for message_id in message_ids]
+
+    def sync_inbound_replies_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        *,
+        query: str,
+        max_results: int,
+    ) -> list[InboundEmailPayload]:
+        message_ids = self.list_messages_for_account(db, account, query=query, max_results=max_results)
+        return [self.get_message_for_account(db, account, message_id) for message_id in message_ids]
 
     def build_evidence_attachments(self, email_draft: EmailDraft, include_evidence: bool) -> list[EvidenceAttachment]:
         if not include_evidence:
@@ -399,6 +430,55 @@ class GmailEmailProvider:
             )
             .order_by(EmailAccount.id.desc())
         )
+
+    def get_account_by_email(self, db: Session, user_id: int, email_address: str | None) -> EmailAccount | None:
+        if not email_address:
+            return None
+        return db.scalar(
+            select(EmailAccount)
+            .where(
+                EmailAccount.user_id == user_id,
+                EmailAccount.provider == self.provider,
+                EmailAccount.email_address == email_address,
+            )
+            .order_by(EmailAccount.id.desc())
+        )
+
+    def get_account_for_restaurant(self, db: Session, user_id: int, restaurant_id: int | None) -> EmailAccount | None:
+        if restaurant_id is None:
+            return self.get_active_account(db, user_id)
+        mapped_account = db.scalar(
+            select(EmailAccount)
+            .join(EmailAccountRestaurantMapping, EmailAccountRestaurantMapping.email_account_id == EmailAccount.id)
+            .where(
+                EmailAccountRestaurantMapping.restaurant_id == restaurant_id,
+                EmailAccount.user_id == user_id,
+                EmailAccount.provider == self.provider,
+                EmailAccount.disconnected_at.is_(None),
+            )
+        )
+        return mapped_account or self.get_active_account(db, user_id)
+
+    def get_account_for_draft(self, db: Session, user_id: int, email_draft: EmailDraft) -> EmailAccount | None:
+        restaurant_id = email_draft.order.restaurant_id if email_draft.order else None
+        return self.get_account_for_restaurant(db, user_id, restaurant_id)
+
+    def get_account_for_provider_draft(
+        self,
+        db: Session,
+        user_id: int,
+        provider_draft: EmailProviderDraft,
+    ) -> EmailAccount | None:
+        if provider_draft.email_account_id is not None:
+            account = db.get(EmailAccount, provider_draft.email_account_id)
+            if (
+                account is not None
+                and account.user_id == user_id
+                and account.provider == self.provider
+                and account.disconnected_at is None
+            ):
+                return account
+        return self.get_account_for_draft(db, user_id, provider_draft.email_draft)
 
     def ensure_enabled_and_configured(self, *, require_secret: bool) -> None:
         settings = get_settings()
