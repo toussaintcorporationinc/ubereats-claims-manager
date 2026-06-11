@@ -200,7 +200,7 @@ def update_gmail_restaurant_mapping(
     )
 
 
-@router.get("/v1/email/resend/status", response_model=GmailConnectionStatus)
+@router.get("/v1/email/resend/status", response_model=GmailConnectionStatus, response_model_exclude={"accounts"})
 def resend_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),

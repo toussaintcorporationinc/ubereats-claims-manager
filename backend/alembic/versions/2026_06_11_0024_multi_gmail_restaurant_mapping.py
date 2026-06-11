@@ -40,25 +40,25 @@ def upgrade() -> None:
         "email_account_restaurant_mappings",
         ["restaurant_id"],
     )
-    op.add_column("email_provider_drafts", sa.Column("email_account_id", sa.Integer(), nullable=True))
-    op.create_foreign_key(
-        "fk_email_provider_drafts_email_account_id",
-        "email_provider_drafts",
-        "email_accounts",
-        ["email_account_id"],
-        ["id"],
-    )
-    op.create_index(
-        "ix_email_provider_drafts_email_account_id",
-        "email_provider_drafts",
-        ["email_account_id"],
-    )
+    with op.batch_alter_table("email_provider_drafts") as batch_op:
+        batch_op.add_column(sa.Column("email_account_id", sa.Integer(), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_email_provider_drafts_email_account_id",
+            "email_accounts",
+            ["email_account_id"],
+            ["id"],
+        )
+        batch_op.create_index(
+            "ix_email_provider_drafts_email_account_id",
+            ["email_account_id"],
+        )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_email_provider_drafts_email_account_id", table_name="email_provider_drafts")
-    op.drop_constraint("fk_email_provider_drafts_email_account_id", "email_provider_drafts", type_="foreignkey")
-    op.drop_column("email_provider_drafts", "email_account_id")
+    with op.batch_alter_table("email_provider_drafts") as batch_op:
+        batch_op.drop_index("ix_email_provider_drafts_email_account_id")
+        batch_op.drop_constraint("fk_email_provider_drafts_email_account_id", type_="foreignkey")
+        batch_op.drop_column("email_account_id")
     op.drop_index(
         "ix_email_account_restaurant_mappings_restaurant_id",
         table_name="email_account_restaurant_mappings",
