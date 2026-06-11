@@ -65,6 +65,7 @@ export type EmailProviderName = "gmail" | "resend";
 export type GmailSyncStatus = "idle" | "running" | "success" | "failed";
 export type InboundEmailMatchStatus = "linked" | "unlinked" | "ignored";
 export type InboundEmailReviewStatus = "unreviewed" | "reviewed" | "ignored";
+export type GmailResponseAnalysisStatus = "analyzed" | "applied" | "manual_review" | "ignored" | "failed";
 export type InboundEmailMatchReason =
   | "thread_id_match"
   | "order_number_match"
@@ -436,6 +437,8 @@ export type GmailInboundStatus = {
 export type GmailInboundSyncPayload = {
   lookback_days?: number;
   max_messages?: number;
+  analyze_responses?: boolean;
+  apply_reviews?: boolean;
 };
 
 export type GmailInboundSyncResponse = {
@@ -444,7 +447,46 @@ export type GmailInboundSyncResponse = {
   linked_messages: number;
   unlinked_messages: number;
   ignored_messages: number;
+  analyzed_messages: number;
+  applied_reviews: number;
+  manual_review_messages: number;
   errors: string[];
+};
+
+export type GmailResponseAnalysis = {
+  id: number;
+  inbound_message_id: number;
+  order_id: number | null;
+  response_review_id: number | null;
+  recommended_review_type: ClaimResponseReviewType;
+  status: GmailResponseAnalysisStatus;
+  confidence_score: string | number | null;
+  reason: string | null;
+  detected_amount: MoneyValue;
+  expected_payment_date: string | null;
+  evidence_requested: boolean | null;
+  matched_keywords_json: Record<string, string[]> | null;
+  notes: string | null;
+  applied_at: string | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GmailResponseAnalyzePayload = {
+  apply_reviews?: boolean;
+  limit?: number;
+  only_unreviewed?: boolean;
+};
+
+export type GmailResponseAnalyzeResponse = {
+  analyzed_messages: number;
+  applied_reviews: number;
+  manual_review_messages: number;
+  ignored_messages: number;
+  failed_messages: number;
+  errors: string[];
+  analyses: GmailResponseAnalysis[];
 };
 
 export type InboundEmailMessage = {
@@ -466,6 +508,7 @@ export type InboundEmailMessage = {
   review_status: InboundEmailReviewStatus;
   reviewed_at: string | null;
   reviewed_by_user_id: number | null;
+  response_analysis: GmailResponseAnalysis | null;
   created_at: string;
   updated_at: string;
 };
@@ -2159,6 +2202,13 @@ export const api = {
   getInboundStatus: () => request<GmailInboundStatus>("/v1/email/gmail/inbound/status"),
   syncInboundGmail: (payload: GmailInboundSyncPayload = {}) =>
     postJson<GmailInboundSyncResponse, GmailInboundSyncPayload>("/v1/email/gmail/inbound/sync", payload),
+  analyzeInboundGmail: (payload: GmailResponseAnalyzePayload = {}) =>
+    postJson<GmailResponseAnalyzeResponse, GmailResponseAnalyzePayload>("/v1/email/gmail/inbound/analyze", payload),
+  analyzeInboundMessage: (messageId: number, payload: GmailResponseAnalyzePayload = {}) =>
+    postJson<GmailResponseAnalysis, GmailResponseAnalyzePayload>(
+      `/v1/email/inbound-messages/${messageId}/analyze`,
+      payload,
+    ),
   getInboundMessages: (filters: { match_status?: InboundEmailMatchStatus | ""; order_id?: number; limit?: number; offset?: number } = {}) => {
     const params = new URLSearchParams();
     if (filters.match_status) {

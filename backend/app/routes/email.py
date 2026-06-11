@@ -40,6 +40,9 @@ from app.schemas.domain import (
     GmailOAuthStartResponse,
     GmailRestaurantMappingRead,
     GmailRestaurantMappingUpdate,
+    GmailResponseAnalysisRead,
+    GmailResponseAnalyzeRequest,
+    GmailResponseAnalyzeResponse,
     InboundEmailMessageRead,
     InboundManualLinkRequest,
     InboundMessagesResponse,
@@ -51,7 +54,9 @@ from app.services.email_provider import EmailProvider, EmailProviderError
 from app.services.followup_policy_service import complete_task_for_sent_provider_draft
 from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_sync_service import GmailInboundSyncService
+from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
 from app.services.resend_email_provider import ResendEmailProvider
+from app.services.response_review_service import ResponseReviewError
 
 router = APIRouter(tags=["email"])
 FINAL_ORDER_STATUSES = {"accepted", "payment_confirmed", "refused", "closed"}
@@ -556,12 +561,71 @@ def sync_gmail_inbound(
     max_messages = request_payload.max_messages or settings.gmail_inbound_max_messages_per_sync
     service = GmailInboundSyncService(provider)
     try:
-        result = service.sync(db, current_user, lookback_days=lookback_days, max_messages=max_messages)
+        result = service.sync(
+            db,
+            current_user,
+            lookback_days=lookback_days,
+            max_messages=max_messages,
+            analyze_responses=request_payload.analyze_responses,
+            apply_reviews=request_payload.apply_reviews,
+        )
     except EmailProviderError as exc:
         db.commit()
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     db.commit()
     return GmailInboundSyncResponse(**result.__dict__)
+
+
+@router.post("/v1/email/gmail/inbound/analyze", response_model=GmailResponseAnalyzeResponse)
+def analyze_gmail_inbound_messages(
+    payload: GmailResponseAnalyzeRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+) -> GmailResponseAnalyzeResponse:
+    request_payload = payload or GmailResponseAnalyzeRequest()
+    service = GmailResponseIntelligenceService()
+    summary, analyses = service.analyze_inbox(
+        db,
+        current_user,
+        apply_reviews=request_payload.apply_reviews,
+        limit=request_payload.limit,
+        only_unreviewed=request_payload.only_unreviewed,
+    )
+    db.commit()
+    return GmailResponseAnalyzeResponse(
+        analyzed_messages=summary.analyzed_messages,
+        applied_reviews=summary.applied_reviews,
+        manual_review_messages=summary.manual_review_messages,
+        ignored_messages=summary.ignored_messages,
+        failed_messages=summary.failed_messages,
+        errors=list(summary.errors),
+        analyses=[GmailResponseAnalysisRead.model_validate(analysis) for analysis in analyses],
+    )
+
+
+@router.post("/v1/email/inbound-messages/{message_id}/analyze", response_model=GmailResponseAnalysisRead)
+def analyze_gmail_inbound_message(
+    message_id: int,
+    payload: GmailResponseAnalyzeRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+) -> GmailResponseAnalysisRead:
+    inbound_message = db.get(InboundEmailMessage, message_id)
+    if inbound_message is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inbound message not found")
+    ensure_can_manage_inbound_message(db, current_user, inbound_message)
+    request_payload = payload or GmailResponseAnalyzeRequest()
+    service = GmailResponseIntelligenceService()
+    try:
+        analysis = service.analyze_message(db, current_user, inbound_message, apply_review=request_payload.apply_reviews)
+    except ResponseReviewError as exc:
+        db.commit()
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    db.commit()
+    db.refresh(analysis)
+    return GmailResponseAnalysisRead.model_validate(analysis)
 
 
 @router.get("/v1/email/inbound-messages", response_model=InboundMessagesResponse)

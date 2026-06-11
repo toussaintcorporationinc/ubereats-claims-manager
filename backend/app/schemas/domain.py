@@ -75,6 +75,7 @@ EmailProviderName = Literal["gmail", "resend"]
 EmailProviderDraftStatus = Literal["provider_draft_created", "send_requested", "sent", "failed"]
 GmailSyncStatus = Literal["idle", "running", "success", "failed"]
 InboundEmailMatchStatus = Literal["linked", "unlinked", "ignored"]
+GmailResponseAnalysisStatus = Literal["analyzed", "applied", "manual_review", "ignored", "failed"]
 InboundEmailMatchReason = Literal[
     "thread_id_match",
     "order_number_match",
@@ -756,6 +757,8 @@ class GmailInboundStatusResponse(BaseModel):
 class GmailInboundSyncRequest(BaseModel):
     lookback_days: int | None = Field(default=None, ge=1, le=365)
     max_messages: int | None = Field(default=None, ge=1, le=500)
+    analyze_responses: bool = True
+    apply_reviews: bool = True
 
 
 class GmailInboundSyncResponse(BaseModel):
@@ -764,7 +767,48 @@ class GmailInboundSyncResponse(BaseModel):
     linked_messages: int
     unlinked_messages: int
     ignored_messages: int
+    analyzed_messages: int = 0
+    applied_reviews: int = 0
+    manual_review_messages: int = 0
     errors: list[str]
+
+
+class GmailResponseAnalysisRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    inbound_message_id: int
+    order_id: int | None
+    response_review_id: int | None
+    recommended_review_type: ClaimResponseReviewType
+    status: GmailResponseAnalysisStatus
+    confidence_score: Decimal | None
+    reason: str | None
+    detected_amount: Decimal | None
+    expected_payment_date: date | None
+    evidence_requested: bool | None
+    matched_keywords_json: dict[str, Any] | None
+    notes: str | None
+    applied_at: datetime | None
+    error_message: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GmailResponseAnalyzeRequest(BaseModel):
+    apply_reviews: bool = True
+    limit: int = Field(default=100, ge=1, le=500)
+    only_unreviewed: bool = True
+
+
+class GmailResponseAnalyzeResponse(BaseModel):
+    analyzed_messages: int
+    applied_reviews: int
+    manual_review_messages: int
+    ignored_messages: int
+    failed_messages: int
+    errors: list[str]
+    analyses: list[GmailResponseAnalysisRead]
 
 
 class InboundEmailMessageRead(BaseModel):
@@ -788,6 +832,7 @@ class InboundEmailMessageRead(BaseModel):
     review_status: InboundEmailReviewStatus
     reviewed_at: datetime | None
     reviewed_by_user_id: int | None
+    response_analysis: GmailResponseAnalysisRead | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -95,6 +95,7 @@ INBOUND_EMAIL_MATCH_REASONS = (
     "ignored_sender",
 )
 INBOUND_EMAIL_REVIEW_STATUSES = ("unreviewed", "reviewed", "ignored")
+GMAIL_RESPONSE_ANALYSIS_STATUSES = ("analyzed", "applied", "manual_review", "ignored", "failed")
 CLAIM_RESPONSE_REVIEW_TYPES = (
     "accepted",
     "payment_to_verify",
@@ -710,6 +711,51 @@ class InboundEmailMessage(TimestampMixin, Base):
     order: Mapped[ClaimOrder | None] = relationship(back_populates="inbound_email_messages")
     response_reviews: Mapped[list["ClaimResponseReview"]] = relationship(back_populates="inbound_message")
     customer_refund_reviews: Mapped[list["CustomerRefundDisputeReview"]] = relationship(back_populates="inbound_message")
+    response_analysis: Mapped["GmailResponseAnalysis | None"] = relationship(
+        back_populates="inbound_message",
+        uselist=False,
+    )
+
+
+class GmailResponseAnalysis(TimestampMixin, Base):
+    __tablename__ = "gmail_response_analyses"
+    __table_args__ = (
+        UniqueConstraint("inbound_message_id", name="uq_gmail_response_analyses_inbound_message"),
+        CheckConstraint(
+            check_in_constraint("status", GMAIL_RESPONSE_ANALYSIS_STATUSES),
+            name="ck_gmail_response_analyses_status",
+        ),
+        CheckConstraint(
+            check_in_constraint("recommended_review_type", CLAIM_RESPONSE_REVIEW_TYPES),
+            name="ck_gmail_response_analyses_review_type",
+        ),
+        Index("ix_gmail_response_analyses_inbound_message_id", "inbound_message_id"),
+        Index("ix_gmail_response_analyses_order_id", "order_id"),
+        Index("ix_gmail_response_analyses_status", "status"),
+        Index("ix_gmail_response_analyses_recommended_review_type", "recommended_review_type"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    inbound_message_id: Mapped[int] = mapped_column(ForeignKey("inbound_email_messages.id"), nullable=False)
+    order_id: Mapped[int | None] = mapped_column(ForeignKey("claim_orders.id"))
+    response_review_id: Mapped[int | None] = mapped_column(ForeignKey("claim_response_reviews.id"))
+    analyzed_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    applied_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    recommended_review_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="analyzed")
+    confidence_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    reason: Mapped[str | None] = mapped_column(String(100))
+    detected_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
+    expected_payment_date: Mapped[date | None] = mapped_column(Date)
+    evidence_requested: Mapped[bool | None] = mapped_column(Boolean)
+    matched_keywords_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    notes: Mapped[str | None] = mapped_column(Text)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    inbound_message: Mapped[InboundEmailMessage] = relationship(back_populates="response_analysis")
+    order: Mapped[ClaimOrder | None] = relationship()
+    response_review: Mapped["ClaimResponseReview | None"] = relationship()
 
 
 class ClaimResponseReview(TimestampMixin, Base):

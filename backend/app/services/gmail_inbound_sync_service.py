@@ -17,6 +17,7 @@ from app.models import (
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.email_provider import EmailProvider, EmailProviderError, InboundEmailPayload
+from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
 
 FINAL_ORDER_STATUSES = {"accepted", "payment_confirmed", "refused", "closed"}
 RESPONSE_UPDATABLE_ORDER_STATUSES = {"sent", "waiting_uber_response"}
@@ -30,6 +31,9 @@ class GmailInboundSyncResult:
     linked_messages: int = 0
     unlinked_messages: int = 0
     ignored_messages: int = 0
+    analyzed_messages: int = 0
+    applied_reviews: int = 0
+    manual_review_messages: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -84,6 +88,8 @@ class GmailInboundSyncService:
         *,
         lookback_days: int,
         max_messages: int,
+        analyze_responses: bool = True,
+        apply_reviews: bool = True,
     ) -> GmailInboundSyncResult:
         accounts = self.get_active_accounts(db, user)
         if not accounts:
@@ -97,11 +103,16 @@ class GmailInboundSyncService:
                 account,
                 lookback_days=lookback_days,
                 max_messages=max_messages,
+                analyze_responses=analyze_responses,
+                apply_reviews=apply_reviews,
             )
             result.synced_messages += account_result.synced_messages
             result.linked_messages += account_result.linked_messages
             result.unlinked_messages += account_result.unlinked_messages
             result.ignored_messages += account_result.ignored_messages
+            result.analyzed_messages += account_result.analyzed_messages
+            result.applied_reviews += account_result.applied_reviews
+            result.manual_review_messages += account_result.manual_review_messages
             result.errors.extend(account_result.errors)
             if account_result.status == "failed":
                 result.status = "failed"
@@ -115,6 +126,8 @@ class GmailInboundSyncService:
         *,
         lookback_days: int,
         max_messages: int,
+        analyze_responses: bool = True,
+        apply_reviews: bool = True,
     ) -> GmailInboundSyncResult:
         sync_state = self.get_or_create_sync_state(db, account)
         sync_state.status = "running"
@@ -148,6 +161,8 @@ class GmailInboundSyncService:
                 result.synced_messages += 1
                 if inbound_message.match_status == "linked":
                     result.linked_messages += 1
+                    if analyze_responses:
+                        self.analyze_linked_message(db, user, inbound_message, result, apply_reviews=apply_reviews)
                 elif inbound_message.match_status == "ignored":
                     result.ignored_messages += 1
                 else:
@@ -178,6 +193,30 @@ class GmailInboundSyncService:
             raise
 
         return result
+
+    def analyze_linked_message(
+        self,
+        db: Session,
+        user: User,
+        inbound_message: InboundEmailMessage,
+        result: GmailInboundSyncResult,
+        *,
+        apply_reviews: bool,
+    ) -> None:
+        analysis = GmailResponseIntelligenceService().analyze_message(
+            db,
+            user,
+            inbound_message,
+            apply_review=apply_reviews,
+        )
+        if analysis.status == "applied":
+            result.applied_reviews += 1
+        elif analysis.status == "manual_review":
+            result.manual_review_messages += 1
+        elif analysis.status == "failed":
+            result.errors.append(analysis.error_message or "Gmail response analysis failed")
+        else:
+            result.analyzed_messages += 1
 
     def message_exists(self, db: Session, account: EmailAccount, provider_message_id: str) -> bool:
         return (
