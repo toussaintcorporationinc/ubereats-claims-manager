@@ -71,7 +71,7 @@ EmailDraftStatus = Literal["created", "draft", "ready", "archived"]
 UserRole = Literal["owner", "manager", "staff"]
 ImportBatchStatus = Literal["uploaded", "parsed", "confirmed", "partially_imported", "failed", "cancelled"]
 ImportRowStatus = Literal["valid", "invalid", "duplicate", "unauthorized", "created", "skipped"]
-EmailProviderName = Literal["gmail"]
+EmailProviderName = Literal["gmail", "resend"]
 EmailProviderDraftStatus = Literal["provider_draft_created", "send_requested", "sent", "failed"]
 GmailSyncStatus = Literal["idle", "running", "success", "failed"]
 InboundEmailMatchStatus = Literal["linked", "unlinked", "ignored"]
@@ -703,6 +703,12 @@ class GmailDraftCreate(BaseModel):
 
 class GmailDraftSendRequest(BaseModel):
     confirm_send: bool
+
+
+class ResendSendRequest(BaseModel):
+    confirm_send: bool
+    to_email: str | None = None
+    include_evidence: bool = True
 
 
 class GmailDraftSendResponse(BaseModel):

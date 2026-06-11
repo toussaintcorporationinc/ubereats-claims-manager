@@ -38,12 +38,14 @@ from app.schemas.domain import (
     InboundManualLinkRequest,
     InboundMessagesResponse,
     OrderEmailMessagesResponse,
+    ResendSendRequest,
 )
 from app.services.audit import add_audit_log
 from app.services.email_provider import EmailProvider, EmailProviderError
 from app.services.followup_policy_service import complete_task_for_sent_provider_draft
 from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_sync_service import GmailInboundSyncService
+from app.services.resend_email_provider import ResendEmailProvider
 
 router = APIRouter(tags=["email"])
 FINAL_ORDER_STATUSES = {"accepted", "payment_confirmed", "refused", "closed"}
@@ -53,11 +55,24 @@ def get_gmail_provider() -> EmailProvider:
     return GmailEmailProvider()
 
 
+def get_resend_provider() -> ResendEmailProvider:
+    return ResendEmailProvider()
+
+
 @router.get("/v1/email/gmail/status", response_model=GmailConnectionStatus)
 def gmail_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     provider: EmailProvider = Depends(get_gmail_provider),
+) -> GmailConnectionStatus:
+    return GmailConnectionStatus.model_validate(provider.get_connection_status(db, current_user).__dict__)
+
+
+@router.get("/v1/email/resend/status", response_model=GmailConnectionStatus)
+def resend_status(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    provider: ResendEmailProvider = Depends(get_resend_provider),
 ) -> GmailConnectionStatus:
     return GmailConnectionStatus.model_validate(provider.get_connection_status(db, current_user).__dict__)
 
@@ -286,6 +301,83 @@ def send_gmail_provider_draft(
         provider_thread_id=provider_draft.provider_thread_id,
         sent_at=provider_draft.sent_at,
     )
+
+
+@router.post("/v1/drafts/{draft_id}/resend-send", response_model=EmailProviderDraftRead)
+def send_resend_email_draft(
+    draft_id: int,
+    payload: ResendSendRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+    provider: ResendEmailProvider = Depends(get_resend_provider),
+) -> EmailProviderDraftRead:
+    if payload.confirm_send is not True:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="confirm_send must be true")
+
+    email_draft = db.get(EmailDraft, draft_id)
+    if email_draft is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Email draft not found")
+    order = email_draft.order
+    ensure_can_access_order(db, current_user, order)
+    if order.status in FINAL_ORDER_STATUSES:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Final order status cannot be sent")
+
+    to_email = (payload.to_email or get_settings().default_uber_eats_support_email).strip()
+    if not to_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Recipient email is required")
+
+    try:
+        provider_draft = provider.send_email(
+            db,
+            current_user,
+            email_draft,
+            to_email=to_email,
+            include_evidence=payload.include_evidence,
+        )
+    except EmailProviderError as exc:
+        add_audit_log(
+            db,
+            entity_type="email_draft",
+            entity_id=email_draft.id,
+            action="send_resend_email_failed",
+            user_id=current_user.id,
+            new_value={"order_id": order.id, "error": exc.message},
+        )
+        db.commit()
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    order.status = "sent"
+    if order.first_email_sent_at is None:
+        order.first_email_sent_at = provider_draft.sent_at
+    order.updated_at = utc_now()
+    db.add(
+        EmailThread(
+            order_id=order.id,
+            provider="resend",
+            thread_id=provider_draft.provider_thread_id,
+            message_id=provider_draft.provider_message_id,
+            direction="outbound",
+            subject=provider_draft.subject,
+            body=email_draft.body,
+            sent_at=provider_draft.sent_at,
+        )
+    )
+    add_audit_log(
+        db,
+        entity_type="email_provider_draft",
+        entity_id=provider_draft.id,
+        action="send_resend_email",
+        user_id=current_user.id,
+        new_value={
+            "status": provider_draft.status,
+            "provider_message_id": provider_draft.provider_message_id,
+            "order_id": order.id,
+        },
+    )
+    complete_task_for_sent_provider_draft(db, current_user, provider_draft)
+    db.commit()
+    db.refresh(provider_draft)
+    return EmailProviderDraftRead.model_validate(provider_draft)
 
 
 @router.get("/v1/email/gmail/inbound/status", response_model=GmailInboundStatusResponse)

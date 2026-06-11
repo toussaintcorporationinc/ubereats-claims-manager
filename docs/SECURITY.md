@@ -228,6 +228,20 @@ Regles de securite :
 
 TENNET ne garantit pas le remboursement. AutoPilot automatise une execution controlee, pas une decision commerciale irreversible.
 
+## Resend
+
+Resend est supporte comme provider transactionnel serveur, desactive par defaut.
+
+Regles de securite :
+
+- `RESEND_ENABLED=false` par defaut ;
+- `RESEND_API_KEY` ne doit jamais etre commitee, affichee dans l'UI ou stockee dans l'audit ;
+- `RESEND_FROM_EMAIL` doit utiliser un domaine verifie, par exemple `TENNET <notifications@mail.thetennet.com>` ;
+- l'envoi via Resend exige une action manuelle avec `confirm_send=true` ;
+- Resend ne remplace pas Gmail inbound et ne lit pas les reponses ;
+- AutoPilot ne bascule pas automatiquement sur Resend ;
+- les logs d'echec ne doivent contenir que des erreurs controlees sans secret.
+
 ## Appels persistants apres refus
 
 Un refus Uber ne cloture pas un dossier automatiquement. Il cree ou alimente un workflow d'appel controle.

@@ -34,6 +34,7 @@ Le backend expose maintenant les premiers objets metier :
 - creation de vrais brouillons Gmail via OAuth ;
 - envoi manuel approuve de brouillons Gmail, sans automatisation ;
 - lecture et rattachement manuel des reponses Gmail entrantes ;
+- envoi transactionnel Resend optionnel, desactive par defaut et confirme manuellement ;
 - traitement manuel des reponses Uber et mise a jour des statuts de reclamation ;
 - workflow d'appels persistants apres refus Uber ;
 - relances controlees J+2/J+5/J+10/J+15 sous forme de taches et brouillons, sans envoi automatique ;
