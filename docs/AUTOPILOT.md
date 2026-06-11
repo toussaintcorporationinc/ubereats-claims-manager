@@ -53,6 +53,8 @@ Un appel automatique peut etre envoye seulement si :
 
 Quand la sync Gmail applique une decision `refused`, TENNET peut lancer automatiquement un run AutoPilot `appeals` si AutoPilot est active. Les emails non rattaches, ignores, ambigus ou hors Uber ne declenchent pas d'envoi.
 
+Avec `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true`, cette sync peut tourner sans clic utilisateur a intervalle regulier. Les memes garde-fous s'appliquent.
+
 ## Limites anti-spam
 
 - `AUTOPILOT_DAILY_SEND_LIMIT` limite le volume global quotidien.

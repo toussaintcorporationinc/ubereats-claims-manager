@@ -917,10 +917,15 @@ Variables attendues :
 - `GMAIL_INBOUND_SYNC_ENABLED=false` par defaut ;
 - `GMAIL_INBOUND_SYNC_LOOKBACK_DAYS=30` ;
 - `GMAIL_INBOUND_MAX_MESSAGES_PER_SYNC=100` ;
+- `GMAIL_INBOUND_AUTO_SYNC_ENABLED=false` par defaut ;
+- `GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS=900` ;
+- `GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT=true` ;
 - `GMAIL_SUPPORT_SENDER_FILTER=uber.com` ;
 - `GMAIL_SCOPES` doit inclure `https://www.googleapis.com/auth/gmail.readonly` en plus des scopes de brouillon/envoi.
 
 Les comptes connectes avant l'ajout de `gmail.readonly` doivent se reconnecter pour autoriser la lecture.
+
+Quand `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true`, le backend lance automatiquement la meme sync a intervalle regulier pour les comptes Gmail connectes `owner` et `manager`. Les comptes `staff` sont ignores. Les messages restent dedupliques par compte + id Gmail.
 
 ### Status inbound
 

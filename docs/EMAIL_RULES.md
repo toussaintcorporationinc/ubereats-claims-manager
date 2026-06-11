@@ -97,6 +97,7 @@ Regles :
 
 - aucune reponse automatique n'est envoyee hors AutoPilot explicitement active ;
 - une reponse `refused` fiable peut declencher AutoPilot `appeals` si les flags, Gmail et le restaurant sont actifs ;
+- la sync peut etre planifiee cote backend avec `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true` ;
 - aucune relance automatique n'est creee hors AutoPilot controle ;
 - aucune classification IA n'est executee ;
 - la sync est lancee manuellement par `owner` ou `manager` ;

@@ -15,6 +15,16 @@ The engine reduces manual triage after Gmail sync:
 
 The analysis engine itself does not send email. When `AUTOPILOT_ENABLED=true`, `AUTOPILOT_APPEALS_ENABLED=true`, Gmail is connected, and the restaurant has `autopilot_enabled=true`, a newly detected refusal can trigger an AutoPilot appeal run.
 
+## Zero-Click Sync
+
+TENNET can run Gmail sync periodically on the backend when these flags are enabled:
+
+- `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true`
+- `GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS=900`
+- `GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT=true`
+
+The scheduler is disabled by default. When enabled, it checks connected Gmail accounts, syncs due accounts, analyzes linked replies, applies high-confidence reviews, and can trigger AutoPilot appeals for clear refusals.
+
 ## Decisions
 
 TENNET can recommend or apply these outcomes:

@@ -43,13 +43,13 @@ Le backend expose maintenant les premiers objets metier :
 - detection et suivi des deductions Uber / remboursements clients depuis transactions importees ;
 - creation de vrais brouillons Gmail via OAuth ;
 - routage multi-Gmail par restaurant pour utiliser la bonne boite Uber ;
-- envoi manuel approuve de brouillons Gmail, sans automatisation ;
-- lecture et rattachement manuel des reponses Gmail entrantes ;
+- envoi manuel approuve de brouillons Gmail, plus AutoPilot controle si explicitement active ;
+- lecture, rattachement et sync planifiee optionnelle des reponses Gmail entrantes ;
 - analyse controlee des reponses Gmail Uber, avec decisions positives/negatives tracees et appels ouverts apres refus ;
 - envoi transactionnel Resend optionnel, desactive par defaut et confirme manuellement ;
 - traitement manuel des reponses Uber et mise a jour des statuts de reclamation ;
 - workflow d'appels persistants apres refus Uber ;
-- relances controlees J+2/J+5/J+10/J+15 sous forme de taches et brouillons, sans envoi automatique ;
+- relances controlees J+2/J+5/J+10/J+15 sous forme de taches et brouillons, avec envoi AutoPilot seulement si active ;
 - AutoPilot V1.2 pour envois Gmail controles, desactive par defaut, avec dry-run, limites, cooldown et arret d'urgence ;
 - reporting commercial avec exports CSV/XLSX ;
 - dashboard de synthese.
@@ -179,17 +179,17 @@ Les deductions Uber et remboursements clients peuvent etre detectes depuis les t
 
 Les commandes peuvent aussi etre importees en masse depuis `/imports/new` avec un fichier CSV ou XLSX. Le backend analyse les lignes, detecte erreurs, doublons et restaurants non autorises, puis cree uniquement les lignes valides lors de la confirmation.
 
-Les brouillons internes peuvent etre transformes en brouillons Gmail reels lorsque `EMAIL_PROVIDER_ENABLED=true` et que l'OAuth Gmail est configure. Cette integration utilise les scopes `gmail.compose`, `gmail.send` et `gmail.readonly`, joint les preuves de la commande si demande et n'envoie jamais l'email automatiquement. L'envoi Gmail est possible uniquement apres confirmation manuelle explicite depuis l'application.
+Les brouillons internes peuvent etre transformes en brouillons Gmail reels lorsque `EMAIL_PROVIDER_ENABLED=true` et que l'OAuth Gmail est configure. Cette integration utilise les scopes `gmail.compose`, `gmail.send` et `gmail.readonly`, joint les preuves de la commande si demande et n'envoie automatiquement que dans le cadre AutoPilot explicitement active avec ses garde-fous.
 
-Les reponses Gmail peuvent etre synchronisees manuellement lorsque `GMAIL_INBOUND_SYNC_ENABLED=true`. Les messages entrants sont dedupliques, rattaches par thread Gmail ou numero de commande Uber, puis affiches dans `/inbox` et dans l'historique email de la commande. Aucune reponse automatique n'est generee.
+Les reponses Gmail peuvent etre synchronisees manuellement ou planifiees avec `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true` lorsque `GMAIL_INBOUND_SYNC_ENABLED=true`. Les messages entrants sont dedupliques, rattaches par thread Gmail ou numero de commande Uber, puis affiches dans `/inbox` et dans l'historique email de la commande. Les emails non rattaches, hors Uber ou ambigus ne declenchent pas d'envoi.
 
-Un owner ou manager peut ensuite traiter manuellement une reponse Uber rattachee depuis `/inbox` ou le detail commande. Le traitement enregistre un `ClaimResponseReview`, marque le message comme revu ou ignore, met a jour le statut commercial de la commande si necessaire (`accepted`, `payment_to_verify`, `payment_confirmed`, `refused` ou `manual_review`) et cree des `AuditLog`. Aucun email ni relance n'est declenche par cette action.
+Un owner ou manager peut ensuite traiter manuellement une reponse Uber rattachee depuis `/inbox` ou le detail commande. Le traitement enregistre un `ClaimResponseReview`, marque le message comme revu ou ignore, met a jour le statut commercial de la commande si necessaire (`accepted`, `payment_to_verify`, `payment_confirmed`, `refused` ou `manual_review`) et cree des `AuditLog`. Une reponse negative fiable peut declencher un appel AutoPilot si AutoPilot est active globalement et sur le restaurant.
 
-Les relances controlees se recalculent depuis `/followups`. La politique V1 propose `followup_1` a J+2, `followup_2` a J+5, `escalation` a J+10 et `manual_review` a J+15 ou quand la limite de relances est atteinte. Les taches creent des brouillons internes puis, si Gmail est configure, des brouillons Gmail. Aucun envoi automatique n'est implemente ; l'envoi reste manuel et confirme via le workflow Gmail existant.
+Les relances controlees se recalculent depuis `/followups`. La politique V1 propose `followup_1` a J+2, `followup_2` a J+5, `escalation` a J+10 et `manual_review` a J+15 ou quand la limite de relances est atteinte. Les taches creent des brouillons internes puis, si Gmail est configure, des brouillons Gmail. AutoPilot peut envoyer les taches eligibles seulement si les flags et limites sont actifs.
 
 Le cockpit recuperation est disponible depuis `/recovery`. Il unifie commandes annulees non compensees, resultats de reconciliation Uber, deductions clients, preuves manquantes, relances et outcomes. Il affiche les montants detectes, contestables, en attente de preuve, envoyes, recuperes, refuses et a revue manuelle. TENNET ne garantit pas le remboursement ; il garantit le suivi et la revue systematique des pertes detectees.
 
-Les appels persistants sont disponibles depuis `/appeals`. Un refus Uber cree une action de revue ou d'appel au lieu de cloturer automatiquement le dossier. Un owner ou manager peut analyser le refus, creer un brouillon interne, creer un brouillon Gmail controle, marquer l'appel envoye manuellement, mettre en pause ou cloturer manuellement. Aucun appel n'est envoye automatiquement.
+Les appels persistants sont disponibles depuis `/appeals`. Un refus Uber cree une action de revue ou d'appel au lieu de cloturer automatiquement le dossier. Un owner ou manager peut analyser le refus, creer un brouillon interne, creer un brouillon Gmail controle, marquer l'appel envoye manuellement, mettre en pause ou cloturer manuellement. AutoPilot peut envoyer les appels eligibles si active, avec cooldown, limites, anti-doublon et arret d'urgence.
 
 Les rapports commerciaux sont disponibles depuis `/reports`. Ils permettent de suivre les montants reclames, recuperes, en attente ou refuses, les taux de reussite, les performances par restaurant, les relances, les reponses Uber traitees et les deductions clients. Les exports CSV/XLSX sont reserves aux roles `owner` et `manager`, respectent les restaurants autorises et n'incluent pas les noms clients par defaut.
 
@@ -203,7 +203,7 @@ cp .env.example .env
 
 Le stockage local des preuves utilise `EVIDENCE_STORAGE_BACKEND=local`, `EVIDENCE_STORAGE_DIR` et `MAX_EVIDENCE_FILE_SIZE_MB`.
 Les imports utilisent `IMPORT_STORAGE_DIR` et `IMPORT_MAX_FILE_SIZE_MB`.
-Gmail reste desactive par defaut avec `EMAIL_PROVIDER_ENABLED=false`. Pour tester la creation, l'envoi manuel et la lecture des reponses Gmail, renseigner `GMAIL_OAUTH_CLIENT_ID`, `GMAIL_OAUTH_CLIENT_SECRET`, `GMAIL_OAUTH_REDIRECT_URI`, `GMAIL_SCOPES`, `DEFAULT_UBER_EATS_SUPPORT_EMAIL`, `EMAIL_MAX_ATTACHMENT_TOTAL_MB`, puis activer `GMAIL_INBOUND_SYNC_ENABLED=true` pour la sync entrante.
+Gmail reste desactive par defaut avec `EMAIL_PROVIDER_ENABLED=false`. Pour tester la creation, l'envoi et la lecture des reponses Gmail, renseigner `GMAIL_OAUTH_CLIENT_ID`, `GMAIL_OAUTH_CLIENT_SECRET`, `GMAIL_OAUTH_REDIRECT_URI`, `GMAIL_SCOPES`, `DEFAULT_UBER_EATS_SUPPORT_EMAIL`, `EMAIL_MAX_ATTACHMENT_TOTAL_MB`, puis activer `GMAIL_INBOUND_SYNC_ENABLED=true` pour la sync entrante. `GMAIL_INBOUND_AUTO_SYNC_ENABLED=false` par defaut peut etre active pour le zero clic cote serveur.
 Les delais de relance sont configurables via `FOLLOWUP_1_DELAY_DAYS`, `FOLLOWUP_2_DELAY_DAYS`, `ESCALATION_DELAY_DAYS`, `MANUAL_REVIEW_AFTER_DAYS` et `MAX_FOLLOWUPS_PER_ORDER`. `FOLLOWUP_AUTOMATIC_SEND_ENABLED` reste `false` par defaut et ne declenche aucun envoi dans cette V1.
 Les exports utilisent `EXPORT_MAX_ROWS` pour limiter le volume et `REPORT_DEFAULT_LOOKBACK_DAYS` comme fenetre indicative de reporting.
 Les demandes de preuves utilisent `EVIDENCE_TASK_HIGH_AMOUNT`, `EVIDENCE_TASK_URGENT_AMOUNT`, `EVIDENCE_UPLOAD_LINK_EXPIRY_HOURS` et `EVIDENCE_UPLOAD_LINK_MAX_USES`.
@@ -393,7 +393,7 @@ Rappels :
 - TENNET ne garantit pas le remboursement ;
 - TENNET garantit la detection, le suivi, la revue et la tracabilite ;
 - aucun refus Uber n'est cloture automatiquement ;
-- aucun email, appel ou relance n'est envoye automatiquement ;
+- aucun email, appel ou relance n'est envoye automatiquement sauf AutoPilot explicitement active avec limites ;
 - OpenAI/Vision est desactive par defaut ;
 - la validation terrain avec de vrais exports Uber reste necessaire avant exploitation commerciale.
 
