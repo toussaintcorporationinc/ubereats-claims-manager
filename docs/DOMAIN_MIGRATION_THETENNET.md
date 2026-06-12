@@ -6,6 +6,8 @@
 
 Production:
 
+- `https://thetennet.com` redirects to `https://app.thetennet.com`
+- `https://www.thetennet.com` redirects to `https://app.thetennet.com`
 - `https://app.thetennet.com`
 - `https://api.thetennet.com`
 
@@ -20,7 +22,7 @@ TENNET uses `thetennet.com` as its only official public domain. New configuratio
 
 ## Repository defaults
 
-- `deploy/Caddyfile` contains official production and staging routes for `thetennet.com`.
+- `deploy/Caddyfile` contains official production and staging routes for `thetennet.com`, plus root redirects from `thetennet.com` and `www.thetennet.com` to `app.thetennet.com`.
 - `.env.production.example` uses `app.thetennet.com` and `api.thetennet.com`.
 - `.env.staging.example` uses `staging-app.thetennet.com` and `staging-api.thetennet.com`.
 - `BACKEND_CORS_ORIGINS` contains only the official frontend domain for the target environment.
@@ -34,6 +36,8 @@ curl -fsS https://api.thetennet.com/health
 curl -fsS https://api.thetennet.com/ready
 curl -fsS https://api.thetennet.com/version
 curl -I https://app.thetennet.com
+curl -I https://thetennet.com
+curl -I https://www.thetennet.com
 ```
 
 Staging:

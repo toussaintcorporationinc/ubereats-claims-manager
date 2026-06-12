@@ -6,7 +6,7 @@ Application V1 pour gerer les reclamations Uber Eats de restaurants lorsque des 
 
 Le domaine officiel TENNET est `thetennet.com`.
 
-- Production : `https://app.thetennet.com` et `https://api.thetennet.com`
+- Production : `https://thetennet.com` redirige vers `https://app.thetennet.com`, API `https://api.thetennet.com`
 - Staging : `https://staging-app.thetennet.com` et `https://staging-api.thetennet.com`
 
 Le domaine Resend verifie est `mail.thetennet.com`. Resend reste desactive par defaut, sans cle API dans le depot. Gmail reste separe pour les conversations Uber et les envois Gmail controles. Aucun envoi automatique, aucune relance automatique et aucune analyse OpenAI reelle ne sont actives par defaut.
