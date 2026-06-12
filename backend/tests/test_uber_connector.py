@@ -539,10 +539,10 @@ def test_combined_french_uber_export_with_two_line_header_creates_snapshot_and_a
     )
     csv_text = "\n".join(
         [
-            "Description commande,Description flux,Description restaurant,Description store vide,Description store uuid,Description date,Description ventes,Description ajustements",
-            "Id. de la commande,Id. du flux,Nom du restaurant,Id. du restaurant,Id. du restaurant,Date de la commande,Ventes (TVA incluse),Ajustements liés à des erreurs de commande (TVA incluse)",
-            "#TEST1,workflow-test-1,Restaurant Export Francais,,06079c7e-a1b3-4816-b18b-35ffb89bbdce,01/06/2026,24.99,0",
-            "#TEST1,workflow-test-1,Restaurant Export Francais,,06079c7e-a1b3-4816-b18b-35ffb89bbdce,01/06/2026,0,-24.99",
+            "Description commande,Description flux,Description restaurant,Description store vide,Description store uuid,Description date,Description type,Description ventes,Description ajustements",
+            "Id. de la commande,Id. du flux,Nom du restaurant,Id. du restaurant,Id. du restaurant,Date de la commande,Type de restauration,Ventes (TVA incluse),Ajustements liés à des erreurs de commande (TVA incluse)",
+            "#TEST1,workflow-test-1,Restaurant Export Francais,,06079c7e-a1b3-4816-b18b-35ffb89bbdce,01/06/2026,Livraison - Coursier du restaurant,24.99,0",
+            "#TEST1,workflow-test-1,Restaurant Export Francais,,06079c7e-a1b3-4816-b18b-35ffb89bbdce,01/06/2026,Livraison - Coursier du restaurant,0,-24.99",
         ]
     )
 
