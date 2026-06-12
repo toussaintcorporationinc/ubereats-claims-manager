@@ -224,3 +224,7 @@ From an evidence task, use "Imprimer ticket preuve" when the restaurant needs a 
 
 TENNET always prefers a clear action, readable status and guided workflow over a technical table. It does not guarantee reimbursement and does not invent proof, amounts or order numbers.
 
+## Native mobile app
+
+The native app in `mobile/tennet-native` is for daily field work: open urgent actions, upload proof photos, print an evidence ticket, scan its QR code and check recovery actions from a phone. It keeps the same TENNET permissions as the web app and does not send email automatically.
+

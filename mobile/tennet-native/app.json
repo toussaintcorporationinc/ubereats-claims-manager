@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "TENNET",
+    "slug": "tennet-mobile",
+    "version": "1.0.0",
+    "description": "Application native TENNET pour piloter les preuves, tickets, scans et actions de recuperation sur le terrain.",
+    "scheme": "tennet",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.thetennet.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "TENNET utilise la camera pour photographier les preuves et scanner les QR codes de tickets.",
+        "NSPhotoLibraryUsageDescription": "TENNET permet d'importer des preuves deja presentes sur l'appareil."
+      }
+    },
+    "android": {
+      "package": "com.thetennet.mobile",
+      "permissions": [
+        "CAMERA"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#10251F",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-sharing"
+    ],
+    "extra": {
+      "apiBaseUrl": "https://api.thetennet.com",
+      "webAppUrl": "https://app.thetennet.com"
+    }
+  }
+}
