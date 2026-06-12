@@ -4,7 +4,7 @@ This guide is for owners and operators managing production.
 
 ## Official domains
 
-Use `https://app.thetennet.com` for production and `https://staging-app.thetennet.com` for staging. The `leboxerfrancais.com` domains remain temporary fallbacks during migration and must not be removed until validation is complete.
+Use `https://app.thetennet.com` for production and `https://staging-app.thetennet.com` for staging.
 
 Resend uses the verified domain `mail.thetennet.com` and remains disabled by default. Its API key must exist only in the host environment. Gmail remains the separate provider for Uber conversation threads when intentionally configured.
 

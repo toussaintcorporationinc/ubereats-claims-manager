@@ -9,11 +9,6 @@ Official staging domains:
 - `https://staging-app.thetennet.com`
 - `https://staging-api.thetennet.com`
 
-Temporary fallback domains:
-
-- `https://staging-app.leboxerfrancais.com`
-- `https://staging-api.leboxerfrancais.com`
-
 ## Files
 
 - `docker-compose.staging.yml`

@@ -4,7 +4,7 @@ TENNET helps restaurants prepare, track and document Uber Eats claims for orders
 
 Important: no email, reply or follow-up is sent automatically. Every Gmail send requires manual confirmation.
 
-The official production application is `https://app.thetennet.com`. The old `leboxerfrancais.com` address may continue to work temporarily as a fallback during migration.
+The official production application is `https://app.thetennet.com`.
 
 ## Login and first owner
 

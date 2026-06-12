@@ -6,10 +6,9 @@ Use this checklist before launching a TENNET commercial production instance.
 
 - [ ] Official frontend domain `app.thetennet.com` configured.
 - [ ] Official API domain `api.thetennet.com` configured.
-- [ ] Temporary fallback domains `app.leboxerfrancais.com` and `api.leboxerfrancais.com` still available during migration.
 - [ ] DNS points to the production host.
 - [ ] HTTPS active through Caddy.
-- [ ] `deploy/Caddyfile` includes official and fallback domains, without `auto_https on`.
+- [ ] `deploy/Caddyfile` includes official domains, without `auto_https on`.
 - [ ] `docker-compose.prod.yml` validated.
 - [ ] Persistent PostgreSQL volume mounted.
 - [ ] Persistent evidence volume mounted.

@@ -5,7 +5,6 @@ This guide describes a Docker-based production deployment for TENNET.
 ## Target architecture
 
 - Caddy terminates HTTPS for `app.thetennet.com` and `api.thetennet.com`.
-- `app.leboxerfrancais.com` and `api.leboxerfrancais.com` remain temporary fallbacks until the domain migration is fully validated.
 - Frontend runs Next.js production server on the internal Docker network.
 - Backend runs FastAPI/Uvicorn on the internal Docker network.
 - PostgreSQL stores application data.
@@ -40,13 +39,13 @@ Required changes:
 - replace `POSTGRES_PASSWORD`;
 - update `DATABASE_URL` with the same PostgreSQL password;
 - keep `FRONTEND_URL=https://app.thetennet.com`, `API_BASE_URL=https://api.thetennet.com` and `NEXT_PUBLIC_API_BASE_URL=https://api.thetennet.com`;
-- keep `BACKEND_CORS_ORIGINS=https://app.thetennet.com,https://app.leboxerfrancais.com` while the fallback is active;
+- keep `BACKEND_CORS_ORIGINS=https://app.thetennet.com`;
 - keep `RESEND_ENABLED=false` unless Resend is intentionally enabled with a server-only API key;
 - configure Gmail OAuth only when ready.
 
 3. Review `deploy/Caddyfile`.
 
-It should include the official `thetennet.com` production routes and the temporary `leboxerfrancais.com` fallback routes. Do not add `auto_https on`; Caddy manages HTTPS automatically.
+It should include the official `thetennet.com` production routes. Do not add `auto_https on`; Caddy manages HTTPS automatically.
 
 4. Start production services.
 

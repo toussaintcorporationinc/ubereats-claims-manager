@@ -23,21 +23,3 @@ staging-api.thetennet.com {
 
 	reverse_proxy backend:8000
 }
-
-staging-app.leboxerfrancais.com {
-	encode zstd gzip
-	import security_headers
-
-	reverse_proxy frontend:3000
-}
-
-staging-api.leboxerfrancais.com {
-	encode zstd gzip
-	import security_headers
-
-	request_body {
-		max_size 50MB
-	}
-
-	reverse_proxy backend:8000
-}

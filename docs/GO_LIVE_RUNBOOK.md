@@ -8,7 +8,7 @@ Core rule: no email, reply or follow-up is sent automatically. Gmail sends requi
 
 1. Confirm the production host is ready for Docker and Docker Compose.
 2. Configure DNS for the frontend and API domains.
-3. Verify `app.thetennet.com`, `api.thetennet.com` and the temporary `leboxerfrancais.com` fallbacks in `deploy/Caddyfile`.
+3. Verify `app.thetennet.com` and `api.thetennet.com` in `deploy/Caddyfile`.
 4. Copy `.env.production.example` to `.env.production` on the host.
 5. Replace every placeholder secret in `.env.production`.
 6. Confirm `SECRET_KEY` is long, random and unique to production.

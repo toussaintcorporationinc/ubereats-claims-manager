@@ -154,7 +154,7 @@ Manual Gmail send remains guarded by explicit user confirmation. There is no aut
 
 ## Domains and Resend
 
-The official production URLs are `https://app.thetennet.com` and `https://api.thetennet.com`. The `leboxerfrancais.com` URLs remain temporary fallbacks during migration and should not be removed until validation is complete.
+The official production URLs are `https://app.thetennet.com` and `https://api.thetennet.com`.
 
 Resend uses `mail.thetennet.com` when enabled. `RESEND_ENABLED=false` remains the default, `RESEND_API_KEY` must exist only on the server, and Resend does not replace Gmail conversations for Uber dispute threads.
 

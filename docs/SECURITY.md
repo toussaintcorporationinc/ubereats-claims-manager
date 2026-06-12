@@ -29,9 +29,8 @@ Le domaine officiel TENNET est `thetennet.com`.
 
 - Production : `https://app.thetennet.com` et `https://api.thetennet.com`.
 - Staging : `https://staging-app.thetennet.com` et `https://staging-api.thetennet.com`.
-- Fallback temporaire : les domaines `leboxerfrancais.com` restent actifs pendant la migration.
 
-`BACKEND_CORS_ORIGINS` doit autoriser le domaine officiel et, tant que la migration n'est pas close, le fallback correspondant. Les domaines fallback ne doivent pas etre supprimes sans validation d'exploitation.
+`BACKEND_CORS_ORIGINS` doit autoriser uniquement le domaine officiel de l'environnement cible.
 
 ## Production deployment security
 
