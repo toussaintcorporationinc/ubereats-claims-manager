@@ -857,7 +857,7 @@ function BottomNav({ active, onChange }: { active: TabKey; onChange: (tab: TabKe
     { key: "tennet", label: "TENNET" },
     { key: "proofs", label: "Preuves" },
     { key: "scan", label: "Scan" },
-    { key: "recovery", label: "Recovery" },
+    { key: "recovery", label: "Argent" },
     { key: "account", label: "Compte" },
   ];
   return (
@@ -1396,27 +1396,33 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   bottomNav: {
-    minHeight: 64,
+    minHeight: 72,
     backgroundColor: colors.surface,
     borderTopWidth: 1,
     borderTopColor: colors.line,
     flexDirection: "row",
-    padding: spacing.xs,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 8,
   },
   navItem: {
     flex: 1,
     borderRadius: radius.md,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 2,
+    minHeight: 54,
+    paddingHorizontal: 4,
   },
   navItemActive: {
     backgroundColor: colors.primary,
   },
   navText: {
     color: colors.inkMuted,
-    fontSize: 11,
-    fontWeight: "900",
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 17,
+    letterSpacing: 0,
+    textAlign: "center",
+    includeFontPadding: false,
   },
   navTextActive: {
     color: colors.white,
