@@ -53,6 +53,7 @@ Le backend expose maintenant les premiers objets metier :
 - AutoPilot V1.2 pour envois Gmail controles, desactive par defaut, avec dry-run, limites, cooldown et arret d'urgence ;
 - reporting commercial avec exports CSV/XLSX ;
 - dashboard de synthese.
+- contrat app native terrain pour camera et imprimante ticket, sans lecture tablette Uber.
 
 Les endpoints principaux sont :
 

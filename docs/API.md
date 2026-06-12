@@ -599,6 +599,9 @@ Retour :
   "high_priority_count": 6,
   "printer_mode": "browser_print",
   "bluetooth_supported": false,
+  "camera_capture_supported": true,
+  "native_printer_bridge_ready": true,
+  "native_printer_bridge_contract": "POST /v1/evidence-tasks/{id}/print-ticket returns QR SVG, upload URL and print HTML for native ESC/POS rendering.",
   "safe_capture_rules": [
     "Imprimer uniquement le ticket TENNET lie a la commande."
   ],
@@ -614,7 +617,9 @@ Regles :
 - par defaut, seules les taches `pending` et `uploaded` sont retournees ;
 - les taches sont triees pour le terrain par priorite puis echeance ;
 - aucun `storage_path`, token brut, secret Gmail ou secret Resend n'est expose ;
-- `bluetooth_supported=false` indique que TENNET utilise l'impression navigateur en V1.
+- `bluetooth_supported=false` indique que TENNET utilise l'impression navigateur en V1 ;
+- `camera_capture_supported=true` indique que l'upload web demande la camera mobile quand possible ;
+- `native_printer_bridge_ready=true` indique que l'app native peut utiliser le contrat ticket pour imprimer en ESC/POS.
 
 ## Imports commandes
 

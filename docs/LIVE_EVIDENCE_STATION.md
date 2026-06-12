@@ -20,6 +20,12 @@ En V1, TENNET utilise `browser_print`, donc le navigateur et le systeme gerent l
 
 Le support Bluetooth direct ESC/POS doit rester cote application native ou connecteur dedie futur. Il ne doit servir qu'a imprimer les tickets TENNET. Il ne doit jamais lire une tablette Uber Eats, contourner une authentification Uber ou aspirer des commandes depuis une app tierce.
 
+Le endpoint station expose `native_printer_bridge_ready=true` pour signaler que l'app native peut utiliser `POST /v1/evidence-tasks/{id}/print-ticket`, recuperer le QR/lien upload, puis rendre le ticket en ESC/POS selon le modele d'imprimante.
+
+## Camera directe
+
+Les pages upload TENNET utilisent un input mobile avec `capture=environment`. Sur les navigateurs compatibles, le bouton ouvre directement la camera arriere. En cas de navigateur non compatible, l'utilisateur peut toujours choisir une photo ou un PDF.
+
 ## Securite
 
 - aucun scraping Uber ;
@@ -35,6 +41,8 @@ Le support Bluetooth direct ESC/POS doit rester cote application native ou conne
 
 - `GET /v1/live-evidence/station` : retourne la file active terrain, les compteurs, la prochaine tache recommandee et les regles de capture.
 - `POST /v1/evidence-tasks/{id}/print-ticket` : cree le ticket imprimable et le QR code d'upload mobile.
+
+Voir aussi `docs/NATIVE_DEVICE_BRIDGE.md` pour le contrat app native camera + imprimante ticket.
 
 ## Limites
 
