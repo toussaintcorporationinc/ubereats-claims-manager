@@ -8,7 +8,9 @@ export const metadata = {
   description: "Interface de gestion des reclamations Uber Eats.",
   manifest: "/manifest.webmanifest",
   icons: {
-    icon: "/icon.svg",
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+    apple: "/icon.svg",
   },
 };
 

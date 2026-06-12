@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import BrandLogo from "@/components/BrandLogo";
 import LoadingState from "@/components/LoadingState";
 import MobileHeader from "@/components/MobileHeader";
 import MobileNavDrawer, { type NavItem } from "@/components/MobileNavDrawer";
@@ -75,8 +76,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       />
       <aside className="sidebar" aria-label="Navigation principale">
         <Link href="/dashboard" className="brand">
-          <span className="brand-mark">T</span>
-          <span>TENNET</span>
+          <BrandLogo />
         </Link>
         <nav className="nav-list">
           {navigation

@@ -66,20 +66,30 @@ button {
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
   min-height: 40px;
   font-weight: 800;
 }
 
-.brand-mark {
-  display: grid;
+.brand-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.brand-logo__mark {
   width: 40px;
   height: 40px;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--accent);
-  color: #ffffff;
-  font-size: 0.9rem;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  box-shadow: 0 8px 20px rgb(16 37 31 / 14%);
+}
+
+.brand-logo__word {
+  color: var(--text);
+  font-size: 1.02rem;
+  font-weight: 900;
+  letter-spacing: 0;
 }
 
 .nav-list {
