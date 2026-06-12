@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import BrandLogo from "@/components/BrandLogo";
 import type { UserRole } from "@/lib/api";
 
 export type NavItem = {
@@ -29,8 +30,7 @@ export default function MobileNavDrawer({ open, items, userRole, onClose, onLogo
       <aside className="mobile-nav__drawer" aria-label="Navigation mobile">
         <div className="mobile-nav__top">
           <Link href="/dashboard" className="brand" onClick={onClose}>
-            <span className="brand-mark">T</span>
-            <span>TENNET</span>
+            <BrandLogo />
           </Link>
           <button type="button" className="icon-button" aria-label="Fermer le menu" onClick={onClose}>
             x

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import ApiError from "@/components/ApiError";
+import BrandLogo from "@/components/BrandLogo";
 import { useAuth } from "@/lib/auth";
 
 export default function SetupOwnerPage() {
@@ -37,6 +38,7 @@ export default function SetupOwnerPage() {
   return (
     <section className="auth-panel">
       <div className="heading-copy">
+        <BrandLogo compact />
         <p className="eyebrow">Initialisation</p>
         <h1>Creer le premier owner</h1>
       </div>

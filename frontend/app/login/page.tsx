@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import ApiError from "@/components/ApiError";
+import BrandLogo from "@/components/BrandLogo";
 import { useAuth } from "@/lib/auth";
 import { consumeSessionExpiredMessage } from "@/lib/api";
 
@@ -38,6 +39,7 @@ export default function LoginPage() {
   return (
     <section className="auth-panel">
       <div className="heading-copy">
+        <BrandLogo compact />
         <p className="eyebrow">Connexion</p>
         <h1>TENNET</h1>
       </div>
