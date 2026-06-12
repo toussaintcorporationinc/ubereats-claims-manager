@@ -171,7 +171,7 @@ Le service de brouillons cree uniquement des contenus internes a partir des donn
 
 Les preuves peuvent etre ajoutees par upload local securise depuis le detail d'une commande. Les fichiers acceptes sont PDF et images courantes (`jpg`, `png`, `webp`, `heic`, `heif`) avec limite de taille configurable. Les telechargements passent toujours par l'API protegee.
 
-Les preuves manquantes peuvent aussi etre pilotees depuis `/evidence-tasks`. TENNET recalcule les demandes de preuves a partir des dossiers incomplets et des resultats de reconciliation Uber qui exigent des justificatifs. Un owner ou manager peut creer un lien mobile tokenise pour une demande precise. Le token brut est retourne une seule fois, seul son hash est stocke, et l'upload public reste limite a la preuve demandee. Aucun email n'est envoye automatiquement.
+Les preuves manquantes peuvent aussi etre pilotees depuis `/evidence-tasks`. TENNET recalcule les demandes de preuves a partir des dossiers incomplets et des resultats de reconciliation Uber qui exigent des justificatifs. Un owner ou manager peut creer un lien mobile tokenise pour une demande precise. Le token brut est retourne une seule fois, seul son hash est stocke, et l'upload public reste limite a la preuve demandee. Un ticket preuve imprimable peut aussi etre cree pour guider le terrain : il contient la commande, le type de preuve attendu et un QR code vers l'upload mobile de cette tache. Aucun email n'est envoye automatiquement.
 
 Les preuves existantes peuvent etre importees en masse depuis `/evidence-imports`. TENNET stocke les fichiers, analyse localement ou via fournisseur desactive par defaut, puis propose des rattachements vers commandes, taches de preuve, deductions Uber ou resultats de reconciliation. L'attachement automatique reste desactive par defaut et aucun rattachement faible n'est force.
 
@@ -308,7 +308,7 @@ Documentation securite et roles : `docs/SECURITY.md`.
 Documentation production : `docs/DEPLOYMENT.md`, `docs/OPERATIONS.md`, `docs/BACKUP_RESTORE.md` et `docs/PRODUCTION_CHECKLIST.md`.
 Documentation domaines et Resend : `docs/DOMAIN_MIGRATION_THETENNET.md` et `docs/RESEND_SETUP.md`.
 Documentation go-live V1 : `docs/GO_LIVE_RUNBOOK.md`, `docs/ACCEPTANCE_TEST_PLAN.md`, `docs/USER_GUIDE.md`, `docs/ADMIN_GUIDE.md`, `docs/GMAIL_PRODUCTION_VALIDATION.md`, `docs/ROLLBACK_PLAN.md`, `docs/RELEASE_NOTES_V1.md` et `docs/KNOWN_LIMITATIONS_V1.md`.
-Documentation V1.1 : `docs/BULK_EVIDENCE_IMPORT.md`, `docs/AI_EVIDENCE_ANALYSIS.md`, `docs/PERSISTENT_APPEALS.md`, `docs/CUSTOMER_REFUND_DISPUTES.md`, `docs/RECOVERY_COCKPIT.md` et `docs/UBER_RECONCILIATION_RULES.md`.
+Documentation V1.1 : `docs/BULK_EVIDENCE_IMPORT.md`, `docs/EVIDENCE_TICKET_PRINTING.md`, `docs/AI_EVIDENCE_ANALYSIS.md`, `docs/PERSISTENT_APPEALS.md`, `docs/CUSTOMER_REFUND_DISPUTES.md`, `docs/RECOVERY_COCKPIT.md` et `docs/UBER_RECONCILIATION_RULES.md`.
 Documentation V1.1 finale et staging : `docs/RELEASE_NOTES_V1_1.md`, `docs/RELEASE_NOTES_V1_1_RC.md`, `docs/KNOWN_LIMITATIONS_V1_1.md`, `docs/STAGING_DEPLOYMENT.md`, `docs/STAGING_ACCEPTANCE_PLAN.md` et `docs/V1_1_ACCEPTANCE_TEST_PLAN.md`.
 
 ## Production

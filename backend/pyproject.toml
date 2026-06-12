@@ -17,6 +17,7 @@ dependencies = [
   "PyJWT",
   "python-multipart",
   "openpyxl",
+  "qrcode",
 ]
 
 [project.optional-dependencies]

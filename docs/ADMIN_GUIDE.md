@@ -124,6 +124,8 @@ Evidence and import files are local in V1. Plan enough disk and backups.
 
 Owners and managers can create mobile upload links from `/evidence-tasks/{id}`.
 
+Assigned staff can create a printable evidence ticket from `/evidence-tasks/{id}`. The ticket creates a one-use mobile upload link and QR code for the exact task, but it does not grant broader access, skip a task, complete a task manually, send an email or create a claim.
+
 Operational settings:
 
 - `EVIDENCE_TASK_HIGH_AMOUNT` sets the high priority threshold;

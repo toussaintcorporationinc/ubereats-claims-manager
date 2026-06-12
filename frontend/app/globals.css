@@ -494,6 +494,44 @@ textarea {
   color: var(--success);
 }
 
+.ticket-preview {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid #a8dab5;
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text);
+}
+
+.ticket-preview__qr {
+  display: grid;
+  place-items: center;
+  width: 112px;
+  height: 112px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.ticket-preview__qr svg {
+  width: 96px;
+  height: 96px;
+}
+
+.ticket-preview div:last-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ticket-preview span,
+.ticket-preview strong {
+  overflow-wrap: anywhere;
+}
+
 .result-list {
   margin: 0;
   padding-left: 18px;

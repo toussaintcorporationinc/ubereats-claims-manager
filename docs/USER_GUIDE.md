@@ -220,5 +220,7 @@ Open `/smart-import` to drop Uber reports, evidence images, PDFs or ZIP files wi
 
 On mobile, use the header menu, evidence cards and sticky action bars to work in the restaurant. Staff users should focus on "Mes preuves a fournir", uploading photos or PDFs only for assigned restaurants.
 
+From an evidence task, use "Imprimer ticket preuve" when the restaurant needs a physical reminder. The ticket prints the order context and a QR code to the exact mobile upload link, so the staff can photograph the ticket with the requested proof and avoid mixing orders.
+
 TENNET always prefers a clear action, readable status and guided workflow over a technical table. It does not guarantee reimbursement and does not invent proof, amounts or order numbers.
 
