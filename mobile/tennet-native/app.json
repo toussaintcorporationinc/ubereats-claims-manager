@@ -38,7 +38,11 @@
     ],
     "extra": {
       "apiBaseUrl": "https://api.thetennet.com",
-      "webAppUrl": "https://app.thetennet.com"
-    }
+      "webAppUrl": "https://app.thetennet.com",
+      "eas": {
+        "projectId": "aa2dcd28-d76b-4a17-a49b-7ffdffa1bd99"
+      }
+    },
+    "owner": "toussaintcorp"
   }
 }
