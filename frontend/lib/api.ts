@@ -1855,6 +1855,8 @@ export type RestaurantCreatePayload = {
   autopilot_enabled?: boolean;
 };
 
+export type RestaurantUpdatePayload = Partial<RestaurantCreatePayload>;
+
 export type AutopilotSettings = {
   enabled: boolean;
   initial_claims_enabled: boolean;
@@ -2150,9 +2152,10 @@ export const api = {
     request<ReportResponsesResponse>(`/v1/reports/responses${buildQuery(filters)}`),
   downloadReport: (path: string, filters: ReportFilters = {}) => downloadBlob(`${path}${buildQuery(filters)}`),
   getRestaurants: () => request<Restaurant[]>("/v1/restaurants"),
+  getRestaurant: (id: number) => request<Restaurant>(`/v1/restaurants/${id}`),
   createRestaurant: (payload: RestaurantCreatePayload) =>
     postJson<Restaurant, RestaurantCreatePayload>("/v1/restaurants", payload),
-  updateRestaurant: (id: number, payload: Partial<RestaurantCreatePayload>) =>
+  updateRestaurant: (id: number, payload: RestaurantUpdatePayload) =>
     request<Restaurant>(`/v1/restaurants/${id}`, {
       method: "PATCH",
       body: JSON.stringify(payload),

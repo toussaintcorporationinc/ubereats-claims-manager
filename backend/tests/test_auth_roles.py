@@ -1,3 +1,5 @@
+import json
+
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -176,6 +178,55 @@ def test_staff_cannot_create_restaurant(unauthenticated_client: TestClient) -> N
         "/v1/restaurants",
         json={"name": "Forbidden", "sender_email": "claims@example.com"},
         headers=auth_headers(staff_login["access_token"]),
+    )
+
+    assert response.status_code == 403
+
+
+def test_owner_can_update_restaurant(unauthenticated_client: TestClient, db_session: Session) -> None:
+    owner = register_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner["access_token"])
+
+    response = unauthenticated_client.patch(
+        f"/v1/restaurants/{restaurant['id']}",
+        json={
+            "name": "Krousty Bat",
+            "sender_email": "  Tiramisumaisonfrance@GMAIL.com  ",
+            "uber_merchant_id": "merchant-krousty",
+            "autopilot_enabled": True,
+        },
+        headers=auth_headers(owner["access_token"]),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "Krousty Bat"
+    assert data["sender_email"] == "tiramisumaisonfrance@gmail.com"
+    assert data["uber_merchant_id"] == "merchant-krousty"
+    assert data["autopilot_enabled"] is True
+
+    audit_log = db_session.scalar(
+        select(AuditLog).where(
+            AuditLog.entity_type == "restaurant",
+            AuditLog.entity_id == restaurant["id"],
+            AuditLog.action == "restaurant.updated",
+        )
+    )
+    assert audit_log is not None
+    assert json.loads(audit_log.new_value or "{}")["sender_email"] == "tiramisumaisonfrance@gmail.com"
+
+
+def test_manager_cannot_update_restaurant_settings(unauthenticated_client: TestClient) -> None:
+    owner = register_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner["access_token"])
+    manager = create_user(unauthenticated_client, owner["access_token"], "manager@example.com", "manager")
+    assign_restaurant(unauthenticated_client, owner["access_token"], manager["id"], restaurant["id"])
+    manager_login = login(unauthenticated_client, "manager@example.com", "user-password")
+
+    response = unauthenticated_client.patch(
+        f"/v1/restaurants/{restaurant['id']}",
+        json={"sender_email": "manager-change@example.com"},
+        headers=auth_headers(manager_login["access_token"]),
     )
 
     assert response.status_code == 403

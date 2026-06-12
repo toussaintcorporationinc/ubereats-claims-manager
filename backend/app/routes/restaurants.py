@@ -11,6 +11,33 @@ from app.services.audit import add_audit_log
 router = APIRouter(prefix="/v1/restaurants", tags=["restaurants"])
 
 
+def _normalise_restaurant_values(values: dict) -> dict:
+    normalised = dict(values)
+    for field in ("name", "legal_name", "address", "sender_email", "uber_merchant_id"):
+        if field in normalised and isinstance(normalised[field], str):
+            value = normalised[field].strip()
+            normalised[field] = value or None
+    if normalised.get("name") is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Restaurant name is required")
+    if normalised.get("sender_email") is None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Sender email is required")
+    if isinstance(normalised.get("sender_email"), str):
+        normalised["sender_email"] = normalised["sender_email"].lower()
+    return normalised
+
+
+def _restaurant_audit_value(restaurant: Restaurant) -> dict:
+    return {
+        "name": restaurant.name,
+        "legal_name": restaurant.legal_name,
+        "address": restaurant.address,
+        "sender_email": restaurant.sender_email,
+        "uber_merchant_id": restaurant.uber_merchant_id,
+        "active": restaurant.active,
+        "autopilot_enabled": restaurant.autopilot_enabled,
+    }
+
+
 @router.get("", response_model=list[RestaurantRead])
 def list_restaurants(
     db: Session = Depends(get_db),
@@ -31,7 +58,7 @@ def create_restaurant(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_owner),
 ) -> Restaurant:
-    restaurant = Restaurant(**payload.model_dump())
+    restaurant = Restaurant(**_normalise_restaurant_values(payload.model_dump()))
     db.add(restaurant)
     db.flush()
     add_audit_log(
@@ -40,7 +67,7 @@ def create_restaurant(
         entity_id=restaurant.id,
         action="restaurant.created",
         user_id=current_user.id,
-        new_value={"name": restaurant.name, "sender_email": restaurant.sender_email},
+        new_value=_restaurant_audit_value(restaurant),
     )
     db.commit()
     db.refresh(restaurant)
@@ -71,9 +98,21 @@ def update_restaurant(
     if restaurant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    old_value = _restaurant_audit_value(restaurant)
+    values = _normalise_restaurant_values({**old_value, **payload.model_dump(exclude_unset=True)})
+
+    for field, value in values.items():
         setattr(restaurant, field, value)
 
+    add_audit_log(
+        db,
+        entity_type="restaurant",
+        entity_id=restaurant.id,
+        action="restaurant.updated",
+        old_value=old_value,
+        new_value=_restaurant_audit_value(restaurant),
+        user_id=current_user.id,
+    )
     db.commit()
     db.refresh(restaurant)
     return restaurant
