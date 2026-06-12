@@ -15,6 +15,13 @@ app.thetennet.com {
 	reverse_proxy frontend:3000
 }
 
+thetennet.com, www.thetennet.com {
+	encode zstd gzip
+	import security_headers
+
+	redir https://app.thetennet.com{uri} permanent
+}
+
 api.thetennet.com {
 	encode zstd gzip
 	import security_headers
