@@ -126,7 +126,9 @@ Owners and managers can create mobile upload links from `/evidence-tasks/{id}`.
 
 Assigned staff can create a printable evidence ticket from `/evidence-tasks/{id}`. The ticket creates a one-use mobile upload link and QR code for the exact task, but it does not grant broader access, skip a task, complete a task manually, send an email or create a claim.
 
-`/live-evidence` is the recommended field station for restaurants. It shows only active evidence tasks visible to the user, recommends the next proof and starts ticket printing. Browser printing can use any printer already available to the device. Direct Bluetooth ESC/POS printing should be implemented only as a future native app connector and must never read or automate an Uber Eats tablet.
+`/live-evidence` is the recommended web field station for restaurants. It shows only active evidence tasks visible to the user, recommends the next proof and starts ticket printing. Browser printing can use any printer already available to the device.
+
+The Android native app now includes the `android_bluetooth_escpos` bridge for paired SUNMI/Bluetooth receipt printers. Staff users see a simplified field station screen and the primary action `Imprimer et prendre photo`. The printer bridge only prints TENNET evidence tickets; it must never read or automate an Uber Eats tablet.
 
 Operational settings:
 
@@ -267,6 +269,8 @@ See `docs/SMART_IMPORT.md`, `docs/MOBILE_USAGE.md` and `docs/DESIGN_SYSTEM.md`.
 ## Native mobile administration
 
 The native mobile app lives in `mobile/tennet-native` and uses the official TENNET API by default. For staging tests, set `EXPO_PUBLIC_API_BASE_URL` and `EXPO_PUBLIC_WEB_APP_URL` before running Expo.
+
+Android production builds include `mobile/tennet-native/plugins/withTennetNativePrinter.js`, which adds Bluetooth permissions and registers the native receipt-printer module during prebuild/EAS. Test the app on a physical Android device with the receipt printer already paired in Android settings.
 
 Publishing to Google Play requires owner-controlled Play Console access, app signing and privacy declarations. Never commit keystores, service account JSON files, Play credentials or 2FA codes.
 

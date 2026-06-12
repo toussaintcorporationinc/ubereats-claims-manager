@@ -913,6 +913,8 @@ export type LiveEvidenceStationResponse = {
   high_priority_count: number;
   printer_mode: "browser_print";
   bluetooth_supported: boolean;
+  native_print_modes: "android_bluetooth_escpos"[];
+  native_print_contract_version: string;
   camera_capture_supported: boolean;
   native_printer_bridge_ready: boolean;
   native_printer_bridge_contract: string;

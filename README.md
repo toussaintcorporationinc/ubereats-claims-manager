@@ -53,7 +53,7 @@ Le backend expose maintenant les premiers objets metier :
 - AutoPilot V1.2 pour envois Gmail controles, desactive par defaut, avec dry-run, limites, cooldown et arret d'urgence ;
 - reporting commercial avec exports CSV/XLSX ;
 - dashboard de synthese.
-- contrat app native terrain pour camera et imprimante ticket, sans lecture tablette Uber.
+- app native terrain avec camera directe et impression ticket Android Bluetooth ESC/POS, sans lecture tablette Uber.
 
 Les endpoints principaux sont :
 
@@ -416,6 +416,8 @@ Voir `docs/SMART_IMPORT.md`, `docs/MOBILE_USAGE.md`, `docs/DESIGN_SYSTEM.md` et 
 
 Une base mobile native Expo/React Native est disponible dans `mobile/tennet-native`.
 
-Elle couvre les usages terrain prioritaires : connexion TENNET, actions urgentes, taches de preuves, photo/PDF, impression de ticket preuve, scan QR de lien mobile tokenise et cockpit recuperation. Elle utilise les permissions backend existantes et ne declenche aucun Gmail, OpenAI, AutoPilot ou envoi automatique.
+Elle couvre les usages terrain prioritaires : connexion TENNET, actions urgentes, taches de preuves, photo/PDF, impression de ticket preuve Android Bluetooth ESC/POS, scan QR de lien mobile tokenise et cockpit recuperation. Pour les comptes staff, l'app affiche une station minimaliste `A faire maintenant` avec l'action principale `Imprimer et prendre photo`. Elle utilise les permissions backend existantes et ne declenche aucun Gmail, OpenAI, AutoPilot ou envoi automatique depuis la station preuves.
+
+Le bridge Android est dans `mobile/tennet-native/plugins/withTennetNativePrinter.js` et le module natif dans `mobile/tennet-native/plugins/tennet-native-printer/android`. Il imprime uniquement les tickets TENNET generes par `/v1/evidence-tasks/{id}/print-ticket`; il ne lit jamais une tablette Uber Eats.
 
 Voir `docs/NATIVE_MOBILE_APP.md`.

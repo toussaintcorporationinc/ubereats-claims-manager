@@ -24,7 +24,12 @@
     "android": {
       "package": "com.thetennet.mobile",
       "permissions": [
-        "CAMERA"
+        "CAMERA",
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN",
+        "ACCESS_FINE_LOCATION"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
@@ -40,7 +45,8 @@
     },
     "plugins": [
       "expo-secure-store",
-      "expo-sharing"
+      "expo-sharing",
+      "./plugins/withTennetNativePrinter"
     ],
     "extra": {
       "apiBaseUrl": "https://api.thetennet.com",
