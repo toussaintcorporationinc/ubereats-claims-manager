@@ -1462,6 +1462,8 @@ class LiveEvidenceStationResponse(BaseModel):
     high_priority_count: int
     printer_mode: Literal["browser_print"]
     bluetooth_supported: bool
+    native_print_modes: list[Literal["android_bluetooth_escpos"]]
+    native_print_contract_version: str
     camera_capture_supported: bool
     native_printer_bridge_ready: bool
     native_printer_bridge_contract: str

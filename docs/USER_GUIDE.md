@@ -233,11 +233,11 @@ Open `/smart-import` to drop Uber reports, evidence images, PDFs or ZIP files wi
 
 On mobile, use the header menu, evidence cards and sticky action bars to work in the restaurant. Staff users should focus on "Mes preuves a fournir", uploading photos or PDFs only for assigned restaurants.
 
-From an evidence task, use "Imprimer ticket preuve" when the restaurant needs a physical reminder. The ticket prints the order context and a QR code to the exact mobile upload link, so the staff can photograph the ticket with the requested proof and avoid mixing orders.
+From an evidence task, use "Imprimer ticket preuve" on web when the restaurant needs a physical reminder. In the Android app, staff use the simpler action "Imprimer et prendre photo": TENNET prints the ticket on the paired Bluetooth receipt printer, then opens the camera so the proof goes to the right task.
 
 TENNET always prefers a clear action, readable status and guided workflow over a technical table. It does not guarantee reimbursement and does not invent proof, amounts or order numbers.
 
 ## Native mobile app
 
-The native app in `mobile/tennet-native` is for daily field work: open urgent actions, upload proof photos, print an evidence ticket, scan its QR code and check recovery actions from a phone. It keeps the same TENNET permissions as the web app and does not send email automatically.
+The native app in `mobile/tennet-native` is for daily field work: open urgent actions, upload proof photos, print an evidence ticket on Android Bluetooth ESC/POS printers, scan its QR code and check recovery actions from a phone. Staff users see a minimal "A faire maintenant" station instead of financial screens. It keeps the same TENNET permissions as the web app and does not send email automatically from the evidence station.
 

@@ -41,6 +41,7 @@ import {
   request,
   uploadFile,
 } from "./src/api";
+import { getNativePrinterCapabilities, hasNativePrinter, printTicketOnNativePrinter } from "./src/nativePrinter";
 import { colors, radius, shadow, spacing } from "./src/theme";
 import { colorForStatus, formatCurrency, formatDate, getUploadTokenFromUrl, labelForEvidence, priorityRank, readableLabel } from "./src/utils";
 
@@ -69,6 +70,7 @@ export default function App() {
   const [selectedTask, setSelectedTask] = useState<EvidenceTask | null>(null);
   const [publicToken, setPublicToken] = useState<string | null>(null);
   const [publicLink, setPublicLink] = useState<PublicEvidenceUploadLink | null>(null);
+  const isFieldOnly = session?.user.role === "staff";
 
   const refresh = useCallback(async () => {
     if (!session) {
@@ -160,7 +162,11 @@ export default function App() {
           refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={colors.primary} />}
         >
           {tab === "home" ? (
-            <HomeScreen data={data} onOpenTask={setSelectedTask} onGoProofs={() => setTab("proofs")} onGoRecovery={() => setTab("recovery")} />
+            isFieldOnly ? (
+              <ProofsScreen tasks={data.tasks} selectedTask={selectedTask} onOpenTask={setSelectedTask} onUploaded={refresh} session={session} minimal />
+            ) : (
+              <HomeScreen data={data} onOpenTask={setSelectedTask} onGoProofs={() => setTab("proofs")} onGoRecovery={() => setTab("recovery")} />
+            )
           ) : null}
           {tab === "proofs" ? (
             <ProofsScreen tasks={data.tasks} selectedTask={selectedTask} onOpenTask={setSelectedTask} onUploaded={refresh} session={session} />
@@ -171,7 +177,7 @@ export default function App() {
           {tab === "recovery" ? <RecoveryScreen summary={data.recovery} actions={data.nextActions} /> : null}
           {tab === "account" ? <AccountScreen session={session} onLogout={handleLogout} /> : null}
         </ScrollView>
-        <BottomNav active={tab} onChange={setTab} />
+        {isFieldOnly ? null : <BottomNav active={tab} onChange={setTab} />}
       </View>
     </Shell>
   );
@@ -313,28 +319,36 @@ function ProofsScreen({
   onOpenTask,
   onUploaded,
   session,
+  minimal = false,
 }: {
   tasks: EvidenceTask[];
   selectedTask: EvidenceTask | null;
   onOpenTask: (task: EvidenceTask | null) => void;
   onUploaded: () => Promise<void>;
   session: Session;
+  minimal?: boolean;
 }) {
   const task = selectedTask ?? tasks[0] ?? null;
   return (
     <View style={styles.stack}>
-      <Text style={styles.screenTitle}>Preuves terrain</Text>
-      <Text style={styles.screenSubtitle}>Photographie, importe ou imprime un ticket preuve pour guider le restaurant.</Text>
-      {task ? <TaskDetail task={task} onUploaded={onUploaded} session={session} /> : <EmptyState title="Aucune preuve en attente" body="Tout est propre pour l'instant." />}
-      <SectionHeader title="File de preuves" />
-      {tasks.map((item) => (
-        <EvidenceTaskCard key={item.id} task={item} selected={task?.id === item.id} onPress={() => onOpenTask(item)} />
-      ))}
+      <Text style={styles.screenTitle}>{minimal ? "A faire maintenant" : "Preuves terrain"}</Text>
+      <Text style={styles.screenSubtitle}>
+        {minimal ? "TENNET choisit la prochaine preuve. Tu imprimes, tu prends la photo, TENNET classe." : "Photographie, importe ou imprime un ticket preuve pour guider le restaurant."}
+      </Text>
+      {task ? <TaskDetail task={task} onUploaded={onUploaded} session={session} minimal={minimal} /> : <EmptyState title="Aucune preuve en attente" body="Tout est propre pour l'instant." />}
+      {minimal ? null : (
+        <>
+          <SectionHeader title="File de preuves" />
+          {tasks.map((item) => (
+            <EvidenceTaskCard key={item.id} task={item} selected={task?.id === item.id} onPress={() => onOpenTask(item)} />
+          ))}
+        </>
+      )}
     </View>
   );
 }
 
-function TaskDetail({ task, onUploaded, session }: { task: EvidenceTask; onUploaded: () => Promise<void>; session: Session }) {
+function TaskDetail({ task, onUploaded, session, minimal = false }: { task: EvidenceTask; onUploaded: () => Promise<void>; session: Session; minimal?: boolean }) {
   const [busy, setBusy] = useState<string | null>(null);
 
   const upload = async (file: UploadableFile) => {
@@ -390,11 +404,33 @@ function TaskDetail({ task, onUploaded, session }: { task: EvidenceTask; onUploa
         },
         session,
       );
-      await Print.printAsync({ html: ticket.print_html });
+      if (hasNativePrinter()) {
+        await printTicketOnNativePrinter(ticket);
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        await takePhoto();
+      } else {
+        await Print.printAsync({ html: ticket.print_html });
+      }
     } catch (error) {
       Alert.alert("Impression impossible", error instanceof Error ? error.message : "Le ticket n'a pas pu etre cree.");
     } finally {
       setBusy(null);
+    }
+  };
+
+  const checkPrinter = async () => {
+    try {
+      const capabilities = await getNativePrinterCapabilities();
+      if (!capabilities.nativeModuleAvailable) {
+        Alert.alert("Imprimante native", "Ce build utilise l'impression systeme. Le build Android terrain active le Bluetooth ticket.");
+        return;
+      }
+      Alert.alert(
+        "Imprimante native",
+        capabilities.bluetoothEnabled ? "Bluetooth pret. TENNET imprimera sur l'imprimante ticket appairee." : "Bluetooth indisponible ou eteint sur cet appareil.",
+      );
+    } catch (error) {
+      Alert.alert("Imprimante native", error instanceof Error ? error.message : "Verification impossible.");
     }
   };
 
@@ -433,13 +469,20 @@ function TaskDetail({ task, onUploaded, session }: { task: EvidenceTask; onUploa
       <Text style={styles.detailProof}>{labelForEvidence(task.required_evidence_type)}</Text>
       <Text style={styles.detailBody}>{task.description || task.reason}</Text>
       <View style={styles.actionRow}>
-        <PrimaryButton label={busy === "upload" ? "Envoi..." : "Prendre photo"} onPress={takePhoto} disabled={Boolean(busy)} />
-        <SecondaryButton label="Fichier" onPress={pickFile} disabled={Boolean(busy)} />
+        <PrimaryButton label={busy === "print" ? "Impression..." : "Imprimer et prendre photo"} onPress={printTicket} disabled={Boolean(busy)} />
       </View>
-      <View style={styles.actionRow}>
-        <SecondaryButton label={busy === "print" ? "Ticket..." : "Imprimer ticket"} onPress={printTicket} disabled={Boolean(busy)} />
-        <SecondaryButton label="Partager lien" onPress={shareTicket} disabled={Boolean(busy)} />
-      </View>
+      {minimal ? null : (
+        <>
+          <View style={styles.actionRow}>
+            <SecondaryButton label={busy === "upload" ? "Envoi..." : "Photo seule"} onPress={takePhoto} disabled={Boolean(busy)} />
+            <SecondaryButton label="Fichier" onPress={pickFile} disabled={Boolean(busy)} />
+          </View>
+          <View style={styles.actionRow}>
+            <SecondaryButton label="Tester imprimante" onPress={checkPrinter} disabled={Boolean(busy)} />
+            <SecondaryButton label="Lien secours" onPress={shareTicket} disabled={Boolean(busy)} />
+          </View>
+        </>
+      )}
     </View>
   );
 }

@@ -17,11 +17,12 @@ Sur tablette :
 
 Mode terrain staff :
 - priorite aux preuves a fournir ;
-- page `/live-evidence` pour imprimer un ticket preuve, scanner un QR code et uploader la photo au bon dossier ;
+- app Android TENNET : ecran `A faire maintenant`, action `Imprimer et prendre photo`, camera ouverte directement apres impression ;
+- page web `/live-evidence` pour imprimer un ticket preuve, scanner un QR code et uploader la photo au bon dossier ;
 - prise de photo ou upload simple ;
 - pas de cockpit financier avance ;
 - pas d'action Gmail, AutoPilot ou appel.
 
-La station preuves peut utiliser une imprimante deja reconnue par le navigateur ou le systeme. Une integration Bluetooth native pourra imprimer les tickets TENNET via le contrat `docs/NATIVE_DEVICE_BRIDGE.md`, mais elle ne doit jamais lire la tablette Uber Eats ni contourner les imports officiels.
+La station web peut utiliser une imprimante deja reconnue par le navigateur ou le systeme. L'app Android native embarque le bridge `android_bluetooth_escpos` pour imprimer les tickets TENNET sur une imprimante ticket Bluetooth appairee, dont SUNMI compatible ESC/POS. Ce bridge ne lit jamais la tablette Uber Eats et ne contourne jamais les imports officiels.
 
 TENNET ne stocke pas de donnees sensibles offline. La PWA legere sert uniquement a faciliter l'ajout a l'ecran d'accueil.

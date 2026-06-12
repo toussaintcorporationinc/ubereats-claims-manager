@@ -8,23 +8,25 @@ Objectif : eviter que le staff cherche le bon dossier, le bon type de preuve ou 
 
 1. Ouvrir `/live-evidence`.
 2. Choisir la prochaine preuve recommandee.
-3. Cliquer `Imprimer ticket`.
-4. Imprimer le ticket TENNET via le dialogue systeme du navigateur.
-5. Photographier le ticket avec la preuve demandee.
+3. Dans l'app Android terrain, cliquer `Imprimer et prendre photo`.
+4. TENNET imprime le ticket sur l'imprimante Bluetooth ESC/POS appairee.
+5. TENNET ouvre directement la camera pour photographier le ticket avec la preuve demandee.
 6. Scanner le QR code ou ouvrir le lien d'upload.
 7. TENNET rattache la preuve a la bonne tache et relance la validation du dossier.
 
 ## Imprimante et Bluetooth
 
-En V1, TENNET utilise `browser_print`, donc le navigateur et le systeme gerent l'imprimante disponible. Cela peut fonctionner avec une imprimante ticket deja installee sur le poste ou la tablette.
+La web app utilise `browser_print`, donc le navigateur et le systeme gerent l'imprimante disponible. Cela peut fonctionner avec une imprimante ticket deja installee sur le poste ou la tablette.
 
-Le support Bluetooth direct ESC/POS doit rester cote application native ou connecteur dedie futur. Il ne doit servir qu'a imprimer les tickets TENNET. Il ne doit jamais lire une tablette Uber Eats, contourner une authentification Uber ou aspirer des commandes depuis une app tierce.
+L'app Android native TENNET embarque maintenant un bridge `android_bluetooth_escpos`. Il liste les imprimantes Bluetooth appairees, choisit prioritairement les peripheriques SUNMI/POS/ticket, convertit le ticket TENNET en ESC/POS et imprime le QR code d'upload.
 
-Le endpoint station expose `native_printer_bridge_ready=true` pour signaler que l'app native peut utiliser `POST /v1/evidence-tasks/{id}/print-ticket`, recuperer le QR/lien upload, puis rendre le ticket en ESC/POS selon le modele d'imprimante.
+Ce bridge ne sert qu'a imprimer les tickets TENNET. Il ne lit jamais une tablette Uber Eats, ne contourne aucune authentification Uber et n'aspire pas des commandes depuis une app tierce.
+
+Le endpoint station expose `native_printer_bridge_ready=true`, `bluetooth_supported=true`, `native_print_modes=["android_bluetooth_escpos"]` et `native_print_contract_version=2026-06-12.android-escpos.v1`.
 
 ## Camera directe
 
-Les pages upload TENNET utilisent un input mobile avec `capture=environment`. Sur les navigateurs compatibles, le bouton ouvre directement la camera arriere. En cas de navigateur non compatible, l'utilisateur peut toujours choisir une photo ou un PDF.
+Les pages upload TENNET utilisent un input mobile avec `capture=environment`. L'app Android native utilise la camera native et l'ouvre automatiquement apres une impression reussie.
 
 ## Securite
 

@@ -598,10 +598,12 @@ Retour :
   "urgent_count": 3,
   "high_priority_count": 6,
   "printer_mode": "browser_print",
-  "bluetooth_supported": false,
+  "bluetooth_supported": true,
+  "native_print_modes": ["android_bluetooth_escpos"],
+  "native_print_contract_version": "2026-06-12.android-escpos.v1",
   "camera_capture_supported": true,
   "native_printer_bridge_ready": true,
-  "native_printer_bridge_contract": "POST /v1/evidence-tasks/{id}/print-ticket returns QR SVG, upload URL and print HTML for native ESC/POS rendering.",
+  "native_printer_bridge_contract": "POST /v1/evidence-tasks/{id}/print-ticket returns the ticket data consumed by TENNET Android for Bluetooth ESC/POS receipt printing.",
   "safe_capture_rules": [
     "Imprimer uniquement le ticket TENNET lie a la commande."
   ],
@@ -617,8 +619,10 @@ Regles :
 - par defaut, seules les taches `pending` et `uploaded` sont retournees ;
 - les taches sont triees pour le terrain par priorite puis echeance ;
 - aucun `storage_path`, token brut, secret Gmail ou secret Resend n'est expose ;
-- `bluetooth_supported=false` indique que TENNET utilise l'impression navigateur en V1 ;
-- `camera_capture_supported=true` indique que l'upload web demande la camera mobile quand possible ;
+- `printer_mode=browser_print` reste le mode web ;
+- `bluetooth_supported=true` indique que l'app Android TENNET supporte le bridge imprimante ticket Bluetooth ;
+- `native_print_modes=["android_bluetooth_escpos"]` indique le mode natif Android disponible ;
+- `camera_capture_supported=true` indique que l'upload web demande la camera mobile quand possible et que l'app native ouvre la camera apres impression ;
 - `native_printer_bridge_ready=true` indique que l'app native peut utiliser le contrat ticket pour imprimer en ESC/POS.
 
 ## Imports commandes

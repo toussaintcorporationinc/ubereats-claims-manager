@@ -7,7 +7,7 @@ Ce document decrit le contrat propre pour transformer la Station preuves TENNET 
 L'app native TENNET doit permettre au restaurant de :
 
 - voir les preuves a collecter ;
-- imprimer un ticket TENNET sur imprimante ticket Bluetooth ou reseau ;
+- imprimer un ticket TENNET sur imprimante ticket Bluetooth ESC/POS appairee ;
 - ouvrir directement la camera ;
 - envoyer la preuve vers la bonne tache ;
 - laisser TENNET poursuivre validation, brouillon, suivi, Gmail et appels selon les regles configurees.
@@ -31,6 +31,9 @@ Retourne les taches terrain priorisees et les capacites :
 
 - `camera_capture_supported=true` ;
 - `printer_mode=browser_print` pour le web ;
+- `bluetooth_supported=true` pour signaler que l'app Android officielle embarque le bridge Bluetooth ;
+- `native_print_modes=["android_bluetooth_escpos"]` ;
+- `native_print_contract_version=2026-06-12.android-escpos.v1` ;
 - `native_printer_bridge_ready=true` pour l'app native ;
 - `native_printer_bridge_contract` avec le endpoint ticket.
 
@@ -44,7 +47,7 @@ Retourne :
 - `print_html` ;
 - donnees commande/restaurant/preuve.
 
-L'app native peut convertir ces donnees en ESC/POS selon le modele d'imprimante. Le QR code doit pointer vers `upload_url`.
+L'app native Android convertit ces donnees en ESC/POS et envoie le flux sur l'imprimante Bluetooth appairee. Le QR code pointe vers `upload_url`.
 
 3. `POST /v1/evidence-tasks/{id}/upload`
 
@@ -60,15 +63,16 @@ Le web utilise `input type=file` avec `capture=environment`. L'app native peut u
 
 ## Imprimante Bluetooth
 
-Le web utilise le dialogue d'impression systeme. L'app native devra gerer :
+Le web utilise le dialogue d'impression systeme. L'app Android native TENNET gere :
 
 - appairage Bluetooth par le systeme ;
-- detection modele imprimante ;
+- detection des peripheriques appaires ;
+- selection prioritaire des imprimantes `SUNMI`, `Printer`, `POS`, `Ticket` ou `Receipt` ;
 - conversion ticket vers ESC/POS ;
 - impression QR lisible ;
 - erreur claire si imprimante absente.
 
-L'utilisateur doit toujours valider l'impression localement. TENNET ne doit pas imprimer des preuves sans action terrain claire.
+L'utilisateur declenche l'impression en appuyant sur l'action principale de la tache. Apres impression reussie, TENNET ouvre directement la camera pour photographier le ticket avec la preuve.
 
 ## Source live Uber
 
