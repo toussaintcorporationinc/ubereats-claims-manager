@@ -71,6 +71,7 @@ export default function RestaurantsPage() {
                 <th>Uber merchant</th>
                 <th>Statut</th>
                 <th>AutoPilot</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -94,10 +95,19 @@ export default function RestaurantsPage() {
                           disabled={updatingRestaurantId === restaurant.id}
                           onClick={() => void toggleAutopilot(restaurant)}
                         >
-                          {restaurant.autopilot_enabled ? "Desactiver" : "Activer"}
+                          {restaurant.autopilot_enabled ? "Desactiver AutoPilot" : "Activer AutoPilot"}
                         </button>
                       ) : null}
                     </div>
+                  </td>
+                  <td>
+                    {user?.role === "owner" ? (
+                      <Link href={`/restaurants/${restaurant.id}`} className="secondary-button">
+                        Modifier
+                      </Link>
+                    ) : (
+                      "-"
+                    )}
                   </td>
                 </tr>
               ))}
