@@ -548,7 +548,8 @@ def get_column_value_from_aliases(row: dict[str, Any], aliases: tuple[str, ...])
     normalized_aliases = tuple(normalize_for_match(alias) for alias in aliases)
     for alias in normalized_aliases:
         for key, value in row.items():
-            duplicate_key = key.startswith(f"{alias} ")
+            suffix = key.removeprefix(f"{alias} ")
+            duplicate_key = key.startswith(f"{alias} ") and suffix.isdigit()
             if (key == alias or duplicate_key) and value not in {None, ""}:
                 return value.strip() if isinstance(value, str) else value
     return None
