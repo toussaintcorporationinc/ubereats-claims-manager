@@ -23,6 +23,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { WebView } from "react-native-webview";
 
 import {
   API_BASE_URL,
@@ -55,7 +56,7 @@ import {
 import { colors, radius, shadow, spacing } from "./src/theme";
 import { colorForStatus, formatCurrency, formatDate, getUploadTokenFromUrl, labelForEvidence, priorityRank, readableLabel } from "./src/utils";
 
-type TabKey = "home" | "proofs" | "scan" | "recovery" | "account";
+type TabKey = "tennet" | "proofs" | "scan" | "recovery" | "account";
 
 const PRINTER_KEY = "tennet_selected_printer";
 
@@ -77,7 +78,7 @@ export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [booting, setBooting] = useState(true);
   const [loading, setLoading] = useState(false);
-  const [tab, setTab] = useState<TabKey>("home");
+  const [tab, setTab] = useState<TabKey>("tennet");
   const [data, setData] = useState<AppData>(initialData);
   const [selectedTask, setSelectedTask] = useState<EvidenceTask | null>(null);
   const [publicToken, setPublicToken] = useState<string | null>(null);
@@ -104,6 +105,12 @@ export default function App() {
         nextActions: recoveryActions.actions.sort((left, right) => priorityRank(left.priority) - priorityRank(right.priority)),
       });
     } catch (error) {
+      if (error instanceof Error && error.message.toLowerCase().includes("expired access token")) {
+        await clearSession();
+        setSession(null);
+        setData(initialData);
+        return;
+      }
       Alert.alert("TENNET", error instanceof Error ? error.message : "Impossible de charger les donnees.");
     } finally {
       setLoading(false);
@@ -148,7 +155,7 @@ export default function App() {
     setSelectedTask(null);
     setPublicToken(null);
     setPublicLink(null);
-    setTab("home");
+    setTab("tennet");
   };
 
   const handleToken = async (rawValue: string) => {
@@ -189,27 +196,24 @@ export default function App() {
     <Shell>
       <View style={styles.app}>
         <Header session={session} loading={loading} onRefresh={refresh} />
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={colors.primary} />}
-        >
-          {tab === "home" ? (
-            isFieldOnly ? (
-              <ProofsScreen tasks={data.tasks} selectedTask={selectedTask} onOpenTask={setSelectedTask} onUploaded={refresh} session={session} selectedPrinter={selectedPrinter} minimal />
-            ) : (
-              <HomeScreen data={data} onOpenTask={setSelectedTask} onGoProofs={() => setTab("proofs")} onGoRecovery={() => setTab("recovery")} />
-            )
-          ) : null}
-          {tab === "proofs" ? (
-            <ProofsScreen tasks={data.tasks} selectedTask={selectedTask} onOpenTask={setSelectedTask} onUploaded={refresh} session={session} selectedPrinter={selectedPrinter} />
-          ) : null}
-          {tab === "scan" ? (
-            <ScanScreen token={publicToken} link={publicLink} onToken={handleToken} onUploaded={refresh} />
-          ) : null}
-          {tab === "recovery" ? <RecoveryScreen summary={data.recovery} actions={data.nextActions} /> : null}
-          {tab === "account" ? <AccountScreen session={session} onLogout={handleLogout} selectedPrinter={selectedPrinter} onSelectPrinter={handleSelectPrinter} /> : null}
-        </ScrollView>
-        {isFieldOnly ? null : <BottomNav active={tab} onChange={setTab} />}
+        {tab === "tennet" ? (
+          <FullTennetScreen session={session} />
+        ) : (
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor={colors.primary} />}
+          >
+            {tab === "proofs" ? (
+              <ProofsScreen tasks={data.tasks} selectedTask={selectedTask} onOpenTask={setSelectedTask} onUploaded={refresh} session={session} selectedPrinter={selectedPrinter} minimal={isFieldOnly} />
+            ) : null}
+            {tab === "scan" ? (
+              <ScanScreen token={publicToken} link={publicLink} onToken={handleToken} onUploaded={refresh} />
+            ) : null}
+            {tab === "recovery" ? <RecoveryScreen summary={data.recovery} actions={data.nextActions} /> : null}
+            {tab === "account" ? <AccountScreen session={session} onLogout={handleLogout} selectedPrinter={selectedPrinter} onSelectPrinter={handleSelectPrinter} /> : null}
+          </ScrollView>
+        )}
+        <BottomNav active={tab} onChange={setTab} />
       </View>
     </Shell>
   );
@@ -251,7 +255,7 @@ function LoginScreen({ onLoggedIn }: { onLoggedIn: (session: Session) => void })
         <Text style={styles.logoText}>T</Text>
       </View>
       <Text style={styles.loginTitle}>TENNET</Text>
-      <Text style={styles.loginSubtitle}>Recuperation Uber, preuves terrain et suivi des paiements dans une app native.</Text>
+      <Text style={styles.loginSubtitle}>Plateforme complete, preuves terrain et actions restaurant dans une seule app.</Text>
       <View style={styles.formCard}>
         <Text style={styles.fieldLabel}>Email</Text>
         <TextInput
@@ -281,11 +285,52 @@ function LoginScreen({ onLoggedIn }: { onLoggedIn: (session: Session) => void })
   );
 }
 
+function FullTennetScreen({ session }: { session: Session }) {
+  const injectedAuth = useMemo(() => {
+    const token = JSON.stringify(session.access_token);
+    return `
+      (function() {
+        window.localStorage.setItem("ubereats_claims_manager_token", ${token});
+        window.sessionStorage.removeItem("ubereats_claims_manager_token");
+        true;
+      })();
+    `;
+  }, [session.access_token]);
+
+  const shouldStartLoad = (request: { url: string }) => {
+    const url = request.url;
+    const isGoogleOAuth = url.includes("accounts.google.com") || url.includes("oauth2") || url.includes("googleusercontent.com");
+    const isExternal = !url.startsWith(WEB_APP_URL) && !url.startsWith(API_BASE_URL) && !url.startsWith("about:");
+    if (isGoogleOAuth || isExternal) {
+      void Linking.openURL(url);
+      return false;
+    }
+    return true;
+  };
+
+  return (
+    <View style={styles.webShell}>
+      <WebView
+        source={{ uri: `${WEB_APP_URL}/dashboard` }}
+        injectedJavaScriptBeforeContentLoaded={injectedAuth}
+        injectedJavaScript={injectedAuth}
+        onShouldStartLoadWithRequest={shouldStartLoad}
+        sharedCookiesEnabled
+        thirdPartyCookiesEnabled
+        javaScriptEnabled
+        domStorageEnabled
+        startInLoadingState
+        renderLoading={() => <LoadingState title="Ouverture TENNET" />}
+      />
+    </View>
+  );
+}
+
 function Header({ session, loading, onRefresh }: { session: Session; loading: boolean; onRefresh: () => void }) {
   return (
     <View style={styles.header}>
       <View style={styles.headerIdentity}>
-        <Text style={styles.headerEyebrow} numberOfLines={1}>TENNET mobile</Text>
+        <Text style={styles.headerEyebrow} numberOfLines={1}>TENNET</Text>
         <Text style={styles.headerTitle} numberOfLines={1}>Bonjour {session.user.full_name || session.user.email.split("@")[0]}</Text>
       </View>
       <Pressable style={styles.refreshButton} onPress={onRefresh} disabled={loading}>
@@ -809,7 +854,7 @@ function AccountScreen({
 
 function BottomNav({ active, onChange }: { active: TabKey; onChange: (tab: TabKey) => void }) {
   const tabs: { key: TabKey; label: string }[] = [
-    { key: "home", label: "Accueil" },
+    { key: "tennet", label: "TENNET" },
     { key: "proofs", label: "Preuves" },
     { key: "scan", label: "Scan" },
     { key: "recovery", label: "Recovery" },
@@ -945,6 +990,10 @@ const styles = StyleSheet.create({
   app: {
     flex: 1,
     backgroundColor: colors.canvas,
+  },
+  webShell: {
+    flex: 1,
+    backgroundColor: colors.surface,
   },
   scrollContent: {
     padding: spacing.lg,
@@ -1348,15 +1397,11 @@ const styles = StyleSheet.create({
   },
   bottomNav: {
     minHeight: 64,
-    marginHorizontal: spacing.md,
-    marginBottom: Platform.OS === "android" ? spacing.sm : spacing.lg,
-    borderRadius: radius.lg,
     backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.line,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
     flexDirection: "row",
     padding: spacing.xs,
-    ...shadow,
   },
   navItem: {
     flex: 1,
