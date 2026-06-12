@@ -19,7 +19,7 @@ from app.models import (
 )
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
-from app.services.smart_import_classifier_service import read_tabular_rows, rows_to_dicts_with_detected_header
+from app.services.smart_import_classifier_service import normalize_for_match, read_tabular_rows, rows_to_dicts_with_detected_header
 
 REPORT_TYPES = {"orders_report", "payments_report", "adjustments_report", "combined_report"}
 ROW_PREVIEW_LIMIT = 100
@@ -49,6 +49,29 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "amount": ("amount", "montant", "total", "value", "net_amount", "payout_amount"),
     "currency": ("currency", "devise"),
 }
+
+COLUMN_ALIASES["uber_store_id"] += ("id. du restaurant", "id du restaurant")
+COLUMN_ALIASES["uber_store_name"] += ("nom du restaurant",)
+COLUMN_ALIASES["uber_order_id"] += ("id. du flux", "id du flux", "id. de la commande", "id de la commande")
+COLUMN_ALIASES["display_id"] += ("id. de la commande", "id de la commande")
+COLUMN_ALIASES["order_status"] += ("statut de la commande",)
+COLUMN_ALIASES["placed_at"] += ("date de la commande", "heure d'acceptation de la commande")
+COLUMN_ALIASES["order_total_amount"] += ("ventes (tva incluse)",)
+COLUMN_ALIASES["transaction_date"] += ("date de la commande",)
+COLUMN_ALIASES["payout_reference"] += ("id. de reference du versement", "id. de référence du versement")
+COLUMN_ALIASES["amount"] += (
+    "ajustements lies a des erreurs de commande (tva incluse)",
+    "ajustements liés à des erreurs de commande (tva incluse)",
+    "remboursements",
+)
+
+ORDER_ERROR_ADJUSTMENT_AMOUNT_ALIASES = (
+    "ajustements lies a des erreurs de commande (tva incluse)",
+    "ajustements liés à des erreurs de commande (tva incluse)",
+    "ajustements lies a des erreurs de commande (hors tva)",
+    "ajustements liés à des erreurs de commande (hors tva)",
+)
+CUSTOMER_REFUND_AMOUNT_ALIASES = ("remboursements", "remboursements du client")
 
 ORDER_FIELDS = {
     "uber_store_id",
@@ -271,6 +294,7 @@ def normalize_report_row(
         value = get_column_value(row, field)
         if value not in {None, ""}:
             normalized[field] = value
+    infer_combined_report_transaction_type(row, normalized, report_type)
 
     mapping = resolve_mapping(db, normalized.get("uber_store_id"))
     if mapping:
@@ -298,11 +322,35 @@ def infer_row_kind(row: dict[str, Any], report_type: str) -> str:
         return "order"
     if report_type in {"payments_report", "adjustments_report"}:
         return "transaction"
+    if report_type == "combined_report":
+        amount = parse_decimal(row.get("amount"))
+        if row.get("transaction_type") or (
+            row.get("transaction_date") and amount is not None and amount != Decimal("0") and not row.get("order_status")
+        ):
+            return "transaction"
+        if row.get("order_status") or row.get("order_total_amount"):
+            return "order"
+        return "unknown"
     if row.get("transaction_type") or row.get("transaction_date"):
         return "transaction"
     if row.get("order_status") or row.get("order_total_amount"):
         return "order"
     return "unknown"
+
+
+def infer_combined_report_transaction_type(row: dict[str, Any], normalized: dict[str, Any], report_type: str) -> None:
+    if report_type != "combined_report" or normalized.get("transaction_type"):
+        return
+    adjustment_amount = get_column_value_from_aliases(row, ORDER_ERROR_ADJUSTMENT_AMOUNT_ALIASES)
+    refund_amount = get_column_value_from_aliases(row, CUSTOMER_REFUND_AMOUNT_ALIASES)
+    parsed_adjustment = parse_decimal(adjustment_amount)
+    parsed_refund = parse_decimal(refund_amount)
+    if parsed_adjustment is not None and parsed_adjustment != Decimal("0"):
+        normalized["amount"] = adjustment_amount
+        normalized["transaction_type"] = "order_error_adjustment"
+    elif parsed_refund is not None and parsed_refund != Decimal("0"):
+        normalized["amount"] = refund_amount
+        normalized["transaction_type"] = "customer_refund"
 
 
 def normalize_order_values(row: dict[str, Any], errors: list[str], warnings: list[str]) -> None:
@@ -489,14 +537,20 @@ def parse_rows(content: bytes, suffix: str) -> list[dict[str, Any]]:
 
 
 def normalize_keys(row: dict[str, Any]) -> dict[str, Any]:
-    return {str(key).strip().lower(): value for key, value in row.items() if key is not None}
+    return {normalize_for_match(key): value for key, value in row.items() if key is not None}
 
 
 def get_column_value(row: dict[str, Any], field: str) -> Any:
-    for alias in COLUMN_ALIASES[field]:
-        key = alias.lower()
-        if key in row and row[key] not in {None, ""}:
-            return row[key].strip() if isinstance(row[key], str) else row[key]
+    return get_column_value_from_aliases(row, COLUMN_ALIASES[field])
+
+
+def get_column_value_from_aliases(row: dict[str, Any], aliases: tuple[str, ...]) -> Any:
+    normalized_aliases = tuple(normalize_for_match(alias) for alias in aliases)
+    for alias in normalized_aliases:
+        for key, value in row.items():
+            duplicate_key = key.startswith(f"{alias} ")
+            if (key == alias or duplicate_key) and value not in {None, ""}:
+                return value.strip() if isinstance(value, str) else value
     return None
 
 

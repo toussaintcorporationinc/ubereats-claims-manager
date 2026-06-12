@@ -525,6 +525,54 @@ def test_preview_payments_adjustments_and_xlsx(unauthenticated_client: TestClien
     assert row["normalized_data"]["transaction_date"] == "2026-06-02"
 
 
+def test_combined_french_uber_export_with_two_line_header_creates_snapshot_and_adjustment(
+    unauthenticated_client: TestClient,
+    db_session: Session,
+) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Restaurant Export Francais")
+    create_store_mapping(
+        unauthenticated_client,
+        owner_token,
+        restaurant["id"],
+        "06079c7e-a1b3-4816-b18b-35ffb89bbdce",
+    )
+    csv_text = "\n".join(
+        [
+            "Description commande,Description flux,Description restaurant,Description store vide,Description store uuid,Description date,Description ventes,Description ajustements",
+            "Id. de la commande,Id. du flux,Nom du restaurant,Id. du restaurant,Id. du restaurant,Date de la commande,Ventes (TVA incluse),Ajustements liés à des erreurs de commande (TVA incluse)",
+            "#TEST1,workflow-test-1,Restaurant Export Francais,,06079c7e-a1b3-4816-b18b-35ffb89bbdce,01/06/2026,24.99,0",
+            "#TEST1,workflow-test-1,Restaurant Export Francais,,06079c7e-a1b3-4816-b18b-35ffb89bbdce,01/06/2026,0,-24.99",
+        ]
+    )
+
+    preview = preview_report(unauthenticated_client, owner_token, csv_text, "combined_report")
+
+    assert preview["total_rows"] == 2
+    assert preview["valid_rows"] + preview["warning_rows"] == 2
+    assert "id de la commande" in preview["detected_columns"]
+    assert preview["rows_preview"][0]["normalized_data"]["row_kind"] == "order"
+    assert preview["rows_preview"][0]["normalized_data"]["display_id"] == "#TEST1"
+    assert preview["rows_preview"][1]["normalized_data"]["row_kind"] == "transaction"
+    assert preview["rows_preview"][1]["normalized_data"]["transaction_type"] == "order_error_adjustment"
+    assert preview["rows_preview"][1]["normalized_data"]["amount"] == "-24.99"
+
+    result = unauthenticated_client.post(
+        f"/v1/uber/reporting/batches/{preview['batch_id']}/confirm",
+        headers=auth_headers(owner_token),
+    )
+
+    assert result.status_code == 200, result.text
+    assert result.json()["created_snapshots_count"] == 1
+    assert result.json()["created_transactions_count"] == 1
+    snapshot = db_session.scalar(select(UberOrderSnapshot).where(UberOrderSnapshot.uber_order_id == "workflow-test-1"))
+    transaction = db_session.scalar(select(UberFinancialTransaction).where(UberFinancialTransaction.uber_order_id == "workflow-test-1"))
+    assert snapshot is not None
+    assert snapshot.display_id == "#TEST1"
+    assert transaction is not None
+    assert transaction.amount == Decimal("-24.99")
+
+
 def test_preview_rejects_forbidden_extension_and_reports_missing_columns(unauthenticated_client: TestClient) -> None:
     owner_token = bootstrap_owner(unauthenticated_client)
     forbidden = unauthenticated_client.post(
