@@ -85,15 +85,17 @@ export default function PublicEvidenceUploadPage() {
               Ce lien sert uniquement a joindre la preuve demandee. Aucun email n'est envoye automatiquement.
             </p>
             <div className="field">
-              <label htmlFor="public_evidence_file">Fichier</label>
+              <label htmlFor="public_evidence_file">Photo ou fichier</label>
               <input
                 id="public_evidence_file"
                 type="file"
                 accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
+                capture="environment"
                 required
                 disabled={Boolean(uploadResult)}
                 onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
               />
+              <span className="muted">Sur mobile, TENNET ouvre directement la camera quand le navigateur le permet.</span>
             </div>
             <button type="submit" className="button" disabled={submitting || Boolean(uploadResult)}>
               {submitting ? "Ajout" : uploadResult ? "Preuve ajoutee" : "Envoyer la preuve"}

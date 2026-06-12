@@ -240,16 +240,18 @@ export default function EvidenceTaskDetailPage() {
             <StatusBadge status={task.required_evidence_type} />
           </div>
           <div className="field">
-            <label htmlFor="task_file">Fichier</label>
+            <label htmlFor="task_file">Photo ou fichier</label>
             <input
               key={fileInputKey}
               id="task_file"
               type="file"
               accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,application/pdf,image/jpeg,image/png,image/webp,image/heic,image/heif"
+              capture="environment"
               disabled={!isActive}
               required
               onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
             />
+            <span className="muted">Sur mobile, TENNET ouvre directement la camera quand le navigateur le permet.</span>
           </div>
           <button type="submit" className="button" disabled={!isActive || submitting}>
             {submitting ? "Ajout" : "Ajouter la preuve"}

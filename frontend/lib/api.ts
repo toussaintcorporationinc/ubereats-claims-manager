@@ -913,6 +913,9 @@ export type LiveEvidenceStationResponse = {
   high_priority_count: number;
   printer_mode: "browser_print";
   bluetooth_supported: boolean;
+  camera_capture_supported: boolean;
+  native_printer_bridge_ready: boolean;
+  native_printer_bridge_contract: string;
   safe_capture_rules: string[];
   limit: number;
   offset: number;

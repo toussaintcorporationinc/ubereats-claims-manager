@@ -121,7 +121,7 @@ export default function LiveEvidenceStationPage() {
           <div className="section-heading">
             <h2>File active</h2>
             <span className="muted">
-              Impression via navigateur maintenant. Bluetooth direct prevu cote app native, sans lecture tablette Uber.
+              Impression navigateur maintenant, camera mobile directe et bridge natif Bluetooth pret cote API, sans lecture tablette Uber.
             </span>
           </div>
           <div className="detail-grid detail-grid--compact">
@@ -129,6 +129,12 @@ export default function LiveEvidenceStationPage() {
             <StationMetric label="Urgentes" value={station.urgent_count} />
             <StationMetric label="Haute priorite" value={station.high_priority_count} />
             <StationMetric label="Deja uploadees" value={station.uploaded_count} />
+          </div>
+          <div className="success-box">
+            <strong>Materiel terrain</strong>
+            <span>Camera mobile : {station.camera_capture_supported ? "prete" : "non disponible"}</span>
+            <span>Impression actuelle : dialogue systeme / imprimante deja appairee</span>
+            <span>Bridge natif imprimante ticket : {station.native_printer_bridge_ready ? "contrat API pret" : "non pret"}</span>
           </div>
           <div className="filters">
             <div className="field">
