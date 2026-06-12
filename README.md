@@ -408,3 +408,11 @@ Mission 30 ajoute une couche UX premium :
 - une PWA legere permet l'ajout a l'ecran d'accueil sans stockage sensible offline.
 
 Voir `docs/SMART_IMPORT.md`, `docs/MOBILE_USAGE.md`, `docs/DESIGN_SYSTEM.md` et `docs/PREMIUM_UX_PRINCIPLES.md`.
+
+## App native mobile
+
+Une base mobile native Expo/React Native est disponible dans `mobile/tennet-native`.
+
+Elle couvre les usages terrain prioritaires : connexion TENNET, actions urgentes, taches de preuves, photo/PDF, impression de ticket preuve, scan QR de lien mobile tokenise et cockpit recuperation. Elle utilise les permissions backend existantes et ne declenche aucun Gmail, OpenAI, AutoPilot ou envoi automatique.
+
+Voir `docs/NATIVE_MOBILE_APP.md`.

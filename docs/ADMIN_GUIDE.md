@@ -262,3 +262,9 @@ Staff mobile usage should stay focused on proof tasks. Staff must not receive fi
 
 See `docs/SMART_IMPORT.md`, `docs/MOBILE_USAGE.md` and `docs/DESIGN_SYSTEM.md`.
 
+## Native mobile administration
+
+The native mobile app lives in `mobile/tennet-native` and uses the official TENNET API by default. For staging tests, set `EXPO_PUBLIC_API_BASE_URL` and `EXPO_PUBLIC_WEB_APP_URL` before running Expo.
+
+Publishing to Google Play requires owner-controlled Play Console access, app signing and privacy declarations. Never commit keystores, service account JSON files, Play credentials or 2FA codes.
+
