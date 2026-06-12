@@ -333,6 +333,9 @@ def test_live_evidence_station_returns_prioritized_active_tasks(configured_clien
     assert [task["id"] for task in data["tasks"]][0] == urgent_task.id
     assert data["printer_mode"] == "browser_print"
     assert data["bluetooth_supported"] is False
+    assert data["camera_capture_supported"] is True
+    assert data["native_printer_bridge_ready"] is True
+    assert "print-ticket" in data["native_printer_bridge_contract"]
     assert any("Ne jamais lire" in rule for rule in data["safe_capture_rules"])
     assert "storage_path" not in str(data)
 

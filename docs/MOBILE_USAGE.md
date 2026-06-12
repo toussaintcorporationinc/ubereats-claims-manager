@@ -7,7 +7,8 @@ Sur mobile :
 - les tableaux critiques ont une lecture en cartes ;
 - les boutons principaux sont larges ;
 - les pages operationnelles peuvent afficher une barre d'action sticky ;
-- les uploads acceptent images, PDF et ZIP selon le contexte.
+- les uploads acceptent images, PDF et ZIP selon le contexte ;
+- les uploads de preuves ouvrent directement la camera arriere quand le navigateur supporte `capture=environment`.
 
 Sur tablette :
 - les listes peuvent s'afficher a cote du detail quand l'espace le permet ;
@@ -21,6 +22,6 @@ Mode terrain staff :
 - pas de cockpit financier avance ;
 - pas d'action Gmail, AutoPilot ou appel.
 
-La station preuves peut utiliser une imprimante deja reconnue par le navigateur ou le systeme. Une integration Bluetooth native pourra etre ajoutee plus tard pour imprimer les tickets TENNET, mais elle ne doit jamais lire la tablette Uber Eats ni contourner les imports officiels.
+La station preuves peut utiliser une imprimante deja reconnue par le navigateur ou le systeme. Une integration Bluetooth native pourra imprimer les tickets TENNET via le contrat `docs/NATIVE_DEVICE_BRIDGE.md`, mais elle ne doit jamais lire la tablette Uber Eats ni contourner les imports officiels.
 
 TENNET ne stocke pas de donnees sensibles offline. La PWA legere sert uniquement a faciliter l'ajout a l'ecran d'accueil.

@@ -81,7 +81,7 @@ Open `/live-evidence` when the restaurant team needs to collect proofs fast on p
 3. Print the TENNET ticket on the available system printer.
 4. Put the ticket next to the receipt, prepared order, waste photo or requested proof.
 5. Scan the QR code or open the upload link.
-6. Upload the photo.
+6. Upload the photo. On compatible mobile browsers, TENNET opens the camera directly.
 
 The station does not read the Uber Eats tablet, does not invent proof and does not send email. It only routes field evidence to the right TENNET task.
 
