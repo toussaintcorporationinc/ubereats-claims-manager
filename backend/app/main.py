@@ -22,6 +22,7 @@ from app.routes import (
     followups,
     health,
     imports,
+    live_evidence,
     orders,
     recovery,
     reports,
@@ -110,6 +111,7 @@ app.include_router(drafts.router)
 app.include_router(email.router)
 app.include_router(followups.router)
 app.include_router(imports.router)
+app.include_router(live_evidence.router)
 app.include_router(dashboard.router)
 app.include_router(response_reviews.router)
 app.include_router(users.router)

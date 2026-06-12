@@ -362,6 +362,7 @@ Endpoints :
 - `POST /v1/evidence-tasks/{task_id}/complete`
 - `POST /v1/evidence-tasks/{task_id}/upload-link`
 - `POST /v1/evidence-tasks/{task_id}/print-ticket`
+- `GET /v1/live-evidence/station`
 - `GET /v1/evidence-upload-links/{token}`
 - `POST /v1/evidence-upload-links/{token}/upload`
 - `POST /v1/evidence-upload-links/{id}/revoke`
@@ -571,6 +572,49 @@ Regles :
 - le ticket affiche restaurant, commande Uber, montant, preuve attendue et reference TENNET ;
 - la creation du ticket est auditee ;
 - aucun email, aucune contestation et aucune relance ne sont declenches.
+
+### Station preuves terrain
+
+`GET /v1/live-evidence/station`
+
+Query params :
+
+- `restaurant_id`
+- `status`
+- `priority`
+- `assigned_to_me`
+- `limit`
+- `offset`
+
+Retour :
+
+```json
+{
+  "tasks": [],
+  "recommended_task_id": 1,
+  "total_active_tasks": 12,
+  "pending_count": 10,
+  "uploaded_count": 2,
+  "urgent_count": 3,
+  "high_priority_count": 6,
+  "printer_mode": "browser_print",
+  "bluetooth_supported": false,
+  "safe_capture_rules": [
+    "Imprimer uniquement le ticket TENNET lie a la commande."
+  ],
+  "limit": 50,
+  "offset": 0
+}
+```
+
+Regles :
+
+- `owner` voit tous les restaurants ;
+- `manager` et `staff` voient uniquement leurs restaurants assignes ;
+- par defaut, seules les taches `pending` et `uploaded` sont retournees ;
+- les taches sont triees pour le terrain par priorite puis echeance ;
+- aucun `storage_path`, token brut, secret Gmail ou secret Resend n'est expose ;
+- `bluetooth_supported=false` indique que TENNET utilise l'impression navigateur en V1.
 
 ## Imports commandes
 

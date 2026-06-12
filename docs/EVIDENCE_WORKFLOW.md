@@ -89,6 +89,22 @@ Par defaut, le ticket cree un lien mobile limite a un usage. Le token brut n'est
 
 Le staff assigne peut creer ce ticket sur ses restaurants, car c'est une action de collecte de preuve. Il ne peut toujours pas ignorer une tache, la completer manuellement, creer de brouillon ou traiter une decision financiere.
 
+## Station preuves terrain
+
+La page `/live-evidence` expose une file terrain plus directe que `/evidence-tasks`.
+
+Elle permet de :
+
+- voir la prochaine preuve recommandee ;
+- filtrer par priorite ;
+- imprimer un ticket TENNET en un clic ;
+- ouvrir le lien d'upload photo cree par le ticket ;
+- rappeler les regles de capture sure au staff.
+
+Le backend expose `GET /v1/live-evidence/station`. La reponse contient uniquement des taches accessibles a l'utilisateur connecte, les compteurs de priorite et les regles terrain. Elle ne retourne pas de `storage_path`, de token brut ou de secret.
+
+L'impression directe Bluetooth reste un sujet d'application native future. En V1, TENNET utilise l'impression navigateur et ne se connecte jamais a une tablette Uber Eats.
+
 ## Import massif de preuves
 
 La page `/evidence-imports` permet a un owner ou manager d'importer des fichiers existants en vrac ou via ZIP.
