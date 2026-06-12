@@ -46,13 +46,17 @@ module.exports = function withTennetNativePrinter(config) {
 };
 
 function injectPrinterPackage(contents) {
-  if (contents.includes("TennetPrinterPackage")) {
+  if (contents.includes("add(TennetPrinterPackage())") || contents.includes("new TennetPrinterPackage()")) {
     return contents;
   }
 
   if (contents.includes("class MainApplication") && contents.includes("PackageList(this).packages")) {
     return contents
       .replace(/(import com\.facebook\.react\.PackageList[^\n]*\n)/, "$1import com.thetennet.mobile.printer.TennetPrinterPackage\n")
+      .replace(
+        /(PackageList\(this\)\.packages\.apply \{\n)/,
+        "$1          add(TennetPrinterPackage())\n",
+      )
       .replace(
         /(val packages = PackageList\(this\)\.packages[^\n]*\n)/,
         "$1          packages.add(TennetPrinterPackage())\n",

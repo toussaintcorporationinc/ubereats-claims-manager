@@ -5,7 +5,7 @@ import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
-import { StatusBar } from "expo-status-bar";
+import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import React, { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -17,6 +17,7 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
+  StatusBar as NativeStatusBar,
   Text,
   TextInput,
   View,
@@ -186,7 +187,7 @@ export default function App() {
 function Shell({ children }: { children: ReactNode }) {
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
+      <ExpoStatusBar style="dark" />
       {children}
     </SafeAreaView>
   );
@@ -252,9 +253,9 @@ function LoginScreen({ onLoggedIn }: { onLoggedIn: (session: Session) => void })
 function Header({ session, loading, onRefresh }: { session: Session; loading: boolean; onRefresh: () => void }) {
   return (
     <View style={styles.header}>
-      <View>
-        <Text style={styles.headerEyebrow}>TENNET mobile</Text>
-        <Text style={styles.headerTitle}>Bonjour {session.user.full_name || session.user.email.split("@")[0]}</Text>
+      <View style={styles.headerIdentity}>
+        <Text style={styles.headerEyebrow} numberOfLines={1}>TENNET mobile</Text>
+        <Text style={styles.headerTitle} numberOfLines={1}>Bonjour {session.user.full_name || session.user.email.split("@")[0]}</Text>
       </View>
       <Pressable style={styles.refreshButton} onPress={onRefresh} disabled={loading}>
         <Text style={styles.refreshButtonText}>{loading ? "..." : "Sync"}</Text>
@@ -759,6 +760,7 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.canvas,
+    paddingTop: Platform.OS === "android" ? NativeStatusBar.currentHeight ?? 0 : 0,
   },
   app: {
     flex: 1,
@@ -766,7 +768,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: spacing.lg,
-    paddingBottom: 110,
+    paddingBottom: Platform.OS === "android" ? 240 : 150,
   },
   stack: {
     gap: spacing.lg,
@@ -832,13 +834,19 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     backgroundColor: colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: colors.line,
+  },
+  headerIdentity: {
+    flex: 1,
+    paddingRight: spacing.md,
+    minWidth: 0,
   },
   headerEyebrow: {
     color: colors.primary,
@@ -877,21 +885,24 @@ const styles = StyleSheet.create({
   },
   heroTitle: {
     color: colors.white,
-    fontSize: 28,
-    lineHeight: 34,
+    fontSize: 26,
+    lineHeight: 32,
     fontWeight: "900",
     letterSpacing: 0,
   },
   heroMetrics: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: spacing.md,
   },
   quickGrid: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: spacing.md,
   },
   quickAction: {
     flex: 1,
+    minWidth: 150,
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
     padding: spacing.lg,
@@ -996,10 +1007,12 @@ const styles = StyleSheet.create({
   },
   actionRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: spacing.md,
   },
   primaryButton: {
     flex: 1,
+    minWidth: 150,
     minHeight: 52,
     borderRadius: radius.md,
     backgroundColor: colors.primary,
@@ -1012,6 +1025,7 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     flex: 1,
+    minWidth: 150,
     minHeight: 52,
     borderRadius: radius.md,
     backgroundColor: colors.surfaceWarm,
@@ -1126,7 +1140,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: spacing.md,
     right: spacing.md,
-    bottom: Platform.OS === "ios" ? spacing.lg : spacing.md,
+    bottom: Platform.OS === "ios" ? spacing.lg : 76,
     minHeight: 64,
     borderRadius: radius.lg,
     backgroundColor: colors.surface,

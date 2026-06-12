@@ -81,7 +81,10 @@ function printerScore(device: NativePrinterDevice): number {
   const name = device.name.toLowerCase();
   let score = 0;
   if (name.includes("sunmi")) score += 100;
+  if (name.includes("cloudprint")) score += 90;
+  if (name.includes("cloud print")) score += 90;
   if (name.includes("printer")) score += 40;
+  if (name.includes("print")) score += 35;
   if (name.includes("pos")) score += 30;
   if (name.includes("ticket")) score += 30;
   if (name.includes("receipt")) score += 30;
