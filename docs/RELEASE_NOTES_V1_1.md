@@ -11,7 +11,6 @@ This patch aligns the repository with the production domain migration:
 - `thetennet.com` is the official TENNET domain.
 - Production uses `https://app.thetennet.com` and `https://api.thetennet.com`.
 - Staging uses `https://staging-app.thetennet.com` and `https://staging-api.thetennet.com`.
-- `leboxerfrancais.com` remains a temporary fallback.
 - Resend is documented for the verified domain `mail.thetennet.com`.
 - Resend remains disabled by default and no API key is stored in the repository.
 - Gmail remains separate for Uber conversation threads.

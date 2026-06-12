@@ -4,8 +4,6 @@ Base URL locale backend : `http://localhost:8000`
 Base URL production officielle : `https://api.thetennet.com`
 Base URL staging officielle : `https://staging-api.thetennet.com`
 
-Les anciens domaines `api.leboxerfrancais.com` et `staging-api.leboxerfrancais.com` restent des fallbacks temporaires pendant la migration.
-
 ## Health
 
 - `GET /health`

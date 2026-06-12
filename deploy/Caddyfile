@@ -26,24 +26,6 @@ api.thetennet.com {
 	reverse_proxy backend:8000
 }
 
-app.leboxerfrancais.com {
-	encode zstd gzip
-	import security_headers
-
-	reverse_proxy frontend:3000
-}
-
-api.leboxerfrancais.com {
-	encode zstd gzip
-	import security_headers
-
-	request_body {
-		max_size 25MB
-	}
-
-	reverse_proxy backend:8000
-}
-
 staging-app.thetennet.com {
 	encode zstd gzip
 	import security_headers
@@ -52,24 +34,6 @@ staging-app.thetennet.com {
 }
 
 staging-api.thetennet.com {
-	encode zstd gzip
-	import security_headers
-
-	request_body {
-		max_size 25MB
-	}
-
-	reverse_proxy tennet-staging-backend:8000
-}
-
-staging-app.leboxerfrancais.com {
-	encode zstd gzip
-	import security_headers
-
-	reverse_proxy tennet-staging-frontend:3000
-}
-
-staging-api.leboxerfrancais.com {
 	encode zstd gzip
 	import security_headers
 
