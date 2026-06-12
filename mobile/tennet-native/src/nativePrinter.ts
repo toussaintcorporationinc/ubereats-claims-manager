@@ -2,10 +2,12 @@ import { NativeModules, PermissionsAndroid, Platform } from "react-native";
 
 import { EvidencePrintTicket } from "./api";
 
-type NativePrinterDevice = {
+export type NativePrinterDevice = {
   name: string;
   address: string;
   type: "bluetooth";
+  bonded?: boolean;
+  printerLike?: boolean;
 };
 
 type NativePrinterCapabilities = {
@@ -18,6 +20,9 @@ type NativePrinterCapabilities = {
 type TennetNativePrinterModule = {
   getCapabilities: () => Promise<NativePrinterCapabilities>;
   listBluetoothPrinters: () => Promise<NativePrinterDevice[]>;
+  scanBluetoothDevices: (timeoutMs: number) => Promise<NativePrinterDevice[]>;
+  pairBluetoothDevice: (address: string) => Promise<{ name: string; address: string; bonded: boolean; pairingStarted: boolean }>;
+  openBluetoothSettings: () => Promise<boolean>;
   printBluetoothTicket: (address: string, ticket: EvidencePrintTicket) => Promise<{ printed: boolean; printer: string }>;
 };
 
@@ -39,13 +44,50 @@ export async function getNativePrinterCapabilities(): Promise<NativePrinterCapab
   return nativePrinter.getCapabilities();
 }
 
-export async function printTicketOnNativePrinter(ticket: EvidencePrintTicket): Promise<string> {
+export async function listNativePrinters(): Promise<NativePrinterDevice[]> {
+  if (!hasNativePrinter() || !nativePrinter) {
+    return [];
+  }
+  await ensureBluetoothPermission();
+  return nativePrinter.listBluetoothPrinters();
+}
+
+export async function scanNativePrinters(timeoutMs = 9000): Promise<NativePrinterDevice[]> {
+  if (!hasNativePrinter() || !nativePrinter) {
+    return [];
+  }
+  await ensureBluetoothPermission();
+  return nativePrinter.scanBluetoothDevices(timeoutMs);
+}
+
+export async function pairNativePrinter(printer: NativePrinterDevice): Promise<void> {
   if (!hasNativePrinter() || !nativePrinter) {
     throw new Error("Module imprimante natif absent dans ce build Android.");
   }
   await ensureBluetoothPermission();
-  const printers = await nativePrinter.listBluetoothPrinters();
-  const printer = selectBestPrinter(printers);
+  const result = await nativePrinter.pairBluetoothDevice(printer.address);
+  if (!result.pairingStarted) {
+    throw new Error("Android n'a pas pu lancer l'appairage Bluetooth.");
+  }
+}
+
+export async function openNativeBluetoothSettings(): Promise<void> {
+  if (!hasNativePrinter() || !nativePrinter) {
+    throw new Error("Module imprimante natif absent dans ce build Android.");
+  }
+  await nativePrinter.openBluetoothSettings();
+}
+
+export async function getRecommendedNativePrinter(): Promise<NativePrinterDevice | null> {
+  const printers = await listNativePrinters();
+  return selectBestPrinter(printers);
+}
+
+export async function printTicketOnNativePrinter(ticket: EvidencePrintTicket, selectedPrinter?: NativePrinterDevice | null): Promise<string> {
+  if (!hasNativePrinter() || !nativePrinter) {
+    throw new Error("Module imprimante natif absent dans ce build Android.");
+  }
+  const printer = selectedPrinter ?? await getRecommendedNativePrinter();
   if (!printer) {
     throw new Error("Aucune imprimante ticket Bluetooth appairee. Appaire d'abord l'imprimante dans Android.");
   }
@@ -60,6 +102,7 @@ async function ensureBluetoothPermission(): Promise<void> {
   const granted = await PermissionsAndroid.requestMultiple([
     PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
     PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+    PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
   ]);
   if (
     granted[PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT] !== PermissionsAndroid.RESULTS.GRANTED ||

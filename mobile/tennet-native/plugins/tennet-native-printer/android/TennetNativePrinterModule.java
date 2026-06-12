@@ -1,11 +1,17 @@
 package com.thetennet.mobile.printer;
 
 import android.Manifest;
+import android.bluetooth.BluetoothClass;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.provider.Settings;
 
 import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
@@ -24,6 +30,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.OutputStream;
 import java.nio.charset.Charset;
 import java.text.Normalizer;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -69,17 +77,131 @@ public class TennetNativePrinterModule extends ReactContextBaseJavaModule {
       WritableArray devices = Arguments.createArray();
       Set<BluetoothDevice> bondedDevices = adapter.getBondedDevices();
       for (BluetoothDevice device : bondedDevices) {
-        WritableMap row = Arguments.createMap();
-        row.putString("name", safeDeviceName(device));
-        row.putString("address", device.getAddress());
-        row.putString("type", "bluetooth");
-        devices.pushMap(row);
+        devices.pushMap(deviceRow(device));
       }
       promise.resolve(devices);
     } catch (SecurityException exception) {
       promise.reject("bluetooth_permission_required", exception.getMessage(), exception);
     } catch (Exception exception) {
       promise.reject("bluetooth_list_failed", exception.getMessage(), exception);
+    }
+  }
+
+  @ReactMethod
+  public void scanBluetoothDevices(double timeoutMs, Promise promise) {
+    new Thread(() -> {
+      BroadcastReceiver receiver = null;
+      ReactApplicationContext context = getReactApplicationContext();
+      try {
+        ensureBluetoothConnectPermission();
+        ensureBluetoothScanPermission();
+
+        BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+        if (adapter == null || !adapter.isEnabled()) {
+          promise.reject("bluetooth_disabled", "Bluetooth indisponible ou eteint.");
+          return;
+        }
+
+        Map<String, BluetoothDevice> devices = new LinkedHashMap<>();
+        Set<BluetoothDevice> bondedDevices = adapter.getBondedDevices();
+        for (BluetoothDevice device : bondedDevices) {
+          devices.put(device.getAddress(), device);
+        }
+
+        receiver = new BroadcastReceiver() {
+          @Override
+          public void onReceive(Context ignoredContext, Intent intent) {
+            if (BluetoothDevice.ACTION_FOUND.equals(intent.getAction())) {
+              BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+              if (device != null) {
+                synchronized (devices) {
+                  devices.put(device.getAddress(), device);
+                }
+              }
+            }
+          }
+        };
+
+        IntentFilter filter = new IntentFilter(BluetoothDevice.ACTION_FOUND);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+          context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+          context.registerReceiver(receiver, filter);
+        }
+        if (adapter.isDiscovering()) {
+          adapter.cancelDiscovery();
+        }
+        adapter.startDiscovery();
+
+        long waitMs = Math.max(4000L, Math.min((long) timeoutMs, 15000L));
+        Thread.sleep(waitMs);
+
+        if (adapter.isDiscovering()) {
+          adapter.cancelDiscovery();
+        }
+        context.unregisterReceiver(receiver);
+        receiver = null;
+
+        WritableArray rows = Arguments.createArray();
+        synchronized (devices) {
+          for (BluetoothDevice device : devices.values()) {
+            rows.pushMap(deviceRow(device));
+          }
+        }
+        promise.resolve(rows);
+      } catch (SecurityException exception) {
+        promise.reject("bluetooth_permission_required", exception.getMessage(), exception);
+      } catch (Exception exception) {
+        promise.reject("bluetooth_scan_failed", exception.getMessage(), exception);
+      } finally {
+        if (receiver != null) {
+          try {
+            context.unregisterReceiver(receiver);
+          } catch (Exception ignored) {
+          }
+        }
+      }
+    }).start();
+  }
+
+  @ReactMethod
+  public void pairBluetoothDevice(String address, Promise promise) {
+    try {
+      ensureBluetoothConnectPermission();
+      if (!BluetoothAdapter.checkBluetoothAddress(address)) {
+        promise.reject("invalid_printer_address", "Adresse Bluetooth invalide.");
+        return;
+      }
+
+      BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
+      if (adapter == null || !adapter.isEnabled()) {
+        promise.reject("bluetooth_disabled", "Bluetooth indisponible ou eteint.");
+        return;
+      }
+
+      BluetoothDevice device = adapter.getRemoteDevice(address);
+      WritableMap result = Arguments.createMap();
+      result.putString("name", safeDeviceName(device));
+      result.putString("address", device.getAddress());
+      result.putBoolean("bonded", device.getBondState() == BluetoothDevice.BOND_BONDED);
+      result.putBoolean("pairingStarted", device.getBondState() == BluetoothDevice.BOND_BONDED || device.createBond());
+      promise.resolve(result);
+    } catch (SecurityException exception) {
+      promise.reject("bluetooth_permission_required", exception.getMessage(), exception);
+    } catch (Exception exception) {
+      promise.reject("bluetooth_pair_failed", exception.getMessage(), exception);
+    }
+  }
+
+  @ReactMethod
+  public void openBluetoothSettings(Promise promise) {
+    try {
+      Intent intent = new Intent(Settings.ACTION_BLUETOOTH_SETTINGS);
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      getReactApplicationContext().startActivity(intent);
+      promise.resolve(true);
+    } catch (Exception exception) {
+      promise.reject("bluetooth_settings_failed", exception.getMessage(), exception);
     }
   }
 
@@ -168,6 +290,39 @@ public class TennetNativePrinterModule extends ReactContextBaseJavaModule {
         throw new SecurityException("Permission BLUETOOTH_CONNECT manquante.");
       }
     }
+  }
+
+  private void ensureBluetoothScanPermission() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      int permission = ContextCompat.checkSelfPermission(getReactApplicationContext(), Manifest.permission.BLUETOOTH_SCAN);
+      if (permission != PackageManager.PERMISSION_GRANTED) {
+        throw new SecurityException("Permission BLUETOOTH_SCAN manquante.");
+      }
+    } else {
+      int permission = ContextCompat.checkSelfPermission(getReactApplicationContext(), Manifest.permission.ACCESS_FINE_LOCATION);
+      if (permission != PackageManager.PERMISSION_GRANTED) {
+        throw new SecurityException("Permission ACCESS_FINE_LOCATION manquante pour scanner Bluetooth.");
+      }
+    }
+  }
+
+  private WritableMap deviceRow(BluetoothDevice device) {
+    WritableMap row = Arguments.createMap();
+    row.putString("name", safeDeviceName(device));
+    row.putString("address", device.getAddress());
+    row.putString("type", "bluetooth");
+    row.putBoolean("bonded", device.getBondState() == BluetoothDevice.BOND_BONDED);
+    row.putBoolean("printerLike", isPrinterLike(device));
+    return row;
+  }
+
+  private boolean isPrinterLike(BluetoothDevice device) {
+    String name = safeDeviceName(device).toLowerCase();
+    if (name.contains("sunmi") || name.contains("print") || name.contains("printer") || name.contains("pos") || name.contains("ticket")) {
+      return true;
+    }
+    BluetoothClass bluetoothClass = device.getBluetoothClass();
+    return bluetoothClass != null && bluetoothClass.getMajorDeviceClass() == BluetoothClass.Device.Major.IMAGING;
   }
 
   private boolean isSunmiCompatible() {

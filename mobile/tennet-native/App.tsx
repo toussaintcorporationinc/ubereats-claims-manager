@@ -4,6 +4,7 @@ import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Print from "expo-print";
+import * as SecureStore from "expo-secure-store";
 import * as Sharing from "expo-sharing";
 import { StatusBar as ExpoStatusBar } from "expo-status-bar";
 import React, { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
@@ -42,11 +43,21 @@ import {
   request,
   uploadFile,
 } from "./src/api";
-import { getNativePrinterCapabilities, hasNativePrinter, printTicketOnNativePrinter } from "./src/nativePrinter";
+import {
+  NativePrinterDevice,
+  getNativePrinterCapabilities,
+  hasNativePrinter,
+  openNativeBluetoothSettings,
+  pairNativePrinter,
+  printTicketOnNativePrinter,
+  scanNativePrinters,
+} from "./src/nativePrinter";
 import { colors, radius, shadow, spacing } from "./src/theme";
 import { colorForStatus, formatCurrency, formatDate, getUploadTokenFromUrl, labelForEvidence, priorityRank, readableLabel } from "./src/utils";
 
 type TabKey = "home" | "proofs" | "scan" | "recovery" | "account";
+
+const PRINTER_KEY = "tennet_selected_printer";
 
 type AppData = {
   dashboard: DashboardSummary | null;
@@ -71,6 +82,7 @@ export default function App() {
   const [selectedTask, setSelectedTask] = useState<EvidenceTask | null>(null);
   const [publicToken, setPublicToken] = useState<string | null>(null);
   const [publicLink, setPublicLink] = useState<PublicEvidenceUploadLink | null>(null);
+  const [selectedPrinter, setSelectedPrinter] = useState<NativePrinterDevice | null>(null);
   const isFieldOnly = session?.user.role === "staff";
 
   const refresh = useCallback(async () => {
@@ -103,6 +115,25 @@ export default function App() {
       .then((stored) => setSession(stored))
       .finally(() => setBooting(false));
   }, []);
+
+  useEffect(() => {
+    SecureStore.getItemAsync(PRINTER_KEY)
+      .then((stored) => {
+        if (stored) {
+          setSelectedPrinter(JSON.parse(stored) as NativePrinterDevice);
+        }
+      })
+      .catch(() => setSelectedPrinter(null));
+  }, []);
+
+  const handleSelectPrinter = async (printer: NativePrinterDevice | null) => {
+    setSelectedPrinter(printer);
+    if (printer) {
+      await SecureStore.setItemAsync(PRINTER_KEY, JSON.stringify(printer));
+    } else {
+      await SecureStore.deleteItemAsync(PRINTER_KEY);
+    }
+  };
 
   useEffect(() => {
     if (session) {
@@ -164,19 +195,19 @@ export default function App() {
         >
           {tab === "home" ? (
             isFieldOnly ? (
-              <ProofsScreen tasks={data.tasks} selectedTask={selectedTask} onOpenTask={setSelectedTask} onUploaded={refresh} session={session} minimal />
+              <ProofsScreen tasks={data.tasks} selectedTask={selectedTask} onOpenTask={setSelectedTask} onUploaded={refresh} session={session} selectedPrinter={selectedPrinter} minimal />
             ) : (
               <HomeScreen data={data} onOpenTask={setSelectedTask} onGoProofs={() => setTab("proofs")} onGoRecovery={() => setTab("recovery")} />
             )
           ) : null}
           {tab === "proofs" ? (
-            <ProofsScreen tasks={data.tasks} selectedTask={selectedTask} onOpenTask={setSelectedTask} onUploaded={refresh} session={session} />
+            <ProofsScreen tasks={data.tasks} selectedTask={selectedTask} onOpenTask={setSelectedTask} onUploaded={refresh} session={session} selectedPrinter={selectedPrinter} />
           ) : null}
           {tab === "scan" ? (
             <ScanScreen token={publicToken} link={publicLink} onToken={handleToken} onUploaded={refresh} />
           ) : null}
           {tab === "recovery" ? <RecoveryScreen summary={data.recovery} actions={data.nextActions} /> : null}
-          {tab === "account" ? <AccountScreen session={session} onLogout={handleLogout} /> : null}
+          {tab === "account" ? <AccountScreen session={session} onLogout={handleLogout} selectedPrinter={selectedPrinter} onSelectPrinter={handleSelectPrinter} /> : null}
         </ScrollView>
         {isFieldOnly ? null : <BottomNav active={tab} onChange={setTab} />}
       </View>
@@ -320,6 +351,7 @@ function ProofsScreen({
   onOpenTask,
   onUploaded,
   session,
+  selectedPrinter,
   minimal = false,
 }: {
   tasks: EvidenceTask[];
@@ -327,6 +359,7 @@ function ProofsScreen({
   onOpenTask: (task: EvidenceTask | null) => void;
   onUploaded: () => Promise<void>;
   session: Session;
+  selectedPrinter: NativePrinterDevice | null;
   minimal?: boolean;
 }) {
   const task = selectedTask ?? tasks[0] ?? null;
@@ -336,7 +369,7 @@ function ProofsScreen({
       <Text style={styles.screenSubtitle}>
         {minimal ? "TENNET choisit la prochaine preuve. Tu imprimes, tu prends la photo, TENNET classe." : "Photographie, importe ou imprime un ticket preuve pour guider le restaurant."}
       </Text>
-      {task ? <TaskDetail task={task} onUploaded={onUploaded} session={session} minimal={minimal} /> : <EmptyState title="Aucune preuve en attente" body="Tout est propre pour l'instant." />}
+      {task ? <TaskDetail task={task} onUploaded={onUploaded} session={session} selectedPrinter={selectedPrinter} minimal={minimal} /> : <EmptyState title="Aucune preuve en attente" body="Tout est propre pour l'instant." />}
       {minimal ? null : (
         <>
           <SectionHeader title="File de preuves" />
@@ -349,7 +382,19 @@ function ProofsScreen({
   );
 }
 
-function TaskDetail({ task, onUploaded, session, minimal = false }: { task: EvidenceTask; onUploaded: () => Promise<void>; session: Session; minimal?: boolean }) {
+function TaskDetail({
+  task,
+  onUploaded,
+  session,
+  selectedPrinter,
+  minimal = false,
+}: {
+  task: EvidenceTask;
+  onUploaded: () => Promise<void>;
+  session: Session;
+  selectedPrinter: NativePrinterDevice | null;
+  minimal?: boolean;
+}) {
   const [busy, setBusy] = useState<string | null>(null);
 
   const upload = async (file: UploadableFile) => {
@@ -406,9 +451,20 @@ function TaskDetail({ task, onUploaded, session, minimal = false }: { task: Evid
         session,
       );
       if (hasNativePrinter()) {
-        await printTicketOnNativePrinter(ticket);
+        if (!selectedPrinter) {
+          Alert.alert("Imprimante non choisie", "Va dans Compte > Imprimante et choisis ton imprimante Bluetooth.");
+          return;
+        }
+        await printTicketOnNativePrinter(ticket, selectedPrinter);
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        await takePhoto();
+        Alert.alert(
+          "Ticket envoye",
+          `TENNET a envoye le ticket a ${selectedPrinter.name}. Si le papier est sorti, prends la photo maintenant.`,
+          [
+            { text: "Annuler", style: "cancel" },
+            { text: "Prendre photo", onPress: () => void takePhoto() },
+          ],
+        );
       } else {
         await Print.printAsync({ html: ticket.print_html });
       }
@@ -428,7 +484,11 @@ function TaskDetail({ task, onUploaded, session, minimal = false }: { task: Evid
       }
       Alert.alert(
         "Imprimante native",
-        capabilities.bluetoothEnabled ? "Bluetooth pret. TENNET imprimera sur l'imprimante ticket appairee." : "Bluetooth indisponible ou eteint sur cet appareil.",
+        capabilities.bluetoothEnabled
+          ? selectedPrinter
+            ? `Bluetooth pret. Imprimante choisie: ${selectedPrinter.name}.`
+            : "Bluetooth pret. Choisis d'abord ton imprimante dans Compte > Imprimante."
+          : "Bluetooth indisponible ou eteint sur cet appareil.",
       );
     } catch (error) {
       Alert.alert("Imprimante native", error instanceof Error ? error.message : "Verification impossible.");
@@ -605,10 +665,129 @@ function RecoveryScreen({ summary, actions }: { summary: RecoverySummary | null;
   );
 }
 
-function AccountScreen({ session, onLogout }: { session: Session; onLogout: () => void }) {
+function AccountScreen({
+  session,
+  onLogout,
+  selectedPrinter,
+  onSelectPrinter,
+}: {
+  session: Session;
+  onLogout: () => void;
+  selectedPrinter: NativePrinterDevice | null;
+  onSelectPrinter: (printer: NativePrinterDevice | null) => Promise<void>;
+}) {
+  const [printers, setPrinters] = useState<NativePrinterDevice[]>([]);
+  const [printerBusy, setPrinterBusy] = useState(false);
+
+  const refreshPrinters = async () => {
+    setPrinterBusy(true);
+    try {
+      const capabilities = await getNativePrinterCapabilities();
+      if (!capabilities.nativeModuleAvailable) {
+        Alert.alert("Imprimante", "Ce build Android n'a pas le module imprimante natif.");
+        return;
+      }
+      if (!capabilities.bluetoothEnabled) {
+        Alert.alert("Bluetooth eteint", "Active le Bluetooth Android et appaire ton imprimante, puis reviens ici.");
+        return;
+      }
+      const devices = (await scanNativePrinters(9000)).sort((left, right) => {
+        if (left.printerLike !== right.printerLike) {
+          return left.printerLike ? -1 : 1;
+        }
+        return left.name.localeCompare(right.name);
+      });
+      setPrinters(devices);
+      if (!devices.length) {
+        Alert.alert("Aucun appareil", "Aucun appareil Bluetooth detecte. Allume l'imprimante, rends-la visible, puis relance le scan.");
+      }
+    } catch (error) {
+      Alert.alert("Imprimante", error instanceof Error ? error.message : "Recherche impossible.");
+    } finally {
+      setPrinterBusy(false);
+    }
+  };
+
+  const handlePrinterPress = async (printer: NativePrinterDevice) => {
+    if (printer.bonded) {
+      await onSelectPrinter(printer);
+      Alert.alert("Imprimante choisie", `${printer.name} sera utilisee pour les tickets TENNET.`);
+      return;
+    }
+    try {
+      await pairNativePrinter(printer);
+      Alert.alert("Appairage lance", "Valide la demande Android/PIN sur le telephone. Ensuite relance le scan et choisis l'imprimante.");
+    } catch (error) {
+      Alert.alert("Appairage impossible", error instanceof Error ? error.message : "Android n'a pas pu lancer l'appairage.");
+    }
+  };
+
+  const printTestTicket = async () => {
+    if (!selectedPrinter) {
+      Alert.alert("Imprimante", "Choisis d'abord une imprimante.");
+      return;
+    }
+    setPrinterBusy(true);
+    try {
+      const now = new Date().toLocaleString("fr-FR");
+      const ticket: EvidencePrintTicket = {
+        task_id: 0,
+        order_id: 0,
+        restaurant_id: 0,
+        restaurant_name: "TENNET",
+        uber_order_number: "TEST-IMPRIMANTE",
+        required_evidence_type: "printer_test",
+        required_evidence_label: "Test imprimante",
+        title: `Test imprimante TENNET ${now}`,
+        description: "Si ce ticket sort, cette imprimante est bien connectee a TENNET.",
+        order_amount: null,
+        currency: "EUR",
+        due_at: null,
+        ticket_reference: "TENNET-PRINTER-TEST",
+        upload_url: WEB_APP_URL,
+        qr_svg: "",
+        print_html: "",
+      };
+      await printTicketOnNativePrinter(ticket, selectedPrinter);
+      Alert.alert("Test envoye", `Ticket test envoye a ${selectedPrinter.name}.`);
+    } catch (error) {
+      Alert.alert("Test impossible", error instanceof Error ? error.message : "TENNET n'a pas pu imprimer le ticket test.");
+    } finally {
+      setPrinterBusy(false);
+    }
+  };
+
   return (
     <View style={styles.stack}>
       <Text style={styles.screenTitle}>Compte</Text>
+      <View style={styles.detailCard}>
+        <Text style={styles.detailTitle}>Imprimante Bluetooth</Text>
+        <Text style={styles.detailMeta}>
+          {selectedPrinter ? `Choisie: ${selectedPrinter.name}` : "Aucune imprimante choisie. TENNET n'imprimera pas sans ton choix."}
+        </Text>
+        <View style={styles.actionRow}>
+          <SecondaryButton label={printerBusy ? "Scan..." : "Scanner Bluetooth"} onPress={refreshPrinters} disabled={printerBusy} />
+          <SecondaryButton label="Bluetooth Android" onPress={() => void openNativeBluetoothSettings()} disabled={printerBusy} />
+          {selectedPrinter ? <SecondaryButton label="Test ticket" onPress={printTestTicket} disabled={printerBusy} /> : null}
+          {selectedPrinter ? <SecondaryButton label="Oublier" onPress={() => void onSelectPrinter(null)} disabled={printerBusy} /> : null}
+        </View>
+        {printers.map((printer) => (
+          <Pressable
+            key={printer.address}
+            style={[styles.printerRow, selectedPrinter?.address === printer.address && styles.printerRowSelected]}
+            onPress={() => void handlePrinterPress(printer)}
+          >
+            <View style={styles.printerInfo}>
+              <Text style={styles.printerName}>{printer.name}</Text>
+              <Text style={styles.printerAddress}>{printer.address} - {printer.bonded ? "appairee" : "a appairer"}</Text>
+            </View>
+            <Badge
+              label={selectedPrinter?.address === printer.address ? "Choisie" : printer.bonded ? "Choisir" : "Appairer"}
+              tone={selectedPrinter?.address === printer.address ? colors.green : printer.bonded ? colors.primary : colors.orange}
+            />
+          </Pressable>
+        ))}
+      </View>
       <View style={styles.detailCard}>
         <Text style={styles.detailTitle}>{session.user.full_name || session.user.email}</Text>
         <Text style={styles.detailMeta}>{session.user.email}</Text>
@@ -761,6 +940,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.canvas,
     paddingTop: Platform.OS === "android" ? NativeStatusBar.currentHeight ?? 0 : 0,
+    paddingBottom: Platform.OS === "android" ? 48 : 0,
   },
   app: {
     flex: 1,
@@ -768,7 +948,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: spacing.lg,
-    paddingBottom: Platform.OS === "android" ? 240 : 150,
+    paddingBottom: spacing.lg,
   },
   stack: {
     gap: spacing.lg,
@@ -1005,6 +1185,36 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
   },
+  printerRow: {
+    minHeight: 64,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.surfaceWarm,
+    padding: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md,
+  },
+  printerRowSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft,
+  },
+  printerInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  printerName: {
+    color: colors.ink,
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  printerAddress: {
+    color: colors.inkMuted,
+    fontSize: 12,
+    marginTop: spacing.xs,
+  },
   actionRow: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1137,11 +1347,9 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   bottomNav: {
-    position: "absolute",
-    left: spacing.md,
-    right: spacing.md,
-    bottom: Platform.OS === "ios" ? spacing.lg : 76,
     minHeight: 64,
+    marginHorizontal: spacing.md,
+    marginBottom: Platform.OS === "android" ? spacing.sm : spacing.lg,
     borderRadius: radius.lg,
     backgroundColor: colors.surface,
     borderWidth: 1,
