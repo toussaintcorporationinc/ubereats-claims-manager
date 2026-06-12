@@ -934,6 +934,26 @@ export type EvidenceUploadLinkCreateResponse = EvidenceUploadLink & {
   upload_url: string;
 };
 
+export type EvidencePrintTicketResponse = {
+  task_id: number;
+  order_id: number;
+  restaurant_id: number;
+  restaurant_name: string;
+  uber_order_number: string;
+  required_evidence_type: EvidenceType;
+  required_evidence_label: string;
+  title: string;
+  description: string | null;
+  order_amount: MoneyValue;
+  currency: string;
+  due_at: string | null;
+  ticket_reference: string;
+  upload_link: EvidenceUploadLink;
+  upload_url: string;
+  qr_svg: string;
+  print_html: string;
+};
+
 export type PublicEvidenceUploadLink = {
   id: number;
   task_id: number;
@@ -2345,6 +2365,14 @@ export const api = {
   ) =>
     postJson<EvidenceUploadLinkCreateResponse, { expires_in_hours?: number | null; max_uses?: number | null }>(
       `/v1/evidence-tasks/${taskId}/upload-link`,
+      payload,
+    ),
+  createEvidencePrintTicket: (
+    taskId: number,
+    payload: { expires_in_hours?: number | null; max_uses?: number | null } = {},
+  ) =>
+    postJson<EvidencePrintTicketResponse, { expires_in_hours?: number | null; max_uses?: number | null }>(
+      `/v1/evidence-tasks/${taskId}/print-ticket`,
       payload,
     ),
   getPublicEvidenceUploadLink: (token: string) =>

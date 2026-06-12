@@ -7,6 +7,8 @@ from app.core.database import get_db
 from app.models import ClaimOrder, EvidenceRequestTask, EvidenceUploadLink, User
 from app.schemas.domain import (
     EvidenceRequestPriority,
+    EvidencePrintTicketCreateRequest,
+    EvidencePrintTicketResponse,
     EvidenceRequestRecalculateRequest,
     EvidenceRequestRecalculateResponse,
     EvidenceRequestSkipRequest,
@@ -31,6 +33,7 @@ from app.services.evidence_request_service import (
     upload_evidence_for_task,
     upload_evidence_with_link,
 )
+from app.services.evidence_print_ticket_service import create_print_ticket
 
 router = APIRouter(tags=["evidence-tasks"])
 
@@ -163,6 +166,28 @@ def create_task_upload_link(
     db.refresh(upload_link)
     link_read = EvidenceUploadLinkRead.model_validate(upload_link)
     return EvidenceUploadLinkCreateResponse(**link_read.model_dump(), token=token, upload_url=upload_url)
+
+
+@router.post("/v1/evidence-tasks/{task_id}/print-ticket", response_model=EvidencePrintTicketResponse, status_code=status.HTTP_201_CREATED)
+def create_task_print_ticket(
+    task_id: int,
+    payload: EvidencePrintTicketCreateRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, object]:
+    task = get_task_or_404(task_id, db)
+    ensure_can_access_order(db, current_user, task.order)
+    payload = payload or EvidencePrintTicketCreateRequest()
+    ticket = create_print_ticket(
+        db,
+        task,
+        current_user,
+        expires_in_hours=payload.expires_in_hours,
+        max_uses=payload.max_uses,
+    )
+    db.commit()
+    db.refresh(ticket.upload_link)
+    return ticket.as_response_dict()
 
 
 @router.get("/v1/evidence-upload-links/{token}", response_model=PublicEvidenceUploadLinkRead)

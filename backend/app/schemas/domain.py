@@ -1494,6 +1494,31 @@ class EvidenceUploadLinkCreateResponse(EvidenceUploadLinkRead):
     upload_url: str
 
 
+class EvidencePrintTicketCreateRequest(BaseModel):
+    expires_in_hours: int | None = Field(default=None, ge=1, le=24 * 30)
+    max_uses: int | None = Field(default=1, ge=1, le=20)
+
+
+class EvidencePrintTicketResponse(BaseModel):
+    task_id: int
+    order_id: int
+    restaurant_id: int
+    restaurant_name: str
+    uber_order_number: str
+    required_evidence_type: EvidenceType
+    required_evidence_label: str
+    title: str
+    description: str | None
+    order_amount: Decimal | None
+    currency: str
+    due_at: datetime | None
+    ticket_reference: str
+    upload_link: EvidenceUploadLinkRead
+    upload_url: str
+    qr_svg: str
+    print_html: str
+
+
 class PublicEvidenceUploadLinkRead(BaseModel):
     id: int
     task_id: int

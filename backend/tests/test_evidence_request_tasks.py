@@ -263,6 +263,72 @@ def test_create_upload_link_returns_token_once_and_stores_hash(configured_client
     assert len(link.token_hash) == 64
 
 
+def test_print_ticket_creates_single_use_upload_link_with_qr(configured_client: TestClient, db_session: Session) -> None:
+    restaurant = create_restaurant(configured_client)
+    create_order(configured_client, restaurant["id"])
+    recalculate(configured_client)
+    task = db_session.scalar(select(EvidenceRequestTask))
+    assert task is not None
+
+    response = configured_client.post(f"/v1/evidence-tasks/{task.id}/print-ticket", json={})
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["task_id"] == task.id
+    assert data["restaurant_name"] == restaurant["name"]
+    assert data["required_evidence_label"]
+    assert data["ticket_reference"].startswith(f"TENNET-{task.id}-")
+    assert "/evidence-upload/" in data["upload_url"]
+    assert "<svg" in data["qr_svg"]
+    assert data["upload_url"] in data["print_html"]
+    assert "Ticket preuve terrain" in data["print_html"]
+    upload_link = db_session.get(EvidenceUploadLink, data["upload_link"]["id"])
+    assert upload_link is not None
+    assert upload_link.max_uses == 1
+    assert upload_link.token_hash not in data["print_html"]
+    actions = set(db_session.scalars(select(AuditLog.action)).all())
+    assert "evidence_upload_link.created" in actions
+    assert "evidence_print_ticket.created" in actions
+
+
+def test_staff_assigned_can_create_print_ticket(configured_client: TestClient, db_session: Session) -> None:
+    restaurant = create_restaurant(configured_client)
+    create_order(configured_client, restaurant["id"])
+    recalculate(configured_client)
+    task = db_session.scalar(select(EvidenceRequestTask))
+    assert task is not None
+    staff = create_user(configured_client, "staff-print-ticket@example.com", "staff")
+    assign_restaurant(configured_client, staff["id"], restaurant["id"])
+    staff_token = login(configured_client, staff["email"])
+
+    response = configured_client.post(
+        f"/v1/evidence-tasks/{task.id}/print-ticket",
+        json={},
+        headers=auth_headers(staff_token),
+    )
+
+    assert response.status_code == 201
+    assert response.json()["upload_link"]["max_uses"] == 1
+
+
+def test_staff_non_assigned_cannot_create_print_ticket(configured_client: TestClient, db_session: Session) -> None:
+    restaurant = create_restaurant(configured_client)
+    create_order(configured_client, restaurant["id"])
+    recalculate(configured_client)
+    task = db_session.scalar(select(EvidenceRequestTask))
+    assert task is not None
+    staff = create_user(configured_client, "staff-print-ticket-denied@example.com", "staff")
+    staff_token = login(configured_client, staff["email"])
+
+    response = configured_client.post(
+        f"/v1/evidence-tasks/{task.id}/print-ticket",
+        json={},
+        headers=auth_headers(staff_token),
+    )
+
+    assert response.status_code == 403
+
+
 def test_upload_link_refuses_staff(configured_client: TestClient, db_session: Session) -> None:
     restaurant = create_restaurant(configured_client)
     create_order(configured_client, restaurant["id"])

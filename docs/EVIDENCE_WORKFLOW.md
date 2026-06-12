@@ -74,6 +74,21 @@ Regles :
 - la page publique n'exige pas de JWT ;
 - la page publique ne permet d'ajouter que le type de preuve demande.
 
+## Ticket preuve imprimable
+
+La page detail d'une tache preuve permet aussi de creer un ticket preuve imprimable.
+
+Le ticket sert au terrain :
+
+- imprimer un rappel simple de la commande et de la preuve attendue ;
+- afficher un QR code vers l'upload mobile tokenise ;
+- demander au staff de photographier le ticket avec la preuve reelle ;
+- eviter les confusions entre commandes, restaurants et types de preuves.
+
+Par defaut, le ticket cree un lien mobile limite a un usage. Le token brut n'est pas stocke, seul son hash est conserve. La creation du ticket cree un `AuditLog` et ne declenche aucun email, aucune contestation et aucune relance.
+
+Le staff assigne peut creer ce ticket sur ses restaurants, car c'est une action de collecte de preuve. Il ne peut toujours pas ignorer une tache, la completer manuellement, creer de brouillon ou traiter une decision financiere.
+
 ## Import massif de preuves
 
 La page `/evidence-imports` permet a un owner ou manager d'importer des fichiers existants en vrac ou via ZIP.

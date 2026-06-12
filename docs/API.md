@@ -363,6 +363,7 @@ Endpoints :
 - `POST /v1/evidence-tasks/{task_id}/skip`
 - `POST /v1/evidence-tasks/{task_id}/complete`
 - `POST /v1/evidence-tasks/{task_id}/upload-link`
+- `POST /v1/evidence-tasks/{task_id}/print-ticket`
 - `GET /v1/evidence-upload-links/{token}`
 - `POST /v1/evidence-upload-links/{token}/upload`
 - `POST /v1/evidence-upload-links/{id}/revoke`
@@ -374,6 +375,13 @@ Types de preuves geres :
 - `preparation_proof`
 - `waste_photo`
 - `uber_screenshot`
+- `delivery_proof`
+- `packaging_photo`
+- `sealed_bag_photo`
+- `courier_statement`
+- `gps_or_route_proof`
+- `customer_contact_proof`
+- `order_details_screenshot`
 - `other`
 
 Statuts :
@@ -519,6 +527,52 @@ Regles :
 - l'upload public n'exige pas de JWT mais ne peut ajouter que le type de preuve demande ;
 - un upload public cree `EvidenceFile`, complete la tache, audite l'action et relance la validation ;
 - `POST /v1/evidence-upload-links/{id}/revoke` revoque un lien sans supprimer l'historique.
+
+### Ticket preuve imprimable
+
+`POST /v1/evidence-tasks/{task_id}/print-ticket`
+
+Body optionnel :
+
+```json
+{
+  "expires_in_hours": 48,
+  "max_uses": 1
+}
+```
+
+Retour :
+
+```json
+{
+  "task_id": 1,
+  "order_id": 123,
+  "restaurant_name": "Restaurant Test",
+  "uber_order_number": "UBER-123",
+  "required_evidence_type": "preparation_proof",
+  "required_evidence_label": "Preuve de preparation",
+  "ticket_reference": "TENNET-1-5",
+  "upload_link": {
+    "id": 5,
+    "task_id": 1,
+    "expires_at": "2026-06-12T10:00:00Z",
+    "max_uses": 1,
+    "use_count": 0
+  },
+  "upload_url": "https://app.thetennet.com/evidence-upload/raw-token-returned-once",
+  "qr_svg": "<svg ...>",
+  "print_html": "<!doctype html>..."
+}
+```
+
+Regles :
+
+- `owner`, `manager` et `staff` assigne peuvent creer un ticket pour une tache active ;
+- le ticket cree un vrai lien mobile tokenise, limite a un usage par defaut ;
+- le QR code pointe vers la page publique d'upload de la preuve demandee ;
+- le ticket affiche restaurant, commande Uber, montant, preuve attendue et reference TENNET ;
+- la creation du ticket est auditee ;
+- aucun email, aucune contestation et aucune relance ne sont declenches.
 
 ## Imports commandes
 

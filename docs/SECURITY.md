@@ -87,8 +87,10 @@ Regles appliquees :
 
 - `owner` peut recalculer et gerer les demandes de preuves de tous les restaurants ;
 - `manager` peut recalculer et gerer les demandes de ses restaurants assignes ;
-- `staff` peut consulter et uploader les preuves des restaurants assignes, mais ne peut pas creer de lien mobile, ignorer ou completer manuellement une demande ;
+- `staff` peut consulter et uploader les preuves des restaurants assignes, et creer un ticket preuve imprimable limite a une tache active ;
+- `staff` ne peut pas creer de lien mobile libre, ignorer ou completer manuellement une demande ;
 - les liens mobiles sont crees uniquement par `owner` ou `manager` ;
+- les tickets preuve creent un lien mobile limite a un usage par defaut et un QR code vers la tache precise ;
 - le token brut est retourne une seule fois a la creation ;
 - seul un SHA256 du token est stocke en base ;
 - un lien expire via `EVIDENCE_UPLOAD_LINK_EXPIRY_HOURS` ;

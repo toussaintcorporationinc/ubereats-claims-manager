@@ -13,6 +13,7 @@ import {
   formatDate,
   type ClaimOrder,
   type EvidenceRequestTask,
+  type EvidencePrintTicketResponse,
   type EvidenceTaskUploadResponse,
   type EvidenceUploadLinkCreateResponse,
   type Restaurant,
@@ -29,11 +30,13 @@ export default function EvidenceTaskDetailPage() {
   const [skipReason, setSkipReason] = useState("");
   const [uploadResult, setUploadResult] = useState<EvidenceTaskUploadResponse | null>(null);
   const [linkResult, setLinkResult] = useState<EvidenceUploadLinkCreateResponse | null>(null);
+  const [ticketResult, setTicketResult] = useState<EvidencePrintTicketResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [actionError, setActionError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [creatingLink, setCreatingLink] = useState(false);
+  const [creatingTicket, setCreatingTicket] = useState(false);
   const [skipping, setSkipping] = useState(false);
   const [completing, setCompleting] = useState(false);
 
@@ -93,6 +96,36 @@ export default function EvidenceTaskDetailPage() {
     } finally {
       setCreatingLink(false);
     }
+  }
+
+  async function handleCreatePrintTicket() {
+    setCreatingTicket(true);
+    setActionError(null);
+    setTicketResult(null);
+
+    try {
+      const result = await api.createEvidencePrintTicket(taskId);
+      setTicketResult(result);
+      openPrintTicket(result);
+      await loadData();
+    } catch (apiError) {
+      setActionError(apiError);
+    } finally {
+      setCreatingTicket(false);
+    }
+  }
+
+  function openPrintTicket(ticket: EvidencePrintTicketResponse) {
+    const printWindow = window.open("", "_blank", "width=420,height=720");
+    if (!printWindow) {
+      setActionError(new Error("La fenetre d'impression a ete bloquee. Utilisez le bouton Reimprimer."));
+      return;
+    }
+    printWindow.document.open();
+    printWindow.document.write(ticket.print_html);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
   }
 
   async function handleSkip() {
@@ -223,6 +256,41 @@ export default function EvidenceTaskDetailPage() {
           </button>
         </form>
 
+        <section className="tool-panel">
+          <div className="section-heading">
+            <h2>Ticket preuve</h2>
+            <span className="muted">Imprimez un ticket avec QR code pour guider la photo terrain.</span>
+          </div>
+          <button type="button" className="button" onClick={handleCreatePrintTicket} disabled={!isActive || creatingTicket}>
+            {creatingTicket ? "Creation" : "Imprimer ticket preuve"}
+          </button>
+          {ticketResult ? (
+            <div className="success-box">
+              <strong>Ticket pret</strong>
+              <span>{ticketResult.ticket_reference}</span>
+              <span>Lien valable jusqu'au {formatDate(ticketResult.upload_link.expires_at)}</span>
+              <div className="ticket-preview">
+                <div className="ticket-preview__qr" dangerouslySetInnerHTML={{ __html: ticketResult.qr_svg }} />
+                <div>
+                  <strong>{ticketResult.required_evidence_label}</strong>
+                  <span>{ticketResult.restaurant_name}</span>
+                  <span>{ticketResult.uber_order_number}</span>
+                </div>
+              </div>
+              <div className="actions">
+                <button type="button" className="secondary-button" onClick={() => openPrintTicket(ticketResult)}>
+                  Reimprimer
+                </button>
+                <a href={ticketResult.upload_url} target="_blank" rel="noreferrer" className="secondary-button">
+                  Ouvrir upload
+                </a>
+              </div>
+            </div>
+          ) : null}
+        </section>
+      </section>
+
+      <section className="grid-two">
         <section className="tool-panel">
           <div className="section-heading">
             <h2>Lien mobile</h2>
