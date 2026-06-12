@@ -27,7 +27,8 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "versionCode": 2
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -38,7 +39,11 @@
     ],
     "extra": {
       "apiBaseUrl": "https://api.thetennet.com",
-      "webAppUrl": "https://app.thetennet.com"
-    }
+      "webAppUrl": "https://app.thetennet.com",
+      "eas": {
+        "projectId": "aa2dcd28-d76b-4a17-a49b-7ffdffa1bd99"
+      }
+    },
+    "owner": "toussaintcorp"
   }
 }
