@@ -73,7 +73,6 @@ button {
 .brand-logo {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
   min-width: 0;
 }
 
@@ -81,15 +80,17 @@ button {
   width: 40px;
   height: 40px;
   flex: 0 0 auto;
-  border-radius: 10px;
-  box-shadow: 0 8px 20px rgb(16 37 31 / 14%);
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgb(16 37 31 / 10%);
 }
 
-.brand-logo__word {
-  color: var(--text);
-  font-size: 1.02rem;
-  font-weight: 900;
-  letter-spacing: 0;
+.brand-logo__wordmark {
+  display: block;
+  width: clamp(128px, 13vw, 174px);
+  height: 42px;
+  object-fit: contain;
+  object-position: left center;
 }
 
 .nav-list {

@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="TENNET">
-  <rect width="128" height="128" rx="26" fill="#10251f"/>
-  <path d="M30 31h68v16H72v51H56V47H30z" fill="#f7f3e8"/>
-  <path d="M32 88h64" fill="none" stroke="#1fbf88" stroke-width="9" stroke-linecap="round"/>
-  <path d="M82 88l12-12 12 12-12 12z" fill="#f3bf4f"/>
-</svg>
