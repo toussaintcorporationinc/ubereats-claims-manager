@@ -903,6 +903,21 @@ export type EvidenceRequestTasksResponse = {
   offset: number;
 };
 
+export type LiveEvidenceStationResponse = {
+  tasks: EvidenceRequestTaskSummary[];
+  recommended_task_id: number | null;
+  total_active_tasks: number;
+  pending_count: number;
+  uploaded_count: number;
+  urgent_count: number;
+  high_priority_count: number;
+  printer_mode: "browser_print";
+  bluetooth_supported: boolean;
+  safe_capture_rules: string[];
+  limit: number;
+  offset: number;
+};
+
 export type EvidenceRequestRecalculatePayload = {
   restaurant_id?: number | null;
   order_id?: number | null;
@@ -2341,6 +2356,16 @@ export const api = {
       offset?: number;
     } = {},
   ) => request<EvidenceRequestTasksResponse>(`/v1/evidence-tasks${buildQuery(filters)}`),
+  getLiveEvidenceStation: (
+    filters: {
+      restaurant_id?: number;
+      status?: EvidenceRequestTaskStatus | "";
+      priority?: EvidenceRequestPriority | "";
+      assigned_to_me?: boolean;
+      limit?: number;
+      offset?: number;
+    } = {},
+  ) => request<LiveEvidenceStationResponse>(`/v1/live-evidence/station${buildQuery(filters)}`),
   getEvidenceTask: (taskId: number) => request<EvidenceRequestTask>(`/v1/evidence-tasks/${taskId}`),
   recalculateEvidenceTasks: (payload: EvidenceRequestRecalculatePayload = {}) =>
     postJson<EvidenceRequestRecalculateResponse, EvidenceRequestRecalculatePayload>(

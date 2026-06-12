@@ -311,6 +311,64 @@ def test_staff_assigned_can_create_print_ticket(configured_client: TestClient, d
     assert response.json()["upload_link"]["max_uses"] == 1
 
 
+def test_live_evidence_station_returns_prioritized_active_tasks(configured_client: TestClient, db_session: Session) -> None:
+    restaurant = create_restaurant(configured_client)
+    create_order(configured_client, restaurant["id"])
+    recalculate(configured_client)
+    urgent_task = db_session.scalar(select(EvidenceRequestTask).where(EvidenceRequestTask.required_evidence_type == "waste_photo"))
+    normal_task = db_session.scalar(select(EvidenceRequestTask).where(EvidenceRequestTask.required_evidence_type == "cancellation_proof"))
+    assert urgent_task is not None
+    assert normal_task is not None
+    urgent_task.priority = "urgent"
+    normal_task.priority = "normal"
+    db_session.commit()
+
+    response = configured_client.get("/v1/live-evidence/station")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_active_tasks"] == 2
+    assert data["urgent_count"] == 1
+    assert data["recommended_task_id"] == urgent_task.id
+    assert [task["id"] for task in data["tasks"]][0] == urgent_task.id
+    assert data["printer_mode"] == "browser_print"
+    assert data["bluetooth_supported"] is False
+    assert any("Ne jamais lire" in rule for rule in data["safe_capture_rules"])
+    assert "storage_path" not in str(data)
+
+
+def test_live_evidence_station_respects_staff_restaurant_access(configured_client: TestClient) -> None:
+    visible_restaurant = create_restaurant(configured_client, "Visible Station")
+    create_order(configured_client, visible_restaurant["id"], "UBER-STATION-VISIBLE")
+    hidden_restaurant = create_restaurant(configured_client, "Hidden Station")
+    create_order(configured_client, hidden_restaurant["id"], "UBER-STATION-HIDDEN")
+    recalculate(configured_client)
+    staff = create_user(configured_client, "staff-live-station@example.com", "staff")
+    assign_restaurant(configured_client, staff["id"], visible_restaurant["id"])
+    staff_token = login(configured_client, staff["email"])
+
+    response = configured_client.get("/v1/live-evidence/station", headers=auth_headers(staff_token))
+
+    assert response.status_code == 200
+    order_numbers = {task["uber_order_number"] for task in response.json()["tasks"]}
+    assert order_numbers == {"UBER-STATION-VISIBLE"}
+
+
+def test_live_evidence_station_rejects_unassigned_restaurant_filter(configured_client: TestClient) -> None:
+    restaurant = create_restaurant(configured_client)
+    other_restaurant = create_restaurant(configured_client, "Other Station")
+    staff = create_user(configured_client, "staff-live-station-denied@example.com", "staff")
+    assign_restaurant(configured_client, staff["id"], restaurant["id"])
+    staff_token = login(configured_client, staff["email"])
+
+    response = configured_client.get(
+        f"/v1/live-evidence/station?restaurant_id={other_restaurant['id']}",
+        headers=auth_headers(staff_token),
+    )
+
+    assert response.status_code == 403
+
+
 def test_staff_non_assigned_cannot_create_print_ticket(configured_client: TestClient, db_session: Session) -> None:
     restaurant = create_restaurant(configured_client)
     create_order(configured_client, restaurant["id"])

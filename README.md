@@ -37,6 +37,7 @@ Le backend expose maintenant les premiers objets metier :
 - service de generation de brouillons internes d'email ;
 - upload local securise des fichiers de preuve ;
 - file de demandes de preuves et upload mobile par lien tokenise ;
+- station preuves terrain avec ticket imprimable, QR code et file priorisee mobile ;
 - import massif de preuves existantes avec analyse controlee et rattachement manuel ;
 - import massif CSV/XLSX des commandes annulees ;
 - detection et suivi des deductions Uber / remboursements clients depuis transactions importees ;
@@ -80,9 +81,11 @@ Les endpoints principaux sont :
 - `POST /v1/orders/{id}/evidence/upload`
 - `GET /v1/evidence/{id}/download`
 - `GET /v1/evidence-tasks`
+- `GET /v1/live-evidence/station`
 - `POST /v1/evidence-tasks/recalculate`
 - `POST /v1/evidence-tasks/{id}/upload`
 - `POST /v1/evidence-tasks/{id}/upload-link`
+- `POST /v1/evidence-tasks/{id}/print-ticket`
 - `GET|POST /v1/evidence-upload-links/{token}`
 - `POST /v1/evidence-imports`
 - `POST /v1/evidence-imports/zip`

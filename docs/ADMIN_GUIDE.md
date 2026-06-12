@@ -126,6 +126,8 @@ Owners and managers can create mobile upload links from `/evidence-tasks/{id}`.
 
 Assigned staff can create a printable evidence ticket from `/evidence-tasks/{id}`. The ticket creates a one-use mobile upload link and QR code for the exact task, but it does not grant broader access, skip a task, complete a task manually, send an email or create a claim.
 
+`/live-evidence` is the recommended field station for restaurants. It shows only active evidence tasks visible to the user, recommends the next proof and starts ticket printing. Browser printing can use any printer already available to the device. Direct Bluetooth ESC/POS printing should be implemented only as a future native app connector and must never read or automate an Uber Eats tablet.
+
 Operational settings:
 
 - `EVIDENCE_TASK_HIGH_AMOUNT` sets the high priority threshold;

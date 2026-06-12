@@ -72,6 +72,19 @@ The receipt is recommended but not blocking in V1.
 
 The raw mobile token is shown only once. TENNET stores only the token hash.
 
+## Live evidence station
+
+Open `/live-evidence` when the restaurant team needs to collect proofs fast on phone, tablet or front counter.
+
+1. Review the next recommended proof.
+2. Click `Imprimer ticket`.
+3. Print the TENNET ticket on the available system printer.
+4. Put the ticket next to the receipt, prepared order, waste photo or requested proof.
+5. Scan the QR code or open the upload link.
+6. Upload the photo.
+
+The station does not read the Uber Eats tablet, does not invent proof and does not send email. It only routes field evidence to the right TENNET task.
+
 ## Bulk evidence import
 
 1. Open `/evidence-imports/new`.

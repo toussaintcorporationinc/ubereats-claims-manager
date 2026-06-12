@@ -18,6 +18,7 @@ const navigation: NavItem[] = [
   { href: "/imports", label: "Imports" },
   { href: "/drafts", label: "Brouillons" },
   { href: "/evidence-tasks", label: "Preuves" },
+  { href: "/live-evidence", label: "Station preuves" },
   { href: "/evidence-imports", label: "Import preuves", ownerOrManagerOnly: true },
   { href: "/followups", label: "Relances", ownerOrManagerOnly: true },
   { href: "/appeals", label: "Appels / Refus Uber", ownerOrManagerOnly: true },

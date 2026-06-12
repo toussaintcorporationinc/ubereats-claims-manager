@@ -1452,6 +1452,21 @@ class EvidenceRequestTasksResponse(BaseModel):
     offset: int
 
 
+class LiveEvidenceStationResponse(BaseModel):
+    tasks: list[EvidenceRequestTaskSummary]
+    recommended_task_id: int | None
+    total_active_tasks: int
+    pending_count: int
+    uploaded_count: int
+    urgent_count: int
+    high_priority_count: int
+    printer_mode: Literal["browser_print"]
+    bluetooth_supported: bool
+    safe_capture_rules: list[str]
+    limit: int
+    offset: int
+
+
 class EvidenceRequestRecalculateRequest(BaseModel):
     restaurant_id: int | None = None
     order_id: int | None = None
