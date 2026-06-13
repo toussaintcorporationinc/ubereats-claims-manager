@@ -13,7 +13,7 @@ from app.models import SmartImportPreviewBatch, SmartImportPreviewFile, User
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.bulk_evidence_import_service import create_multi_file_import, create_zip_import
-from app.services.smart_import_classifier_service import resolve_preview_file_path
+from app.services.smart_import_classifier_service import mark_exact_duplicate_preview_files, resolve_preview_file_path
 from app.services.uber_reporting_import_service import REPORT_TYPES, create_uber_reporting_preview_from_content
 
 
@@ -34,6 +34,7 @@ def route_smart_import_preview(
     ensure_batch_confirmable(db, current_user, batch)
     decision_map = {decision.file_id: decision for decision in decisions}
     files = sorted(batch.files, key=lambda item: item.id)
+    mark_exact_duplicate_preview_files(db, current_user, files)
 
     routed_files: list[dict[str, Any]] = []
     manual_review_files: list[dict[str, Any]] = []
@@ -42,6 +43,9 @@ def route_smart_import_preview(
     evidence_groups: dict[int | None, list[tuple[SmartImportPreviewFile, SmartImportDecision]]] = {}
 
     for preview_file in files:
+        if is_exact_duplicate_ignored(preview_file):
+            ignored_files.append(result_payload(preview_file, "ignore"))
+            continue
         decision = decision_map.get(preview_file.id) or SmartImportDecision(file_id=preview_file.id)
         action = decision.action or preview_file.recommended_action
         try:
@@ -110,6 +114,14 @@ def route_smart_import_preview(
         "ignored_files": ignored_files,
         "errors": errors,
     }
+
+
+def is_exact_duplicate_ignored(preview_file: SmartImportPreviewFile) -> bool:
+    return (
+        preview_file.status == "ignored"
+        and preview_file.destination_type == "duplicate_ignored"
+        and bool(preview_file.error_message and preview_file.error_message.startswith("exact_duplicate_of_file:"))
+    )
 
 
 def ensure_batch_confirmable(db: Session, current_user: User, batch: SmartImportPreviewBatch) -> None:

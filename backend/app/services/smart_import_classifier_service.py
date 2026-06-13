@@ -196,32 +196,35 @@ async def create_smart_import_preview(
         stored = await store_preview_upload(batch.id, file)
         previews.append((classify_uploaded_file(stored.original_filename, stored.content), stored))
 
+    preview_files: list[SmartImportPreviewFile] = []
     for preview, stored in previews:
-        db.add(
-            SmartImportPreviewFile(
-                batch_id=batch.id,
-                original_filename=preview.original_filename,
-                file_type=preview.file_type,
-                temp_storage_path=stored.relative_path,
-                mime_type=stored.mime_type,
-                file_size=stored.file_size,
-                checksum_sha256=stored.checksum_sha256,
-                detected_category=preview.detected_category,
-                detected_report_type=preview.detected_report_type,
-                detected_evidence_type=preview.detected_evidence_type,
-                detected_restaurant_name=preview.detected_restaurant_name,
-                detected_date_from=preview.detected_date_from,
-                detected_date_to=preview.detected_date_to,
-                header_row_number=preview.header_row_number,
-                skipped_preamble_rows=preview.skipped_preamble_rows,
-                confidence=preview.confidence,
-                recommended_action=preview.recommended_action,
-                status="previewed",
-                warnings=preview.warnings,
-                detected_columns=preview.detected_columns,
-                metadata_json=preview.metadata_json,
-            )
+        preview_file = SmartImportPreviewFile(
+            batch_id=batch.id,
+            original_filename=preview.original_filename,
+            file_type=preview.file_type,
+            temp_storage_path=stored.relative_path,
+            mime_type=stored.mime_type,
+            file_size=stored.file_size,
+            checksum_sha256=stored.checksum_sha256,
+            detected_category=preview.detected_category,
+            detected_report_type=preview.detected_report_type,
+            detected_evidence_type=preview.detected_evidence_type,
+            detected_restaurant_name=preview.detected_restaurant_name,
+            detected_date_from=preview.detected_date_from,
+            detected_date_to=preview.detected_date_to,
+            header_row_number=preview.header_row_number,
+            skipped_preamble_rows=preview.skipped_preamble_rows,
+            confidence=preview.confidence,
+            recommended_action=preview.recommended_action,
+            status="previewed",
+            warnings=preview.warnings,
+            detected_columns=preview.detected_columns,
+            metadata_json=preview.metadata_json,
         )
+        db.add(preview_file)
+        preview_files.append(preview_file)
+    db.flush()
+    mark_exact_duplicate_preview_files(db, current_user, preview_files)
 
     add_audit_log(
         db,
@@ -238,6 +241,94 @@ async def create_smart_import_preview(
     db.commit()
     db.refresh(batch)
     return batch
+
+
+def mark_exact_duplicate_preview_files(
+    db: Session,
+    current_user: User,
+    preview_files: list[SmartImportPreviewFile],
+) -> None:
+    checksum_groups: dict[str, list[SmartImportPreviewFile]] = {}
+    for preview_file in preview_files:
+        if preview_file.checksum_sha256:
+            checksum_groups.setdefault(preview_file.checksum_sha256, []).append(preview_file)
+
+    for duplicates in checksum_groups.values():
+        if len(duplicates) <= 1:
+            continue
+        canonical = choose_duplicate_canonical_file(duplicates)
+        for duplicate in duplicates:
+            if duplicate.id == canonical.id or duplicate.status == "routed":
+                continue
+            mark_preview_file_as_exact_duplicate(db, current_user, duplicate, canonical)
+
+
+def choose_duplicate_canonical_file(preview_files: list[SmartImportPreviewFile]) -> SmartImportPreviewFile:
+    action_rank = {"import_uber_reporting": 3, "import_evidence_bulk": 3, "manual_review": 1, "ignore": 0}
+
+    def score(preview_file: SmartImportPreviewFile) -> tuple[int, Decimal, int, int]:
+        name = preview_file.original_filename.lower()
+        looks_like_copy = bool(re.search(r"\(\d+\)(?=\.[^.]+$|$)", name))
+        return (
+            action_rank.get(preview_file.recommended_action, 0),
+            preview_file.confidence or Decimal("0"),
+            0 if looks_like_copy else 1,
+            -preview_file.id,
+        )
+
+    return max(preview_files, key=score)
+
+
+def mark_preview_file_as_exact_duplicate(
+    db: Session,
+    current_user: User,
+    duplicate: SmartImportPreviewFile,
+    canonical: SmartImportPreviewFile,
+) -> None:
+    if duplicate.error_message == f"exact_duplicate_of_file:{canonical.id}":
+        return
+    remove_preview_file_if_safe(duplicate)
+    duplicate.status = "ignored"
+    duplicate.recommended_action = "ignore"
+    duplicate.destination_type = "duplicate_ignored"
+    duplicate.destination_id = canonical.id
+    duplicate.destination_url = f"/smart-import?preview={duplicate.batch_id}"
+    duplicate.error_message = f"exact_duplicate_of_file:{canonical.id}"
+    duplicate.warnings = sorted({*(duplicate.warnings or []), "exact_duplicate_ignored"})
+    metadata = dict(duplicate.metadata_json or {})
+    metadata.update(
+        {
+            "duplicate_match": "sha256",
+            "duplicate_of_file_id": canonical.id,
+            "duplicate_of_filename": canonical.original_filename,
+        }
+    )
+    duplicate.metadata_json = metadata
+    add_audit_log(
+        db,
+        entity_type="smart_import_preview_file",
+        entity_id=duplicate.id,
+        action="smart_import_file.duplicate_ignored",
+        user_id=current_user.id,
+        old_value={"filename": duplicate.original_filename, "checksum_sha256": duplicate.checksum_sha256},
+        new_value={
+            "canonical_file_id": canonical.id,
+            "canonical_filename": canonical.original_filename,
+            "match": "sha256",
+        },
+    )
+
+
+def remove_preview_file_if_safe(preview_file: SmartImportPreviewFile) -> None:
+    if not preview_file.temp_storage_path:
+        return
+    root = ensure_smart_import_storage_root().resolve()
+    target = (root / preview_file.temp_storage_path).resolve()
+    if not target.is_relative_to(root):
+        return
+    if target.exists() and target.is_file():
+        target.unlink()
+    preview_file.temp_storage_path = None
 
 
 @dataclass(frozen=True)

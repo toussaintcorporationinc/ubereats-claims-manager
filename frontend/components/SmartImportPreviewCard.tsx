@@ -9,13 +9,16 @@ type Props = {
 
 export default function SmartImportPreviewCard({ file }: Props) {
   const confidence = Number(file.confidence ?? 0);
+  const exactDuplicate = isExactDuplicate(file);
 
   return (
     <div>
       <div className="card-row">
         <div>
           <h3>{file.original_filename}</h3>
-          <p className="muted">{labelForAction(file.recommended_action)}</p>
+          <p className="muted">
+            {exactDuplicate ? "Doublon exact detecte : TENNET garde le meilleur fichier." : labelForAction(file.recommended_action)}
+          </p>
         </div>
         <StatusBadge status={file.detected_category} />
       </div>
@@ -48,9 +51,13 @@ export default function SmartImportPreviewCard({ file }: Props) {
           ))}
         </div>
       ) : null}
-      {file.warnings.length > 0 ? <p className="muted">A verifier : {file.warnings.join(", ")}</p> : null}
+      {file.warnings.length > 0 && !exactDuplicate ? <p className="muted">A verifier : {file.warnings.join(", ")}</p> : null}
     </div>
   );
+}
+
+function isExactDuplicate(file: SmartImportFilePreview): boolean {
+  return file.status === "ignored" && file.destination_type === "duplicate_ignored";
 }
 
 function labelForAction(action: string): string {
