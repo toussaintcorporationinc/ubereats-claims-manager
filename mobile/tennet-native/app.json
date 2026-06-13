@@ -2,7 +2,7 @@
   "expo": {
     "name": "TENNET",
     "slug": "tennet-mobile",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "description": "Application native TENNET pour piloter les preuves, tickets, scans et actions de recuperation sur le terrain.",
     "scheme": "tennet",
     "orientation": "portrait",
@@ -38,7 +38,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "versionCode": 2
+      "versionCode": 5
     },
     "web": {
       "favicon": "./assets/favicon.png"
