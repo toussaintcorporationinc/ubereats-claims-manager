@@ -412,7 +412,7 @@ function ProofsScreen({
     <View style={styles.stack}>
       <Text style={styles.screenTitle}>{minimal ? "A faire maintenant" : "Preuves terrain"}</Text>
       <Text style={styles.screenSubtitle}>
-        {minimal ? "TENNET choisit la prochaine preuve. Tu imprimes, tu prends la photo, TENNET classe." : "Photographie, importe ou imprime un ticket preuve pour guider le restaurant."}
+        {minimal ? "L'app choisit la prochaine preuve. Tu imprimes, tu prends la photo, le dossier est classe." : "Photographie, importe ou imprime un ticket preuve pour guider le restaurant."}
       </Text>
       {task ? <TaskDetail task={task} onUploaded={onUploaded} session={session} selectedPrinter={selectedPrinter} minimal={minimal} /> : <EmptyState title="Aucune preuve en attente" body="Tout est propre pour l'instant." />}
       {minimal ? null : (
@@ -504,7 +504,7 @@ function TaskDetail({
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         Alert.alert(
           "Ticket envoye",
-          `TENNET a envoye le ticket a ${selectedPrinter.name}. Si le papier est sorti, prends la photo maintenant.`,
+          `Le ticket preuve restaurant a ete envoye a ${selectedPrinter.name}. Si le papier est sorti, prends la photo maintenant.`,
           [
             { text: "Annuler", style: "cancel" },
             { text: "Prendre photo", onPress: () => void takePhoto() },
@@ -779,16 +779,16 @@ function AccountScreen({
         task_id: 0,
         order_id: 0,
         restaurant_id: 0,
-        restaurant_name: "TENNET",
+        restaurant_name: "RESTAURANT TEST",
         uber_order_number: "TEST-IMPRIMANTE",
         required_evidence_type: "printer_test",
         required_evidence_label: "Test imprimante",
-        title: `Test imprimante TENNET ${now}`,
-        description: "Si ce ticket sort, cette imprimante est bien connectee a TENNET.",
+        title: `Test imprimante ${now}`,
+        description: "Si ce ticket sort, cette imprimante est bien connectee.",
         order_amount: null,
         currency: "EUR",
         due_at: null,
-        ticket_reference: "TENNET-PRINTER-TEST",
+        ticket_reference: "PREUVE-PRINTER-TEST",
         upload_url: WEB_APP_URL,
         qr_svg: "",
         print_html: "",

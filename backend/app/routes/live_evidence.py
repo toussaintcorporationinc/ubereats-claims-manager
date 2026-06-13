@@ -14,7 +14,7 @@ ACTIVE_STATUSES: tuple[EvidenceRequestTaskStatus, ...] = ("pending", "uploaded")
 PRIORITY_RANK: dict[str, int] = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
 
 SAFE_CAPTURE_RULES = [
-    "Imprimer uniquement le ticket TENNET lie a la commande.",
+    "Imprimer uniquement le ticket preuve restaurant lie a la commande.",
     "Photographier le ticket, la preuve demandee et les elements utiles dans la meme sequence terrain.",
     "Ne jamais inventer de montant, de commande ou de preuve.",
     "Ne jamais lire ni automatiser la tablette Uber Eats.",
@@ -90,7 +90,7 @@ def build_response(
         native_print_contract_version="2026-06-12.android-escpos.v1",
         camera_capture_supported=True,
         native_printer_bridge_ready=True,
-        native_printer_bridge_contract="POST /v1/evidence-tasks/{id}/print-ticket returns the ticket data consumed by TENNET Android for Bluetooth ESC/POS receipt printing.",
+        native_printer_bridge_contract="POST /v1/evidence-tasks/{id}/print-ticket returns restaurant proof ticket data for Android Bluetooth ESC/POS receipt printing.",
         safe_capture_rules=SAFE_CAPTURE_RULES,
         limit=limit,
         offset=offset,

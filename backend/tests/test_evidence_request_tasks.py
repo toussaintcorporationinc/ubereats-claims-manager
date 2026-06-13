@@ -277,11 +277,13 @@ def test_print_ticket_creates_single_use_upload_link_with_qr(configured_client: 
     assert data["task_id"] == task.id
     assert data["restaurant_name"] == restaurant["name"]
     assert data["required_evidence_label"]
-    assert data["ticket_reference"].startswith(f"TENNET-{task.id}-")
+    assert data["ticket_reference"].startswith(f"PREUVE-{task.id}-")
     assert "/evidence-upload/" in data["upload_url"]
     assert "<svg" in data["qr_svg"]
-    assert data["upload_url"] in data["print_html"]
-    assert "Ticket preuve terrain" in data["print_html"]
+    assert data["upload_url"] not in data["print_html"]
+    assert "TENNET" not in data["print_html"]
+    assert "COMMANDE UBER - PREUVE RESTAURANT" in data["print_html"]
+    assert restaurant["name"] in data["print_html"]
     upload_link = db_session.get(EvidenceUploadLink, data["upload_link"]["id"])
     assert upload_link is not None
     assert upload_link.max_uses == 1
