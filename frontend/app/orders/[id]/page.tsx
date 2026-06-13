@@ -381,7 +381,7 @@ export default function OrderDetailPage() {
       <div className="page-heading">
         <div className="heading-copy">
           <p className="eyebrow">Commande</p>
-          <h1>{order.uber_order_number}</h1>
+          <h1>{order.customer_name ? `${order.customer_name} - ${order.uber_order_number}` : order.uber_order_number}</h1>
         </div>
         <div className="actions">
           <Link href="/orders" className="secondary-button">

@@ -87,6 +87,7 @@ export default function RestaurantsPage() {
 
                 <div className="detail-grid detail-grid--compact">
                   <DetailItem label="Adresse" value={restaurant.address ?? "-"} />
+                  <DetailItem label="Telephone" value={restaurant.phone_number ?? "-"} />
                   <DetailItem label="Email restaurant" value={restaurant.sender_email} />
                   <DetailItem label="Compte Gmail lie" value={gmailMapping?.email_address ?? "Aucun compte choisi"} />
                   <DetailItem label="Uber merchant" value={restaurant.uber_merchant_id ?? "-"} />

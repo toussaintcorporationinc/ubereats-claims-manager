@@ -58,12 +58,14 @@ def create_order(
     *,
     status: str = "missing_evidence",
     recovered_amount: str | None = None,
+    customer_name: str | None = "Client Recovery",
 ) -> dict:
     response = client.post(
         "/v1/orders",
         json={
             "restaurant_id": restaurant_id,
             "uber_order_number": order_number,
+            "customer_name": customer_name,
             "order_amount": amount,
             "currency": "EUR",
             "accepted_by_restaurant": True,
@@ -224,6 +226,8 @@ def test_recovery_cases_include_claims_reconciliation_and_customer_refunds(clien
     assert response.status_code == 200
     case_types = {case["case_type"] for case in response.json()["cases"]}
     assert {"claim_order", "reconciliation_result", "customer_refund_dispute"} <= case_types
+    claim_case = next(case for case in response.json()["cases"] if case["case_type"] == "claim_order")
+    assert claim_case["customer_name"] == "Client Recovery"
 
 
 def test_recovery_actions_include_evidence_and_followups(client: TestClient, db_session: Session) -> None:

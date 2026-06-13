@@ -191,6 +191,7 @@ def test_owner_can_update_restaurant(unauthenticated_client: TestClient, db_sess
         f"/v1/restaurants/{restaurant['id']}",
         json={
             "name": "Krousty Bat",
+            "phone_number": "+33123456789",
             "sender_email": "  RestaurantA@EXAMPLE.com  ",
             "uber_merchant_id": "merchant-krousty",
             "autopilot_enabled": True,
@@ -201,6 +202,7 @@ def test_owner_can_update_restaurant(unauthenticated_client: TestClient, db_sess
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == "Krousty Bat"
+    assert data["phone_number"] == "+33123456789"
     assert data["sender_email"] == "restauranta@example.com"
     assert data["uber_merchant_id"] == "merchant-krousty"
     assert data["autopilot_enabled"] is True
@@ -213,6 +215,7 @@ def test_owner_can_update_restaurant(unauthenticated_client: TestClient, db_sess
         )
     )
     assert audit_log is not None
+    assert json.loads(audit_log.new_value or "{}")["phone_number"] == "+33123456789"
     assert json.loads(audit_log.new_value or "{}")["sender_email"] == "restauranta@example.com"
 
 

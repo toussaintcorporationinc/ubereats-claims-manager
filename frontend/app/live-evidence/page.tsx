@@ -260,6 +260,10 @@ function EvidenceStationCard({
           <strong>{task.uber_order_number}</strong>
         </div>
         <div className="detail-item">
+          <span>Client</span>
+          <strong>{task.customer_name ?? "-"}</strong>
+        </div>
+        <div className="detail-item">
           <span>Montant</span>
           <strong>{formatCurrency(task.order_amount, task.currency)}</strong>
         </div>

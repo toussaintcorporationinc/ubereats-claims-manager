@@ -203,7 +203,7 @@ export default function RecoveryPage() {
                     {summary.top_recoverable_cases.map((item) => (
                       <tr key={`${item.case_type}-${item.case_id}`}>
                         <td>{item.restaurant_name}</td>
-                        <td>{item.uber_order_number ?? "-"}</td>
+                        <td>{formatOrderIdentity(item.customer_name, item.uber_order_number)}</td>
                         <td>{item.loss_category}</td>
                         <td>
                           <StatusBadge status={item.recovery_stage} />
@@ -282,6 +282,11 @@ function toRecoveryFilters(filters: FilterState): RecoveryFilters {
 function formatPercent(value: string | number | null): string {
   const numericValue = typeof value === "number" ? value : Number(value ?? 0);
   return `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(numericValue * 100)} %`;
+}
+
+function formatOrderIdentity(customerName: string | null | undefined, orderNumber: string | null | undefined): string {
+  const order = orderNumber ?? "-";
+  return customerName ? `${customerName} - ${order}` : order;
 }
 
 function saveBlob(blob: Blob, filename: string): void {

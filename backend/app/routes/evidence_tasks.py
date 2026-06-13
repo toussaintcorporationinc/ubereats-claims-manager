@@ -245,6 +245,7 @@ def build_task_summary(task: EvidenceRequestTask) -> EvidenceRequestTaskSummary:
         restaurant_id=order.restaurant_id,
         restaurant_name=order.restaurant.name,
         uber_order_number=order.uber_order_number,
+        customer_name=order.customer_name,
         order_amount=order.order_amount,
         currency=order.currency,
         claim_status=order.status,
@@ -273,6 +274,7 @@ def build_public_link_response(upload_link: EvidenceUploadLink) -> PublicEvidenc
         order_id=order.id,
         restaurant_name=order.restaurant.name,
         uber_order_number=mask_order_number(order.uber_order_number),
+        customer_name=mask_customer_name(order.customer_name),
         task_type=task.task_type,
         required_evidence_type=task.required_evidence_type,
         status=task.status,
@@ -291,3 +293,12 @@ def mask_order_number(order_number: str) -> str:
     if len(order_number) <= 8:
         return "****"
     return f"{order_number[:4]}...{order_number[-4:]}"
+
+
+def mask_customer_name(customer_name: str | None) -> str | None:
+    if not customer_name:
+        return None
+    stripped = customer_name.strip()
+    if len(stripped) <= 2:
+        return "***"
+    return f"{stripped[0]}***"

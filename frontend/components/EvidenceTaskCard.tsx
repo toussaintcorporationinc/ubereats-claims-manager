@@ -21,7 +21,7 @@ export default function EvidenceTaskCard({ task }: Props) {
       <div className="detail-grid detail-grid--compact">
         <div className="detail-item">
           <span>Commande</span>
-          <strong>{task.uber_order_number}</strong>
+          <strong>{formatOrderIdentity(task.customer_name, task.uber_order_number)}</strong>
         </div>
         <div className="detail-item">
           <span>Montant</span>
@@ -41,4 +41,8 @@ export default function EvidenceTaskCard({ task }: Props) {
       </Link>
     </article>
   );
+}
+
+function formatOrderIdentity(customerName: string | null, orderNumber: string): string {
+  return customerName ? `${customerName} - ${orderNumber}` : orderNumber;
 }

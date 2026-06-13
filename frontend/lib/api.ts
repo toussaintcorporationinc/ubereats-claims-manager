@@ -287,6 +287,7 @@ export type Restaurant = {
   name: string;
   legal_name: string | null;
   address: string | null;
+  phone_number: string | null;
   sender_email: string;
   uber_merchant_id: string | null;
   active: boolean;
@@ -816,6 +817,7 @@ export type FollowUpTaskSummary = {
   restaurant_id: number;
   restaurant_name: string;
   uber_order_number: string;
+  customer_name: string | null;
   order_amount: MoneyValue;
   currency: string;
   claim_status: ClaimOrderStatus;
@@ -879,6 +881,7 @@ export type EvidenceRequestTaskSummary = {
   restaurant_id: number;
   restaurant_name: string;
   uber_order_number: string;
+  customer_name: string | null;
   order_amount: MoneyValue;
   currency: string;
   claim_status: ClaimOrderStatus;
@@ -960,6 +963,7 @@ export type EvidencePrintTicketResponse = {
   restaurant_id: number;
   restaurant_name: string;
   uber_order_number: string;
+  customer_name: string | null;
   required_evidence_type: EvidenceType;
   required_evidence_label: string;
   title: string;
@@ -980,6 +984,7 @@ export type PublicEvidenceUploadLink = {
   order_id: number;
   restaurant_name: string;
   uber_order_number: string;
+  customer_name: string | null;
   task_type: EvidenceRequestTaskType;
   required_evidence_type: EvidenceType;
   status: EvidenceRequestTaskStatus;
@@ -1202,6 +1207,7 @@ export type RecoveryCase = {
   restaurant_id: number;
   restaurant_name: string;
   uber_order_number: string | null;
+  customer_name: string | null;
   loss_category: RecoveryLossCategory;
   recovery_stage: RecoveryStage;
   detected_amount: MoneyValue;
@@ -1852,6 +1858,7 @@ export type RestaurantCreatePayload = {
   name: string;
   legal_name?: string | null;
   address?: string | null;
+  phone_number?: string | null;
   sender_email: string;
   uber_merchant_id?: string | null;
   active: boolean;

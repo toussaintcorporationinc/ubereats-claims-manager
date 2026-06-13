@@ -299,8 +299,8 @@ def test_create_claim_order_from_non_compensated_result_without_duplicate(
         owner_token,
         "\n".join(
             [
-                "uber_store_id,uber_order_id,current_state,order_total_amount,currency,canceled_at",
-                "store-claim,UBER-CLAIM-1,canceled,24.90,EUR,2026-06-01",
+                "uber_store_id,uber_order_id,customer_name,current_state,order_total_amount,currency,canceled_at",
+                "store-claim,UBER-CLAIM-1,Client Claim,canceled,24.90,EUR,2026-06-01",
             ]
         ),
     )
@@ -321,15 +321,14 @@ def test_create_claim_order_from_non_compensated_result_without_duplicate(
 
     assert first.status_code == 201
     assert second.status_code == 409
-    assert (
-        db_session.scalar(
-            select(ClaimOrder).where(
-                ClaimOrder.restaurant_id == restaurant["id"],
-                ClaimOrder.uber_order_number == "UBER-CLAIM-1",
-            )
+    claim_order = db_session.scalar(
+        select(ClaimOrder).where(
+            ClaimOrder.restaurant_id == restaurant["id"],
+            ClaimOrder.uber_order_number == "UBER-CLAIM-1",
         )
-        is not None
     )
+    assert claim_order is not None
+    assert claim_order.customer_name == "Client Claim"
 
 
 def test_owner_can_launch_reconciliation_and_default_run_window(
@@ -632,8 +631,8 @@ def test_confirm_reporting_batch_creates_snapshot_and_no_snapshot_duplicate(
         owner_token,
         "\n".join(
             [
-                "store_id,order_id,status,amount,currency",
-                "store-confirm,UBER-CONFIRM-1,cancelled,20.00,EUR",
+                "store_id,order_id,customer_name,status,amount,currency",
+                "store-confirm,UBER-CONFIRM-1,Client Confirm,cancelled,20.00,EUR",
             ]
         ),
     )
@@ -652,6 +651,7 @@ def test_confirm_reporting_batch_creates_snapshot_and_no_snapshot_duplicate(
     assert second.status_code == 400
     snapshots = db_session.scalars(select(UberOrderSnapshot).where(UberOrderSnapshot.uber_order_id == "UBER-CONFIRM-1")).all()
     assert len(snapshots) == 1
+    assert snapshots[0].customer_name == "Client Confirm"
 
 
 def test_confirm_reporting_batch_creates_transaction_without_duplicate(
