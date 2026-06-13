@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import ensure_can_access_restaurant
 from app.core.config import get_settings
-from app.models import EvidenceImportBatch, EvidenceImportedFile, User
+from app.models import ClaimOrder, EvidenceFile, EvidenceImportBatch, EvidenceImportedFile, User
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 
@@ -31,6 +31,14 @@ class StoredImportedEvidence:
     mime_type: str | None
     file_size: int
     checksum_sha256: str
+
+
+@dataclass(frozen=True)
+class DuplicateEvidenceMatch:
+    canonical_type: str
+    canonical_id: int | None
+    reason: str
+    canonical_filename: str | None = None
 
 
 class BulkEvidenceImportError(Exception):
@@ -67,20 +75,31 @@ def create_multi_file_import(
     db.flush()
 
     errors: list[str] = []
-    seen_checksums: set[str] = set()
+    seen_checksums: dict[str, EvidenceImportedFile] = {}
+    duplicate_messages: list[str] = []
     for upload in files:
         try:
             stored = store_imported_upload(batch, upload)
-            if stored.checksum_sha256 in seen_checksums:
+            duplicate = detect_duplicate_imported_evidence(
+                db,
+                batch=batch,
+                current_user=current_user,
+                stored=stored,
+                seen_checksums=seen_checksums,
+            )
+            if duplicate is not None:
+                remove_duplicate_stored_file(stored)
+                record_duplicate_removed(db, batch, current_user, stored, duplicate)
+                duplicate_messages.append(duplicate_message(stored.original_filename, duplicate))
                 continue
-            seen_checksums.add(stored.checksum_sha256)
-            add_imported_file(db, batch, current_user, stored)
+            imported_file = add_imported_file(db, batch, current_user, stored)
+            seen_checksums[stored.checksum_sha256] = imported_file
         except BulkEvidenceImportError as exc:
             batch.failed_files_count += 1
             errors.append(f"{upload.filename or 'file'}: {exc.message}")
 
-    finalize_batch_counts(batch)
-    batch.error_message = "\n".join(errors) if errors else None
+    finalize_batch_counts(batch, total_files_count=len(files))
+    batch.error_message = "\n".join([*errors, *duplicate_messages]) if errors or duplicate_messages else None
     add_import_audit_log(db, current_user, batch, errors)
     db.commit()
     db.refresh(batch)
@@ -113,10 +132,13 @@ def create_zip_import(
     db.flush()
 
     errors: list[str] = []
-    seen_checksums: set[str] = set()
+    seen_checksums: dict[str, EvidenceImportedFile] = {}
+    duplicate_messages: list[str] = []
+    members_count = 0
     try:
         with ZipFile(BytesIO(data)) as archive:
             members = [member for member in archive.infolist() if not member.is_dir() and not should_ignore_zip_member(member.filename)]
+            members_count = len(members)
             if len(members) > get_settings().bulk_evidence_max_files_per_batch:
                 raise BulkEvidenceImportError("ZIP contains too many files", status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
             for member in members:
@@ -124,10 +146,20 @@ def create_zip_import(
                     validate_zip_member(member.filename)
                     member_data = archive.read(member)
                     stored = store_imported_bytes(batch, member.filename, member_data)
-                    if stored.checksum_sha256 in seen_checksums:
+                    duplicate = detect_duplicate_imported_evidence(
+                        db,
+                        batch=batch,
+                        current_user=current_user,
+                        stored=stored,
+                        seen_checksums=seen_checksums,
+                    )
+                    if duplicate is not None:
+                        remove_duplicate_stored_file(stored)
+                        record_duplicate_removed(db, batch, current_user, stored, duplicate)
+                        duplicate_messages.append(duplicate_message(stored.original_filename, duplicate))
                         continue
-                    seen_checksums.add(stored.checksum_sha256)
-                    add_imported_file(db, batch, current_user, stored)
+                    imported_file = add_imported_file(db, batch, current_user, stored)
+                    seen_checksums[stored.checksum_sha256] = imported_file
                 except (BulkEvidenceImportError, RuntimeError) as exc:
                     if is_dangerous_zip_error(exc):
                         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -136,8 +168,8 @@ def create_zip_import(
     except BadZipFile as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid ZIP file") from exc
 
-    finalize_batch_counts(batch)
-    batch.error_message = "\n".join(errors) if errors else None
+    finalize_batch_counts(batch, total_files_count=members_count)
+    batch.error_message = "\n".join([*errors, *duplicate_messages]) if errors or duplicate_messages else None
     add_import_audit_log(db, current_user, batch, errors)
     db.commit()
     db.refresh(batch)
@@ -167,13 +199,144 @@ def add_imported_file(
     return imported_file
 
 
-def finalize_batch_counts(batch: EvidenceImportBatch) -> None:
-    batch.total_files = len(batch.files) + batch.failed_files_count
+def finalize_batch_counts(batch: EvidenceImportBatch, total_files_count: int | None = None) -> None:
+    batch.total_files = total_files_count if total_files_count is not None else len(batch.files) + batch.failed_files_count
     batch.stored_files_count = len(batch.files)
-    batch.status = "stored" if batch.stored_files_count else "failed"
-    if batch.status == "failed":
+    if batch.stored_files_count:
+        batch.status = "stored"
+    elif batch.duplicate_files_count and not batch.failed_files_count:
+        batch.status = "analyzed"
+        batch.completed_at = utc_now()
+    else:
+        batch.status = "failed"
         batch.completed_at = utc_now()
     batch.updated_at = utc_now()
+
+
+def detect_duplicate_imported_evidence(
+    db: Session,
+    *,
+    batch: EvidenceImportBatch,
+    current_user: User,
+    stored: StoredImportedEvidence,
+    seen_checksums: dict[str, EvidenceImportedFile],
+) -> DuplicateEvidenceMatch | None:
+    current_batch_match = seen_checksums.get(stored.checksum_sha256)
+    if current_batch_match is not None:
+        return DuplicateEvidenceMatch(
+            canonical_type="evidence_imported_file",
+            canonical_id=current_batch_match.id,
+            canonical_filename=current_batch_match.original_filename,
+            reason="duplicate_same_import_checksum",
+        )
+
+    existing_imported = find_existing_imported_file_duplicate(db, batch, current_user, stored.checksum_sha256)
+    if existing_imported is not None:
+        return DuplicateEvidenceMatch(
+            canonical_type="evidence_imported_file",
+            canonical_id=existing_imported.id,
+            canonical_filename=existing_imported.original_filename,
+            reason="duplicate_existing_import_checksum",
+        )
+
+    existing_evidence = find_existing_attached_evidence_duplicate(db, batch, current_user, stored.checksum_sha256)
+    if existing_evidence is not None:
+        return DuplicateEvidenceMatch(
+            canonical_type="evidence_file",
+            canonical_id=existing_evidence.id,
+            canonical_filename=existing_evidence.original_filename,
+            reason="duplicate_existing_attached_evidence_checksum",
+        )
+
+    return None
+
+
+def find_existing_imported_file_duplicate(
+    db: Session,
+    batch: EvidenceImportBatch,
+    current_user: User,
+    checksum_sha256: str,
+) -> EvidenceImportedFile | None:
+    statement = (
+        select(EvidenceImportedFile)
+        .join(EvidenceImportBatch, EvidenceImportedFile.batch_id == EvidenceImportBatch.id)
+        .where(
+            EvidenceImportedFile.checksum_sha256 == checksum_sha256,
+            EvidenceImportedFile.status != "ignored",
+            EvidenceImportBatch.id != batch.id,
+        )
+        .order_by(EvidenceImportedFile.id.asc())
+    )
+    if batch.restaurant_id is not None:
+        statement = statement.where(EvidenceImportBatch.restaurant_id == batch.restaurant_id)
+    elif current_user.role == "owner":
+        statement = statement.where(EvidenceImportBatch.restaurant_id.is_(None))
+    else:
+        statement = statement.where(
+            EvidenceImportBatch.restaurant_id.is_(None),
+            EvidenceImportedFile.uploaded_by_user_id == current_user.id,
+        )
+    return db.scalar(statement)
+
+
+def find_existing_attached_evidence_duplicate(
+    db: Session,
+    batch: EvidenceImportBatch,
+    current_user: User,
+    checksum_sha256: str,
+) -> EvidenceFile | None:
+    statement = (
+        select(EvidenceFile)
+        .join(ClaimOrder, EvidenceFile.order_id == ClaimOrder.id)
+        .where(EvidenceFile.checksum_sha256 == checksum_sha256, EvidenceFile.deleted_at.is_(None))
+        .order_by(EvidenceFile.id.asc())
+    )
+    if batch.restaurant_id is not None:
+        statement = statement.where(ClaimOrder.restaurant_id == batch.restaurant_id)
+    elif current_user.role == "owner":
+        return None
+    else:
+        statement = statement.where(EvidenceFile.uploaded_by_user_id == current_user.id)
+    return db.scalar(statement)
+
+
+def remove_duplicate_stored_file(stored: StoredImportedEvidence) -> None:
+    if stored.storage_backend != "local":
+        return
+    storage_root = ensure_bulk_storage_root().resolve()
+    target = (storage_root / stored.storage_path).resolve()
+    if target.is_relative_to(storage_root) and target.exists() and target.is_file():
+        target.unlink()
+
+
+def record_duplicate_removed(
+    db: Session,
+    batch: EvidenceImportBatch,
+    current_user: User,
+    stored: StoredImportedEvidence,
+    duplicate: DuplicateEvidenceMatch,
+) -> None:
+    batch.duplicate_files_count += 1
+    add_audit_log(
+        db,
+        user_id=current_user.id,
+        entity_type="evidence_import_batch",
+        entity_id=batch.id,
+        action="evidence_import_file.duplicate_removed",
+        new_value={
+            "original_filename": stored.original_filename,
+            "checksum_sha256": stored.checksum_sha256,
+            "duplicate_reason": duplicate.reason,
+            "canonical_type": duplicate.canonical_type,
+            "canonical_id": duplicate.canonical_id,
+            "canonical_filename": duplicate.canonical_filename,
+        },
+    )
+
+
+def duplicate_message(filename: str, duplicate: DuplicateEvidenceMatch) -> str:
+    canonical = f"{duplicate.canonical_type}#{duplicate.canonical_id}" if duplicate.canonical_id else duplicate.canonical_type
+    return f"{filename}: duplicate_removed:{duplicate.reason}:{canonical}"
 
 
 def store_imported_upload(batch: EvidenceImportBatch, upload: UploadFile) -> StoredImportedEvidence:
@@ -306,6 +469,7 @@ def add_import_audit_log(db: Session, user: User, batch: EvidenceImportBatch, er
             "restaurant_id": batch.restaurant_id,
             "stored_files_count": batch.stored_files_count,
             "failed_files_count": batch.failed_files_count,
+            "duplicate_files_count": batch.duplicate_files_count,
             "errors": errors,
         },
     )

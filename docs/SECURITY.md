@@ -126,6 +126,8 @@ Regles appliquees :
 - les extensions et tailles sont controlees avant stockage ;
 - les ZIP avec chemin absolu, `..` ou archive imbriquee sont refuses ;
 - un checksum SHA256 est stocke pour chaque fichier ;
+- les doublons exacts d'import massif sont supprimes seulement apres correspondance SHA256 dans le meme lot ou le meme restaurant ;
+- les fichiers seulement similaires restent en revue/analyse, sans suppression automatique ;
 - le chemin disque brut n'est pas expose ;
 - OpenAI vision est refuse tant que `AI_EVIDENCE_ANALYSIS_ENABLED=false` ;
 - aucun secret, token, mot de passe ou variable d'environnement ne doit etre envoye a un fournisseur d'analyse ;

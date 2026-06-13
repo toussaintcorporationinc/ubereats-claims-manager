@@ -91,8 +91,19 @@ export default function EvidenceImportBatchPage({ params }: PageProps) {
             <StatCard label="Stockes" value={batch.stored_files_count} />
             <StatCard label="Analyses" value={batch.analyzed_files_count} />
             <StatCard label="A revoir" value={batch.needs_review_count} />
+            <StatCard label="Doublons supprimes" value={batch.duplicate_files_count} />
             <StatCard label="Echecs" value={batch.failed_files_count} />
           </div>
+
+          {batch.duplicate_files_count > 0 ? (
+            <div className="success-box">
+              <strong>Doublons traites</strong>
+              <span>
+                TENNET a conserve le fichier canonique et supprime {batch.duplicate_files_count} doublon(s) exact(s)
+                apres verification checksum.
+              </span>
+            </div>
+          ) : null}
 
           <section className="tool-panel">
             <div className="section-heading">
