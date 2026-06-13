@@ -84,6 +84,16 @@ export default function EvidenceImportedFilePage({ params }: PageProps) {
 
       {detail ? (
         <>
+          {detail.file.status === "ignored" ? (
+            <div className="success-box">
+              <strong>Doublon exact verifie</strong>
+              <span>
+                TENNET n'a pas retraite cette copie : le fichier canonique est deja conserve. L'apercu ouvre la preuve
+                conservee pour controle.
+              </span>
+            </div>
+          ) : null}
+
           <section className="tool-panel">
             <div className="section-heading">
               <h2>Analyse</h2>
@@ -141,7 +151,7 @@ export default function EvidenceImportedFilePage({ params }: PageProps) {
             <button
               type="button"
               className="danger-button"
-              disabled={Boolean(working)}
+              disabled={Boolean(working) || detail.file.status === "ignored"}
               onClick={() => runAction("ignore", () => api.ignoreEvidenceImportedFile(fileId, "Ignore manuellement"))}
             >
               Ignorer ce fichier

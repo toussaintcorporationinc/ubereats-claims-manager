@@ -12,6 +12,7 @@ from app.models import (
     AuditLog,
     ClaimOrder,
     EvidenceImportBatch,
+    EvidenceImportedFile,
     EvidenceRequestTask,
     SmartImportPreviewBatch,
     UberReportingImportBatch,
@@ -238,6 +239,39 @@ def test_smart_confirm_routes_evidence_file_to_evidence_import(client: TestClien
     assert batch is not None
     assert batch.status == "stored"
     assert batch.stored_files_count == 1
+
+
+def test_smart_confirm_duplicate_evidence_creates_visible_ignored_file(client: TestClient, db_session: Session) -> None:
+    first = client.post(
+        "/v1/evidence-imports",
+        files=[("files", ("ticket-original.jpg", b"same smart evidence bytes", "image/jpeg"))],
+    )
+    assert first.status_code == 201
+
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("ticket-again.jpg", b"same smart evidence bytes", "image/jpeg"))],
+    ).json()
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [{"file_id": preview["files"][0]["id"], "action": "import_evidence_bulk"}],
+        },
+    )
+
+    assert response.status_code == 200
+    routed = response.json()["routed_files"][0]
+    batch = db_session.get(EvidenceImportBatch, routed["destination_id"])
+    assert batch is not None
+    assert batch.status == "analyzed"
+    assert batch.stored_files_count == 0
+    assert batch.duplicate_files_count == 1
+    imported_files = db_session.scalars(select(EvidenceImportedFile).where(EvidenceImportedFile.batch_id == batch.id)).all()
+    assert len(imported_files) == 1
+    assert imported_files[0].status == "ignored"
+    assert imported_files[0].original_filename == "ticket-again.jpg"
 
 
 def test_smart_confirm_routes_zip_to_evidence_import(client: TestClient, db_session: Session) -> None:
