@@ -159,6 +159,7 @@ export default function SmartImportPage() {
             {preview.files.map((file) => (
               <article key={file.id} className="premium-card">
                 <SmartImportPreviewCard file={file} />
+                {isExactDuplicate(file) ? <div className="success-box">Fichier doublon ignore automatiquement.</div> : null}
                 <div className="detail-grid detail-grid--compact">
                   <label className="field">
                     <span>Action</span>
@@ -167,6 +168,7 @@ export default function SmartImportPage() {
                       onChange={(event) =>
                         updateDecision(file.id, { action: event.target.value as SmartImportRecommendedAction })
                       }
+                      disabled={isExactDuplicate(file)}
                     >
                       <option value="import_uber_reporting">Creer import Uber</option>
                       <option value="import_evidence_bulk">Creer import preuves</option>
@@ -179,7 +181,7 @@ export default function SmartImportPage() {
                     <select
                       value={decisions[file.id]?.report_type ?? file.detected_report_type ?? "combined_report"}
                       onChange={(event) => updateDecision(file.id, { report_type: event.target.value as UberReportingReportType })}
-                      disabled={(decisions[file.id]?.action ?? file.recommended_action) !== "import_uber_reporting"}
+                      disabled={isExactDuplicate(file) || (decisions[file.id]?.action ?? file.recommended_action) !== "import_uber_reporting"}
                     >
                       <option value="combined_report">Rapport Uber detecte</option>
                       <option value="orders_report">Commandes Uber</option>
@@ -194,6 +196,7 @@ export default function SmartImportPage() {
                       onChange={(event) =>
                         updateDecision(file.id, { restaurant_id: event.target.value ? Number(event.target.value) : null })
                       }
+                      disabled={isExactDuplicate(file)}
                     >
                       <option value="">Non force</option>
                       {restaurants.map((restaurant) => (
@@ -239,7 +242,9 @@ export default function SmartImportPage() {
             {confirmResult.ignored_files.map((file) => (
               <article key={`ignored-${file.file_id}`} className="premium-card">
                 <h3>{file.original_filename}</h3>
-                <p className="muted">Fichier ignore.</p>
+                <p className="muted">
+                  {file.destination_type === "duplicate_ignored" ? "Doublon exact supprime. TENNET garde le fichier canonique." : "Fichier ignore."}
+                </p>
               </article>
             ))}
             {confirmResult.errors.map((item) => (
@@ -283,4 +288,8 @@ function labelForDestination(destinationType: string | null): string {
     evidence_import_batch: "Import de preuves cree. Ouvrez le batch pour analyser et attacher.",
   };
   return destinationType ? (labels[destinationType] ?? destinationType) : "Workflow cree";
+}
+
+function isExactDuplicate(file: { status?: string; destination_type?: string | null }): boolean {
+  return file.status === "ignored" && file.destination_type === "duplicate_ignored";
 }

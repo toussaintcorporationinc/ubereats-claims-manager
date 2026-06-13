@@ -1905,6 +1905,8 @@ Smart Import permet de deposer un fichier sans renommage obligatoire.
 - `POST /v1/smart-import/previews/{batch_id}/cancel` : annule une preview non confirmee.
 - `POST /v1/smart-import/cleanup-expired` : owner seulement, marque les previews expirees et nettoie les temporaires non routes.
 
+Pendant la preview, TENNET deduplique les fichiers exacts par checksum SHA-256. La copie conservee est choisie selon la detection et la confiance ; les autres copies exactes sont retournees en `ignored_files` / `duplicate_ignored` et ne peuvent pas etre routees vers un import operationnel.
+
 Reponse confirm :
 
 ```json

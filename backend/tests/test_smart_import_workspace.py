@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import (
+    AuditLog,
     ClaimOrder,
     EvidenceImportBatch,
     EvidenceRequestTask,
@@ -141,6 +142,78 @@ def test_smart_confirm_routes_uber_report_to_reporting_batch(client: TestClient,
     rows = db_session.scalars(select(UberReportingImportRow).where(UberReportingImportRow.batch_id == batch.id)).all()
     assert rows
     assert all(row.status != "created" for row in rows)
+
+
+def test_smart_import_preview_marks_exact_duplicate_by_checksum(client: TestClient, db_session: Session) -> None:
+    csv_content = (
+        "Id. du restaurant,Nom du restaurant,Id. de la commande,Date de la commande,Statut de la commande,Ventes (TVA incluse),Devise\n"
+        "store-dup,Restaurant Dup,UBER-DUP-001,01/05/2026,canceled,31,EUR\n"
+    )
+
+    response = client.post(
+        "/v1/smart-import/preview",
+        files=[
+            ("files", ("download (1).csv", csv_content.encode("utf-8"), "text/csv")),
+            ("files", ("download.csv", csv_content.encode("utf-8"), "text/csv")),
+        ],
+    )
+
+    assert response.status_code == 201
+    files = sorted(response.json()["files"], key=lambda item: item["original_filename"])
+    canonical = next(item for item in files if item["original_filename"] == "download.csv")
+    duplicate = next(item for item in files if item["original_filename"] == "download (1).csv")
+    assert canonical["recommended_action"] == "import_uber_reporting"
+    assert duplicate["recommended_action"] == "ignore"
+    assert duplicate["status"] == "ignored"
+    assert duplicate["destination_type"] == "duplicate_ignored"
+    assert duplicate["destination_id"] == canonical["id"]
+    assert "exact_duplicate_ignored" in duplicate["warnings"]
+
+    duplicate_audit = db_session.scalar(
+        select(AuditLog).where(
+            AuditLog.entity_type == "smart_import_preview_file",
+            AuditLog.action == "smart_import_file.duplicate_ignored",
+            AuditLog.entity_id == duplicate["id"],
+        )
+    )
+    assert duplicate_audit is not None
+
+
+def test_smart_confirm_does_not_route_exact_duplicate_even_if_forced(client: TestClient, db_session: Session) -> None:
+    csv_content = (
+        "Id. du restaurant,Nom du restaurant,Id. de la commande,Date de la commande,Statut de la commande,Ventes (TVA incluse),Devise\n"
+        "store-dup-force,Restaurant Dup Force,UBER-DUP-FORCE-001,01/05/2026,canceled,31,EUR\n"
+    )
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[
+            ("files", ("copy.csv", csv_content.encode("utf-8"), "text/csv")),
+            ("files", ("copy-again.csv", csv_content.encode("utf-8"), "text/csv")),
+        ],
+    ).json()
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [
+                {"file_id": preview["files"][0]["id"], "action": "import_uber_reporting", "report_type": "orders_report"},
+                {"file_id": preview["files"][1]["id"], "action": "import_uber_reporting", "report_type": "orders_report"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["routed_files"]) == 1
+    assert len(payload["ignored_files"]) == 1
+    assert payload["ignored_files"][0]["destination_type"] == "duplicate_ignored"
+    reporting_batches = db_session.scalars(select(UberReportingImportBatch)).all()
+    assert len(reporting_batches) == 1
+    batch = db_session.get(SmartImportPreviewBatch, preview["batch_preview_id"])
+    assert batch is not None
+    assert len([file for file in batch.files if file.status == "routed"]) == 1
+    assert len([file for file in batch.files if file.status == "ignored"]) == 1
 
 
 def test_smart_confirm_routes_evidence_file_to_evidence_import(client: TestClient, db_session: Session) -> None:

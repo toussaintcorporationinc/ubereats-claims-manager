@@ -31,6 +31,12 @@ Le resultat affiche :
 - niveau de confiance ;
 - action recommandee.
 
+Doublons :
+- TENNET calcule le checksum SHA-256 de chaque fichier depose ;
+- si deux fichiers ont exactement le meme contenu, TENNET garde le meilleur fichier canonique selon la detection et la confiance ;
+- les copies exactes sont marquees `ignore`, auditees, et leur fichier temporaire est supprime ;
+- TENNET ne supprime pas un fichier seulement parce que son nom ressemble a un autre.
+
 Depuis Mission 31, la confirmation lance le vrai workflow TENNET :
 - un rapport Uber cree un `UberReportingImportBatch` en statut `parsed`, puis renvoie vers `/uber/reporting/{batch_id}` ;
 - une preuve, un PDF ou un ZIP cree un `EvidenceImportBatch`, puis renvoie vers `/evidence-imports/{batch_id}` ;
