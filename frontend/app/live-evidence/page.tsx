@@ -100,7 +100,7 @@ export default function LiveEvidenceStationPage() {
           <p className="eyebrow">Terrain</p>
           <h1>Station preuves</h1>
           <p className="muted">
-            Imprimez le ticket TENNET, prenez la preuve en photo, puis scannez le QR code pour classer la preuve au bon dossier.
+            Imprimez le ticket preuve restaurant, prenez la preuve en photo, puis scannez le QR code pour classer la preuve au bon dossier.
           </p>
         </div>
         <div className="actions">
@@ -121,7 +121,7 @@ export default function LiveEvidenceStationPage() {
           <div className="section-heading">
             <h2>File active</h2>
             <span className="muted">
-              Web: impression systeme. App Android: ticket Bluetooth ESC/POS + camera directe. Aucune lecture tablette Uber.
+              Web: impression systeme. App Android: ticket preuve restaurant Bluetooth ESC/POS + camera directe. Aucune lecture tablette Uber.
             </span>
           </div>
           <div className="detail-grid detail-grid--compact">

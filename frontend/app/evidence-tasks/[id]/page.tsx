@@ -261,7 +261,7 @@ export default function EvidenceTaskDetailPage() {
         <section className="tool-panel">
           <div className="section-heading">
             <h2>Ticket preuve</h2>
-            <span className="muted">Imprimez un ticket avec QR code pour guider la photo terrain.</span>
+            <span className="muted">Imprimez un ticket preuve restaurant avec QR code pour guider la photo terrain.</span>
           </div>
           <button type="button" className="button" onClick={handleCreatePrintTicket} disabled={!isActive || creatingTicket}>
             {creatingTicket ? "Creation" : "Imprimer ticket preuve"}

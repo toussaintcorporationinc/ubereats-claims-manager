@@ -89,7 +89,7 @@ def create_print_ticket(
         expires_in_hours=expires_in_hours,
         max_uses=max_uses or 1,
     )
-    ticket_reference = f"TENNET-{task.id}-{upload_link.id}"
+    ticket_reference = f"PREUVE-{task.id}-{upload_link.id}"
     evidence_label = EVIDENCE_LABELS.get(task.required_evidence_type, task.required_evidence_type)
     qr_svg = build_qr_svg(upload_url)
     print_html = build_ticket_html(
@@ -142,7 +142,7 @@ def build_qr_svg(value: str) -> str:
     qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=8, border=2)
     qr.add_data(value)
     qr.make(fit=True)
-    image = qr.make_image(image_factory=SvgPathImage, attrib={"class": "tennet-ticket-qr"})
+    image = qr.make_image(image_factory=SvgPathImage, attrib={"class": "proof-ticket-qr"})
     stream = BytesIO()
     image.save(stream)
     svg = stream.getvalue().decode("utf-8")
@@ -161,6 +161,8 @@ def build_ticket_html(
 ) -> str:
     order = task.order
     amount = format_amount(order.order_amount, order.currency)
+    order_date = order.order_date.strftime("%Y-%m-%d") if order.order_date else "-"
+    order_time = order.order_time.strftime("%H:%M") if order.order_time else "-"
     due_at = format_datetime(task.due_at)
     expires_at = format_datetime(upload_link.expires_at)
     description = escape(task.description or "Prenez la photo demandee et envoyez-la avec ce QR code.")
@@ -169,12 +171,12 @@ def build_ticket_html(
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Ticket preuve TENNET {escape(ticket_reference)}</title>
+  <title>{escape(order.restaurant.name)} - preuve commande {escape(order.uber_order_number)}</title>
   <style>
     body {{ margin: 0; background: #fff; color: #111; font-family: Arial, sans-serif; }}
     .ticket {{ width: 72mm; padding: 5mm; }}
     .center {{ text-align: center; }}
-    .brand {{ font-size: 20px; font-weight: 900; letter-spacing: 1px; }}
+    .brand {{ font-size: 18px; font-weight: 900; letter-spacing: 0.4px; overflow-wrap: anywhere; }}
     .muted {{ color: #555; font-size: 11px; }}
     .line {{ border-top: 1px dashed #333; margin: 10px 0; }}
     .row {{ display: flex; justify-content: space-between; gap: 8px; font-size: 12px; margin: 5px 0; }}
@@ -188,27 +190,28 @@ def build_ticket_html(
 <body>
   <main class="ticket">
     <div class="center">
-      <div class="brand">TENNET</div>
-      <div class="muted">Ticket preuve terrain</div>
+      <div class="brand">{escape(order.restaurant.name)}</div>
+      <div class="muted">COMMANDE UBER - PREUVE RESTAURANT</div>
     </div>
     <div class="line"></div>
-    <div class="row"><span>Restaurant</span><strong>{escape(order.restaurant.name)}</strong></div>
     <div class="row"><span>Commande Uber</span><strong>{escape(order.uber_order_number)}</strong></div>
+    <div class="row"><span>Date commande</span><strong>{escape(order_date)}</strong></div>
+    <div class="row"><span>Heure commande</span><strong>{escape(order_time)}</strong></div>
     <div class="row"><span>Montant</span><strong>{escape(amount)}</strong></div>
     <div class="row"><span>Preuve attendue</span><strong>{escape(evidence_label)}</strong></div>
     <div class="row"><span>Echeance</span><strong>{escape(due_at)}</strong></div>
+    <div class="row"><span>Reference preuve</span><strong>{escape(ticket_reference)}</strong></div>
     <div class="line"></div>
     <div class="center qr">{qr_svg}</div>
     <p class="instructions">
-      1. Imprimez ce ticket.<br />
-      2. Prenez une photo du ticket avec la preuve demandee.<br />
-      3. Scannez le QR code pour envoyer la preuve au bon dossier.
+      1. Gardez ce ticket avec la commande.<br />
+      2. Photographiez le ticket avec la preuve demandee.<br />
+      3. Scannez le QR code pour envoyer la photo au bon dossier.
     </p>
     <p class="instructions">{description}</p>
     <div class="line"></div>
     <div class="muted">Lien valable jusqu'au {escape(expires_at)}. Usage limite: {upload_link.max_uses}.</div>
     <div class="reference">{escape(ticket_reference)}</div>
-    <div class="muted">{escape(upload_url)}</div>
   </main>
 </body>
 </html>"""
