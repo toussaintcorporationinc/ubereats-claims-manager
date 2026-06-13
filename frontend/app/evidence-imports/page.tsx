@@ -31,6 +31,7 @@ export default function EvidenceImportsPage() {
 
   const totalFiles = batches.reduce((total, batch) => total + batch.total_files, 0);
   const needsReview = batches.reduce((total, batch) => total + batch.needs_review_count, 0);
+  const duplicatesRemoved = batches.reduce((total, batch) => total + batch.duplicate_files_count, 0);
 
   return (
     <section className="page-section">
@@ -51,6 +52,7 @@ export default function EvidenceImportsPage() {
         <StatCard label="Batches" value={batches.length} />
         <StatCard label="Fichiers" value={totalFiles} />
         <StatCard label="A revoir" value={needsReview} />
+        <StatCard label="Doublons supprimes" value={duplicatesRemoved} />
       </div>
 
       <section className="tool-panel">
@@ -68,6 +70,7 @@ export default function EvidenceImportsPage() {
                   <th>Fichiers</th>
                   <th>Analyses</th>
                   <th>A revoir</th>
+                  <th>Doublons</th>
                   <th>Echecs</th>
                   <th>Date</th>
                   <th />
@@ -84,6 +87,7 @@ export default function EvidenceImportsPage() {
                     <td>{batch.stored_files_count}/{batch.total_files}</td>
                     <td>{batch.analyzed_files_count}</td>
                     <td>{batch.needs_review_count}</td>
+                    <td>{batch.duplicate_files_count}</td>
                     <td>{batch.failed_files_count}</td>
                     <td>{formatDate(batch.created_at)}</td>
                     <td>

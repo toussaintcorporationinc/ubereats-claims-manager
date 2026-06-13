@@ -1405,6 +1405,7 @@ class EvidenceImportBatch(TimestampMixin, Base):
     auto_matched_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     needs_review_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_files_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    duplicate_files_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_message: Mapped[str | None] = mapped_column(Text)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

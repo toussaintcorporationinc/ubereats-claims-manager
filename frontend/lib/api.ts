@@ -1339,6 +1339,7 @@ export type EvidenceImportBatch = {
   auto_matched_count: number;
   needs_review_count: number;
   failed_files_count: number;
+  duplicate_files_count: number;
   error_message: string | null;
   created_at: string;
   updated_at: string;
