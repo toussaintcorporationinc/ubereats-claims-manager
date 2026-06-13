@@ -99,6 +99,69 @@ export default function SmartImportPage() {
       <ApiError error={error} />
       {success ? <div className="success-box">{success}</div> : null}
 
+      {confirmResult ? (
+        <section className="tool-panel">
+          <div className="section-heading">
+            <div>
+              <h2>Fichiers traites</h2>
+              <p className="muted">
+                {confirmResult.routed_files.length} workflow(s) cree(s), {confirmResult.manual_review_files.length} a verifier,{" "}
+                {confirmResult.ignored_files.length} doublon(s) ou fichier(s) ignore(s).
+              </p>
+            </div>
+            <div className="actions">
+              {hasDestination(confirmResult, "uber_reporting_batch") ? (
+                <Link className="button" href="/uber/reporting">
+                  Voir les imports Uber
+                </Link>
+              ) : null}
+              {hasDestination(confirmResult, "evidence_import_batch") ? (
+                <Link className="secondary-button" href="/evidence-imports">
+                  Voir les imports preuves
+                </Link>
+              ) : null}
+            </div>
+          </div>
+          <p className="muted">
+            Les imports Uber sont crees en brouillon de verification. Ouvre un batch Uber, verifie les lignes, puis confirme
+            l'import pour creer les snapshots et transactions.
+          </p>
+          <div className="premium-card-grid">
+            {confirmResult.routed_files.map((file) => (
+              <article key={`${file.file_id}-${file.destination_type}`} className="premium-card">
+                <h3>{file.original_filename}</h3>
+                <p className="muted">{labelForDestination(file.destination_type)}</p>
+                {file.destination_url ? (
+                  <Link className="button" href={file.destination_url}>
+                    {file.destination_type === "uber_reporting_batch" ? "Ouvrir et confirmer" : "Ouvrir"}
+                  </Link>
+                ) : null}
+              </article>
+            ))}
+            {confirmResult.manual_review_files.map((file) => (
+              <article key={`manual-${file.file_id}`} className="premium-card">
+                <h3>{file.original_filename}</h3>
+                <p className="muted">Fichier garde pour revue manuelle.</p>
+              </article>
+            ))}
+            {confirmResult.ignored_files.map((file) => (
+              <article key={`ignored-${file.file_id}`} className="premium-card">
+                <h3>{file.original_filename}</h3>
+                <p className="muted">
+                  {file.destination_type === "duplicate_ignored" ? "Doublon exact traite. TENNET garde le fichier canonique." : "Fichier ignore."}
+                </p>
+              </article>
+            ))}
+            {confirmResult.errors.map((item) => (
+              <article key={`error-${item.file_id}`} className="premium-card">
+                <h3>{item.original_filename}</h3>
+                <p className="error-text">{item.error}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <section className="tool-panel smart-import-dropzone">
         <div className="field">
           <label htmlFor="smart_files">Fichiers Uber ou preuves</label>
@@ -213,50 +276,6 @@ export default function SmartImportPage() {
         </section>
       ) : null}
 
-      {confirmResult ? (
-        <section className="tool-panel">
-          <div className="section-heading">
-            <div>
-              <h2>Resultat</h2>
-              <p className="muted">TENNET a cree les workflows sans confirmer les lignes financieres automatiquement.</p>
-            </div>
-          </div>
-          <div className="premium-card-grid">
-            {confirmResult.routed_files.map((file) => (
-              <article key={`${file.file_id}-${file.destination_type}`} className="premium-card">
-                <h3>{file.original_filename}</h3>
-                <p className="muted">{labelForDestination(file.destination_type)}</p>
-                {file.destination_url ? (
-                  <Link className="button" href={file.destination_url}>
-                    Ouvrir
-                  </Link>
-                ) : null}
-              </article>
-            ))}
-            {confirmResult.manual_review_files.map((file) => (
-              <article key={`manual-${file.file_id}`} className="premium-card">
-                <h3>{file.original_filename}</h3>
-                <p className="muted">Fichier garde pour revue manuelle.</p>
-              </article>
-            ))}
-            {confirmResult.ignored_files.map((file) => (
-              <article key={`ignored-${file.file_id}`} className="premium-card">
-                <h3>{file.original_filename}</h3>
-                <p className="muted">
-                  {file.destination_type === "duplicate_ignored" ? "Doublon exact supprime. TENNET garde le fichier canonique." : "Fichier ignore."}
-                </p>
-              </article>
-            ))}
-            {confirmResult.errors.map((item) => (
-              <article key={`error-${item.file_id}`} className="premium-card">
-                <h3>{item.original_filename}</h3>
-                <p className="error-text">{item.error}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
       <MobileActionBar>
         <button type="button" className="button" onClick={handlePreview} disabled={loading || files.length === 0}>
           Analyser
@@ -284,10 +303,14 @@ export default function SmartImportPage() {
 
 function labelForDestination(destinationType: string | null): string {
   const labels: Record<string, string> = {
-    uber_reporting_batch: "Import Uber cree. Ouvrez le batch pour confirmer les lignes.",
-    evidence_import_batch: "Import de preuves cree. Ouvrez le batch pour analyser et attacher.",
+    uber_reporting_batch: "Import Uber pret a verifier.",
+    evidence_import_batch: "Import de preuves pret a analyser.",
   };
   return destinationType ? (labels[destinationType] ?? destinationType) : "Workflow cree";
+}
+
+function hasDestination(result: SmartImportConfirmResponse, destinationType: string): boolean {
+  return result.routed_files.some((file) => file.destination_type === destinationType);
 }
 
 function isExactDuplicate(file: { status?: string; destination_type?: string | null }): boolean {
