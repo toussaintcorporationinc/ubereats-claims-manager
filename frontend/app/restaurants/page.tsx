@@ -7,19 +7,30 @@ import EmptyState from "@/components/EmptyState";
 import LoadingState from "@/components/LoadingState";
 import StatusBadge from "@/components/StatusBadge";
 import { useAuth } from "@/lib/auth";
-import { api, type Restaurant } from "@/lib/api";
+import { api, type GmailRestaurantMapping, type Restaurant, type UberStoreMapping } from "@/lib/api";
 
 export default function RestaurantsPage() {
   const { user } = useAuth();
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
+  const [gmailMappings, setGmailMappings] = useState<GmailRestaurantMapping[]>([]);
+  const [uberMappings, setUberMappings] = useState<UberStoreMapping[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [updatingRestaurantId, setUpdatingRestaurantId] = useState<number | null>(null);
 
   useEffect(() => {
-    api
-      .getRestaurants()
-      .then(setRestaurants)
+    async function loadData() {
+      const [restaurantData, gmailData, uberData] = await Promise.all([
+        api.getRestaurants(),
+        api.getGmailRestaurantMappings().catch(() => [] as GmailRestaurantMapping[]),
+        api.getUberStoreMappings().catch(() => [] as UberStoreMapping[]),
+      ]);
+      setRestaurants(restaurantData);
+      setGmailMappings(gmailData);
+      setUberMappings(uberData);
+    }
+
+    loadData()
       .catch(setError)
       .finally(() => setLoading(false));
   }, []);
@@ -60,63 +71,69 @@ export default function RestaurantsPage() {
       <ApiError error={error} />
 
       {restaurants.length > 0 ? (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Nom</th>
-                <th>Raison sociale</th>
-                <th>Adresse</th>
-                <th>Email expediteur</th>
-                <th>Uber merchant</th>
-                <th>Statut</th>
-                <th>AutoPilot</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {restaurants.map((restaurant) => (
-                <tr key={restaurant.id}>
-                  <td>{restaurant.name}</td>
-                  <td>{restaurant.legal_name ?? "-"}</td>
-                  <td>{restaurant.address ?? "-"}</td>
-                  <td>{restaurant.sender_email}</td>
-                  <td>{restaurant.uber_merchant_id ?? "-"}</td>
-                  <td>
-                    <StatusBadge status={restaurant.active ? "active" : "inactive"} />
-                  </td>
-                  <td>
+        <div className="restaurant-card-grid">
+          {restaurants.map((restaurant) => {
+            const gmailMapping = gmailMappings.find((mapping) => mapping.restaurant_id === restaurant.id);
+            const stores = uberMappings.filter((mapping) => mapping.restaurant_id === restaurant.id);
+            return (
+              <article className="restaurant-card" key={restaurant.id}>
+                <div className="card-row">
+                  <div className="stack-sm">
+                    <h2>{restaurant.name}</h2>
+                    <span className="muted">{restaurant.legal_name ?? "Raison sociale non renseignee"}</span>
+                  </div>
+                  <StatusBadge status={restaurant.active ? "active" : "inactive"} />
+                </div>
+
+                <div className="detail-grid detail-grid--compact">
+                  <DetailItem label="Adresse" value={restaurant.address ?? "-"} />
+                  <DetailItem label="Email restaurant" value={restaurant.sender_email} />
+                  <DetailItem label="Compte Gmail lie" value={gmailMapping?.email_address ?? "Aucun compte choisi"} />
+                  <DetailItem label="Uber merchant" value={restaurant.uber_merchant_id ?? "-"} />
+                  <DetailItem label="Stores Uber lies" value={stores.length > 0 ? stores.map((store) => store.uber_store_name).join(", ") : "Aucun"} />
+                  <div className="detail-item">
+                    <span>AutoPilot</span>
                     <div className="actions">
                       <StatusBadge status={restaurant.autopilot_enabled ? "active" : "inactive"} />
-                      {user?.role === "owner" ? (
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          disabled={updatingRestaurantId === restaurant.id}
-                          onClick={() => void toggleAutopilot(restaurant)}
-                        >
-                          {restaurant.autopilot_enabled ? "Desactiver AutoPilot" : "Activer AutoPilot"}
-                        </button>
-                      ) : null}
                     </div>
-                  </td>
-                  <td>
-                    {user?.role === "owner" ? (
-                      <Link href={`/restaurants/${restaurant.id}`} className="secondary-button">
-                        Modifier
+                  </div>
+                </div>
+
+                <div className="actions">
+                  {user?.role === "owner" ? (
+                    <>
+                      <Link href={`/restaurants/${restaurant.id}`} className="button">
+                        Modifier et mapper
                       </Link>
-                    ) : (
-                      "-"
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={updatingRestaurantId === restaurant.id}
+                        onClick={() => void toggleAutopilot(restaurant)}
+                      >
+                        {restaurant.autopilot_enabled ? "Desactiver AutoPilot" : "Activer AutoPilot"}
+                      </button>
+                    </>
+                  ) : (
+                    <span className="muted">Lecture seule</span>
+                  )}
+                </div>
+              </article>
+            );
+          })}
         </div>
       ) : (
         <EmptyState title="Aucun restaurant" />
       )}
     </section>
+  );
+}
+
+function DetailItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="detail-item">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }
