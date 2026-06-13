@@ -39,6 +39,11 @@ class DuplicateEvidenceMatch:
     canonical_id: int | None
     reason: str
     canonical_filename: str | None = None
+    canonical_internal_filename: str | None = None
+    canonical_storage_backend: str | None = None
+    canonical_storage_path: str | None = None
+    canonical_mime_type: str | None = None
+    canonical_file_size: int | None = None
 
 
 class BulkEvidenceImportError(Exception):
@@ -98,7 +103,7 @@ def create_multi_file_import(
             batch.failed_files_count += 1
             errors.append(f"{upload.filename or 'file'}: {exc.message}")
 
-    finalize_batch_counts(batch, total_files_count=len(files))
+    finalize_batch_counts(db, batch, total_files_count=len(files))
     batch.error_message = "\n".join([*errors, *duplicate_messages]) if errors or duplicate_messages else None
     add_import_audit_log(db, current_user, batch, errors)
     db.commit()
@@ -168,7 +173,7 @@ def create_zip_import(
     except BadZipFile as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid ZIP file") from exc
 
-    finalize_batch_counts(batch, total_files_count=members_count)
+    finalize_batch_counts(db, batch, total_files_count=members_count)
     batch.error_message = "\n".join([*errors, *duplicate_messages]) if errors or duplicate_messages else None
     add_import_audit_log(db, current_user, batch, errors)
     db.commit()
@@ -199,9 +204,15 @@ def add_imported_file(
     return imported_file
 
 
-def finalize_batch_counts(batch: EvidenceImportBatch, total_files_count: int | None = None) -> None:
-    batch.total_files = total_files_count if total_files_count is not None else len(batch.files) + batch.failed_files_count
-    batch.stored_files_count = len(batch.files)
+def finalize_batch_counts(db: Session, batch: EvidenceImportBatch, total_files_count: int | None = None) -> None:
+    db.flush()
+    imported_file_statuses = db.scalars(
+        select(EvidenceImportedFile.status).where(EvidenceImportedFile.batch_id == batch.id)
+    ).all()
+    batch.total_files = (
+        total_files_count if total_files_count is not None else len(imported_file_statuses) + batch.failed_files_count
+    )
+    batch.stored_files_count = len([file_status for file_status in imported_file_statuses if file_status != "ignored"])
     if batch.stored_files_count:
         batch.status = "stored"
     elif batch.duplicate_files_count and not batch.failed_files_count:
@@ -227,6 +238,11 @@ def detect_duplicate_imported_evidence(
             canonical_type="evidence_imported_file",
             canonical_id=current_batch_match.id,
             canonical_filename=current_batch_match.original_filename,
+            canonical_internal_filename=current_batch_match.internal_filename,
+            canonical_storage_backend=current_batch_match.storage_backend,
+            canonical_storage_path=current_batch_match.storage_path,
+            canonical_mime_type=current_batch_match.mime_type,
+            canonical_file_size=current_batch_match.file_size,
             reason="duplicate_same_import_checksum",
         )
 
@@ -236,6 +252,11 @@ def detect_duplicate_imported_evidence(
             canonical_type="evidence_imported_file",
             canonical_id=existing_imported.id,
             canonical_filename=existing_imported.original_filename,
+            canonical_internal_filename=existing_imported.internal_filename,
+            canonical_storage_backend=existing_imported.storage_backend,
+            canonical_storage_path=existing_imported.storage_path,
+            canonical_mime_type=existing_imported.mime_type,
+            canonical_file_size=existing_imported.file_size,
             reason="duplicate_existing_import_checksum",
         )
 
@@ -245,6 +266,11 @@ def detect_duplicate_imported_evidence(
             canonical_type="evidence_file",
             canonical_id=existing_evidence.id,
             canonical_filename=existing_evidence.original_filename,
+            canonical_internal_filename=existing_evidence.original_filename,
+            canonical_storage_backend=existing_evidence.storage_backend,
+            canonical_storage_path=existing_evidence.storage_path,
+            canonical_mime_type=existing_evidence.mime_type,
+            canonical_file_size=existing_evidence.file_size,
             reason="duplicate_existing_attached_evidence_checksum",
         )
 
@@ -317,6 +343,20 @@ def record_duplicate_removed(
     duplicate: DuplicateEvidenceMatch,
 ) -> None:
     batch.duplicate_files_count += 1
+    if duplicate.canonical_storage_path:
+        duplicate_placeholder = EvidenceImportedFile(
+            uploaded_by_user_id=current_user.id,
+            original_filename=stored.original_filename,
+            internal_filename=duplicate.canonical_internal_filename
+            or f"duplicate-of-{duplicate.canonical_type}-{duplicate.canonical_id or 'unknown'}",
+            storage_backend=duplicate.canonical_storage_backend or stored.storage_backend,
+            storage_path=duplicate.canonical_storage_path,
+            mime_type=stored.mime_type or duplicate.canonical_mime_type,
+            file_size=stored.file_size,
+            checksum_sha256=stored.checksum_sha256,
+            status="ignored",
+        )
+        batch.files.append(duplicate_placeholder)
     add_audit_log(
         db,
         user_id=current_user.id,

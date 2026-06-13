@@ -160,7 +160,8 @@ def test_multi_file_import_removes_exact_duplicate_after_checksum_analysis(
     batch = db_session.get(EvidenceImportBatch, data["id"])
     assert batch is not None
     assert batch.duplicate_files_count == 1
-    assert len(batch.files) == 2
+    assert len(batch.files) == 3
+    assert len([file for file in batch.files if file.status == "ignored"]) == 1
     assert len(list((bulk_evidence_storage / "bulk_imports" / f"batch_{batch.id}").iterdir())) == 2
     assert db_session.scalar(
         select(AuditLog).where(
@@ -195,6 +196,8 @@ def test_zip_import_removes_exact_duplicate_member(
     assert data["duplicate_files_count"] == 1
     batch = db_session.get(EvidenceImportBatch, data["id"])
     assert batch is not None
+    assert len(batch.files) == 2
+    assert len([file for file in batch.files if file.status == "ignored"]) == 1
     assert len(list((bulk_evidence_storage / "bulk_imports" / f"batch_{batch.id}").iterdir())) == 1
 
 
@@ -227,9 +230,12 @@ def test_import_removes_duplicate_already_stored_for_same_restaurant(
 
     batch = db_session.get(EvidenceImportBatch, data["id"])
     assert batch is not None
-    assert batch.files == []
+    assert len(batch.files) == 1
+    duplicate_file = batch.files[0]
+    assert duplicate_file.status == "ignored"
+    assert duplicate_file.original_filename == "receipt-again.pdf"
     assert len(list((bulk_evidence_storage / "bulk_imports" / f"batch_{batch.id}").iterdir())) == 0
-    assert db_session.scalar(select(EvidenceImportedFile).where(EvidenceImportedFile.batch_id == batch.id)) is None
+    assert db_session.scalar(select(EvidenceImportedFile).where(EvidenceImportedFile.batch_id == batch.id)) is not None
 
 
 def test_zip_path_traversal_refused(configured_client: TestClient) -> None:

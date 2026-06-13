@@ -99,8 +99,8 @@ export default function EvidenceImportBatchPage({ params }: PageProps) {
             <div className="success-box">
               <strong>Doublons traites</strong>
               <span>
-                TENNET a conserve le fichier canonique et supprime {batch.duplicate_files_count} doublon(s) exact(s)
-                apres verification checksum.
+                TENNET a conserve le fichier canonique et retire {batch.duplicate_files_count} copie(s) exacte(s)
+                apres verification checksum. Les doublons restent visibles ci-dessous avec le statut ignore.
               </span>
             </div>
           ) : null}
@@ -150,7 +150,14 @@ export default function EvidenceImportBatchPage({ params }: PageProps) {
           </div>
         </div>
         {files.length === 0 ? (
-          <EmptyState title="Aucun fichier" />
+          <EmptyState
+            title={batch?.duplicate_files_count ? "Doublons deja traites" : "Aucun fichier"}
+            description={
+              batch?.duplicate_files_count
+                ? "Ce batch ancien ne contient que des doublons retires. Les prochains imports afficheront chaque doublon verifie dans cette liste."
+                : undefined
+            }
+          />
         ) : (
           <div className="table-wrap">
             <table>
@@ -167,8 +174,11 @@ export default function EvidenceImportBatchPage({ params }: PageProps) {
               <tbody>
                 {files.map((file) => (
                   <tr key={file.id}>
-                    <td>{file.original_filename}</td>
-                    <td>{file.mime_type ?? "-"}</td>
+                    <td>
+                      {file.original_filename}
+                      {file.status === "ignored" ? <div className="muted">Doublon exact conserve ailleurs</div> : null}
+                    </td>
+                    <td>{file.status === "ignored" ? "Doublon verifie" : file.mime_type ?? "-"}</td>
                     <td>{formatBytes(file.file_size)}</td>
                     <td>
                       <StatusBadge status={file.status} />
@@ -176,7 +186,7 @@ export default function EvidenceImportBatchPage({ params }: PageProps) {
                     <td>{formatDate(file.created_at)}</td>
                     <td>
                       <Link href={`/evidence-imports/files/${file.id}`} className="secondary-button">
-                        Revoir
+                        {file.status === "ignored" ? "Comprendre" : "Revoir"}
                       </Link>
                     </td>
                   </tr>
