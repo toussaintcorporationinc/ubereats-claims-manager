@@ -214,8 +214,8 @@ export default function EmailSettingsPage() {
           </div>
         )}
         <p className="muted">
-          Exemple: assignez les 4 restaurants Tiramisu a tiramisumaisonfrance@gmail.com et les 2 autres a
-          toussaintetchau1@gmail.com apres connexion du second compte.
+          Assignez chaque restaurant au compte Gmail qui gere ses conversations Uber. Les comptes affiches ici sont les
+          comptes reellement connectes dans TENNET.
         </p>
       </section>
 

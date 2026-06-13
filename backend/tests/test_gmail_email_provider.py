@@ -313,7 +313,7 @@ def test_oauth_callback_keeps_multiple_gmail_accounts(
     db_session.commit()
     db_session.refresh(owner)
     provider = GmailEmailProvider()
-    emails = iter(["tiramisumaisonfrance@gmail.com", "toussaintetchau1@gmail.com"])
+    emails = iter(["restaurant-group-a@example.com", "restaurant-group-b@example.com"])
 
     monkeypatch.setattr(
         provider,
@@ -336,8 +336,8 @@ def test_oauth_callback_keeps_multiple_gmail_accounts(
     ).all()
     assert first.id != second.id
     assert [account.email_address for account in accounts] == [
-        "tiramisumaisonfrance@gmail.com",
-        "toussaintetchau1@gmail.com",
+        "restaurant-group-a@example.com",
+        "restaurant-group-b@example.com",
     ]
 
 
@@ -348,7 +348,7 @@ def test_gmail_provider_uses_restaurant_mapped_account_for_draft(
 ) -> None:
     owner = get_user(db_session, "owner@example.com")
     default_account = connect_gmail_account(db_session, owner.id, "default-claims@example.com")
-    mapped_account = connect_gmail_account(db_session, owner.id, "tiramisumaisonfrance@gmail.com")
+    mapped_account = connect_gmail_account(db_session, owner.id, "restaurant-group-a@example.com")
     restaurant = create_restaurant(client, "Mapped Gmail Restaurant")
     draft_payload = create_ready_order_and_draft(client, restaurant["id"], "UBER-GMAIL-MAPPED")
     draft = db_session.get(EmailDraft, draft_payload["id"])
@@ -375,7 +375,7 @@ def test_owner_can_map_restaurant_to_connected_gmail_account(
     gmail_enabled: None,
 ) -> None:
     owner = get_user(db_session, "owner@example.com")
-    account = connect_gmail_account(db_session, owner.id, "tiramisumaisonfrance@gmail.com")
+    account = connect_gmail_account(db_session, owner.id, "restaurant-group-a@example.com")
     restaurant = create_restaurant(client, "Tiramisu Mapping")
 
     response = client.put(
@@ -387,7 +387,7 @@ def test_owner_can_map_restaurant_to_connected_gmail_account(
     data = response.json()
     assert data["restaurant_id"] == restaurant["id"]
     assert data["email_account_id"] == account.id
-    assert data["email_address"] == "tiramisumaisonfrance@gmail.com"
+    assert data["email_address"] == "restaurant-group-a@example.com"
 
 
 def test_staff_cannot_create_gmail_draft(

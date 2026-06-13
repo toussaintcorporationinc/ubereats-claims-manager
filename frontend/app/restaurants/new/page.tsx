@@ -82,11 +82,11 @@ export default function NewRestaurantPage() {
           <strong>Restaurant cree</strong>
           <span>{createdRestaurant.name}</span>
           <div className="actions">
+            <Link href={`/restaurants/${createdRestaurant.id}`} className="button">
+              Configurer Gmail et Uber
+            </Link>
             <Link href="/restaurants" className="secondary-button">
               Liste restaurants
-            </Link>
-            <Link href="/orders/new" className="button">
-              Creer commande
             </Link>
           </div>
         </div>
@@ -120,7 +120,7 @@ export default function NewRestaurantPage() {
             />
           </div>
           <div className="field">
-            <label htmlFor="sender_email">Email expediteur</label>
+            <label htmlFor="sender_email">Email fallback du restaurant</label>
             <input
               id="sender_email"
               required

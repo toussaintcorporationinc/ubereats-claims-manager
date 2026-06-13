@@ -4,8 +4,8 @@ TENNET peut connecter plusieurs comptes Gmail a un meme utilisateur owner ou man
 
 Objectif operationnel :
 
-- 4 restaurants peuvent utiliser `tiramisumaisonfrance@gmail.com`.
-- 2 restaurants peuvent utiliser `toussaintetchau1@gmail.com`.
+- 4 restaurants peuvent utiliser `restaurant-groupe-a@example.com`.
+- 2 restaurants peuvent utiliser `restaurant-groupe-b@example.com`.
 - Les brouillons Gmail, envois manuels et synchronisations de reponses restent controles.
 
 ## Regles
