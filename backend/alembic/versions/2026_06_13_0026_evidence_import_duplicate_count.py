@@ -21,7 +21,8 @@ def upgrade() -> None:
         "evidence_import_batches",
         sa.Column("duplicate_files_count", sa.Integer(), nullable=False, server_default="0"),
     )
-    op.alter_column("evidence_import_batches", "duplicate_files_count", server_default=None)
+    if op.get_bind().dialect.name != "sqlite":
+        op.alter_column("evidence_import_batches", "duplicate_files_count", server_default=None)
 
 
 def downgrade() -> None:
