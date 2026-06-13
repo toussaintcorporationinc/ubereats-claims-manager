@@ -13,7 +13,7 @@ router = APIRouter(prefix="/v1/restaurants", tags=["restaurants"])
 
 def _normalise_restaurant_values(values: dict) -> dict:
     normalised = dict(values)
-    for field in ("name", "legal_name", "address", "sender_email", "uber_merchant_id"):
+    for field in ("name", "legal_name", "address", "phone_number", "sender_email", "uber_merchant_id"):
         if field in normalised and isinstance(normalised[field], str):
             value = normalised[field].strip()
             normalised[field] = value or None
@@ -31,6 +31,7 @@ def _restaurant_audit_value(restaurant: Restaurant) -> dict:
         "name": restaurant.name,
         "legal_name": restaurant.legal_name,
         "address": restaurant.address,
+        "phone_number": restaurant.phone_number,
         "sender_email": restaurant.sender_email,
         "uber_merchant_id": restaurant.uber_merchant_id,
         "active": restaurant.active,

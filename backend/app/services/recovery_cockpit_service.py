@@ -146,6 +146,7 @@ class RecoveryCockpitService:
                     restaurant_id=order.restaurant_id,
                     restaurant_name=order.restaurant.name if order.restaurant else f"#{order.restaurant_id}",
                     uber_order_number=order.uber_order_number,
+                    customer_name=order.customer_name,
                     loss_category=claim_order_loss_category(order),
                     recovery_stage=stage,
                     detected_amount=amount,
@@ -189,6 +190,12 @@ class RecoveryCockpitService:
             if closed_appeal is not None:
                 case_status = closed_appeal.status
                 case_url = f"/appeals/{closed_appeal.id}"
+            snapshot_customer_name = result.matched_snapshot.customer_name if result.matched_snapshot else None
+            customer_name = (
+                result.claim_order.customer_name
+                if result.claim_order and result.claim_order.customer_name
+                else snapshot_customer_name
+            )
             cases.append(
                 RecoveryCase(
                     case_type="reconciliation_result",
@@ -196,6 +203,7 @@ class RecoveryCockpitService:
                     restaurant_id=result.restaurant_id,
                     restaurant_name=result.restaurant.name if result.restaurant else f"#{result.restaurant_id}",
                     uber_order_number=result.display_id or result.uber_order_id,
+                    customer_name=customer_name,
                     loss_category="cancellation_not_compensated",
                     recovery_stage=stage,
                     detected_amount=amount,
@@ -244,6 +252,7 @@ class RecoveryCockpitService:
                     restaurant_id=dispute.restaurant_id,
                     restaurant_name=dispute.restaurant.name if dispute.restaurant else f"#{dispute.restaurant_id}",
                     uber_order_number=dispute.display_id or dispute.uber_order_id,
+                    customer_name=dispute.claim_order.customer_name if dispute.claim_order else None,
                     loss_category=customer_refund_loss_category(dispute.dispute_type),
                     recovery_stage=stage,
                     detected_amount=amount,

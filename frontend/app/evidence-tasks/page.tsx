@@ -208,6 +208,7 @@ export default function EvidenceTasksPage() {
                     <td>
                       <Link href={`/orders/${task.order_id}`} className="secondary-button">
                         {task.uber_order_number}
+                        {task.customer_name ? <span className="muted">{task.customer_name}</span> : null}
                       </Link>
                     </td>
                     <td>

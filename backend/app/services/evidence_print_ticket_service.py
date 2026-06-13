@@ -39,6 +39,7 @@ class EvidencePrintTicket:
     restaurant_id: int
     restaurant_name: str
     uber_order_number: str
+    customer_name: str | None
     required_evidence_type: str
     required_evidence_label: str
     title: str
@@ -59,6 +60,7 @@ class EvidencePrintTicket:
             "restaurant_id": self.restaurant_id,
             "restaurant_name": self.restaurant_name,
             "uber_order_number": self.uber_order_number,
+            "customer_name": self.customer_name,
             "required_evidence_type": self.required_evidence_type,
             "required_evidence_label": self.required_evidence_label,
             "title": self.title,
@@ -123,6 +125,7 @@ def create_print_ticket(
         restaurant_id=order.restaurant_id,
         restaurant_name=order.restaurant.name,
         uber_order_number=order.uber_order_number,
+        customer_name=order.customer_name,
         required_evidence_type=task.required_evidence_type,
         required_evidence_label=evidence_label,
         title=task.title,
@@ -161,6 +164,7 @@ def build_ticket_html(
 ) -> str:
     order = task.order
     amount = format_amount(order.order_amount, order.currency)
+    customer_name = order.customer_name or "-"
     order_date = order.order_date.strftime("%Y-%m-%d") if order.order_date else "-"
     order_time = order.order_time.strftime("%H:%M") if order.order_time else "-"
     due_at = format_datetime(task.due_at)
@@ -195,6 +199,7 @@ def build_ticket_html(
     </div>
     <div class="line"></div>
     <div class="row"><span>Commande Uber</span><strong>{escape(order.uber_order_number)}</strong></div>
+    <div class="row"><span>Client</span><strong>{escape(customer_name)}</strong></div>
     <div class="row"><span>Date commande</span><strong>{escape(order_date)}</strong></div>
     <div class="row"><span>Heure commande</span><strong>{escape(order_time)}</strong></div>
     <div class="row"><span>Montant</span><strong>{escape(amount)}</strong></div>

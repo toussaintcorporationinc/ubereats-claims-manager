@@ -11,6 +11,7 @@ type RestaurantForm = {
   name: string;
   legal_name: string;
   address: string;
+  phone_number: string;
   sender_email: string;
   uber_merchant_id: string;
   active: boolean;
@@ -21,6 +22,7 @@ const initialForm: RestaurantForm = {
   name: "",
   legal_name: "",
   address: "",
+  phone_number: "",
   sender_email: "",
   uber_merchant_id: "",
   active: true,
@@ -49,6 +51,7 @@ export default function NewRestaurantPage() {
         name: form.name.trim(),
         legal_name: emptyToNull(form.legal_name),
         address: emptyToNull(form.address),
+        phone_number: emptyToNull(form.phone_number),
         sender_email: form.sender_email.trim(),
         uber_merchant_id: emptyToNull(form.uber_merchant_id),
         active: form.active,
@@ -117,6 +120,15 @@ export default function NewRestaurantPage() {
               id="address"
               value={form.address}
               onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="phone_number">Telephone restaurant</label>
+            <input
+              id="phone_number"
+              inputMode="tel"
+              value={form.phone_number}
+              onChange={(event) => setForm((current) => ({ ...current, phone_number: event.target.value }))}
             />
           </div>
           <div className="field">

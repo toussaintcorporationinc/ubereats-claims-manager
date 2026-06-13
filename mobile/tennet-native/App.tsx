@@ -571,7 +571,7 @@ function TaskDetail({
       </View>
       <Text style={styles.detailTitle}>{task.title}</Text>
       <Text style={styles.detailMeta}>{task.restaurant_name}</Text>
-      <Text style={styles.detailMeta}>Commande {task.uber_order_number}</Text>
+      <Text style={styles.detailMeta}>{formatOrderIdentity(task.customer_name, task.uber_order_number)}</Text>
       <Text style={styles.detailProof}>{labelForEvidence(task.required_evidence_type)}</Text>
       <Text style={styles.detailBody}>{task.description || task.reason}</Text>
       <View style={styles.actionRow}>
@@ -679,7 +679,7 @@ function ScanScreen({
           <Badge label={readableLabel(link.priority)} tone={colorForStatus(link.priority)} />
           <Text style={styles.detailTitle}>{link.title}</Text>
           <Text style={styles.detailMeta}>{link.restaurant_name}</Text>
-          <Text style={styles.detailMeta}>Commande {link.uber_order_number}</Text>
+          <Text style={styles.detailMeta}>{formatOrderIdentity(link.customer_name, link.uber_order_number)}</Text>
           <Text style={styles.detailProof}>{labelForEvidence(link.required_evidence_type)}</Text>
           <PrimaryButton label={busy ? "Envoi..." : "Photographier et envoyer"} onPress={uploadPublic} disabled={busy} />
         </View>
@@ -781,6 +781,7 @@ function AccountScreen({
         restaurant_id: 0,
         restaurant_name: "RESTAURANT TEST",
         uber_order_number: "TEST-IMPRIMANTE",
+        customer_name: null,
         required_evidence_type: "printer_test",
         required_evidence_label: "Test imprimante",
         title: `Test imprimante ${now}`,
@@ -880,9 +881,14 @@ function EvidenceTaskCard({ task, selected, onPress }: { task: EvidenceTask; sel
       </View>
       <Text style={styles.cardTitle}>{labelForEvidence(task.required_evidence_type)}</Text>
       <Text style={styles.cardMeta}>{task.restaurant_name}</Text>
-      <Text style={styles.cardMeta}>Commande {task.uber_order_number} - {formatDate(task.due_at)}</Text>
+      <Text style={styles.cardMeta}>{formatOrderIdentity(task.customer_name, task.uber_order_number)} - {formatDate(task.due_at)}</Text>
     </Pressable>
   );
+}
+
+function formatOrderIdentity(customerName: string | null | undefined, orderNumber: string | null | undefined): string {
+  const order = orderNumber ? `Commande ${orderNumber}` : "Commande -";
+  return customerName ? `${customerName} - ${order}` : order;
 }
 
 function RecoveryActionCard({ action }: { action: RecoveryAction }) {

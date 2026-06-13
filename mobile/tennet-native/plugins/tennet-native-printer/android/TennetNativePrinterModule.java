@@ -246,6 +246,7 @@ public class TennetNativePrinterModule extends ReactContextBaseJavaModule {
   private byte[] buildEscPosTicket(ReadableMap ticket) throws Exception {
     String restaurantName = value(ticket, "restaurant_name");
     String orderNumber = value(ticket, "uber_order_number");
+    String customerName = value(ticket, "customer_name");
     String evidenceLabel = value(ticket, "required_evidence_label");
     String ticketReference = value(ticket, "ticket_reference");
     String uploadUrl = value(ticket, "upload_url");
@@ -261,6 +262,7 @@ public class TennetNativePrinterModule extends ReactContextBaseJavaModule {
     writeLine(out, "");
     write(out, align(0));
     writeRule(out);
+    writePair(out, "Client", customerName);
     writePair(out, "Commande Uber", orderNumber);
     writePair(out, "Montant", amount.isEmpty() || amount.equals("null") ? "-" : amount + " " + currency);
     writePair(out, "Preuve attendue", evidenceLabel);

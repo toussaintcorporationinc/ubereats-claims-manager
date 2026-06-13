@@ -25,6 +25,7 @@ export type EvidenceTask = {
   restaurant_id: number;
   restaurant_name: string;
   uber_order_number: string;
+  customer_name: string | null;
   order_amount: number | string | null;
   currency: string;
   claim_status?: string;
@@ -52,6 +53,7 @@ export type EvidencePrintTicket = {
   restaurant_id: number;
   restaurant_name: string;
   uber_order_number: string;
+  customer_name: string | null;
   required_evidence_type: string;
   required_evidence_label: string;
   title: string;
@@ -153,6 +155,7 @@ export type PublicEvidenceUploadLink = {
   order_id: number;
   restaurant_name: string;
   uber_order_number: string;
+  customer_name: string | null;
   required_evidence_type: string;
   status: string;
   priority: string;

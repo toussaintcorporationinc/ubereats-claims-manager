@@ -518,6 +518,7 @@ class UberReconciliationService:
         return ClaimOrder(
             restaurant_id=result.restaurant_id,
             uber_order_number=result.display_id or result.uber_order_id,
+            customer_name=result.matched_snapshot.customer_name if result.matched_snapshot else None,
             order_amount=amount,
             currency=result.currency,
             status="missing_evidence",

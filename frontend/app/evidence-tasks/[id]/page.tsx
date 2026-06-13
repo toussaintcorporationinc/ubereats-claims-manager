@@ -212,6 +212,7 @@ export default function EvidenceTaskDetailPage() {
         <div className="detail-grid">
           <DetailItem label="Restaurant" value={restaurant?.name ?? `#${order.restaurant_id}`} />
           <DetailItem label="Commande Uber" value={order.uber_order_number} />
+          <DetailItem label="Client" value={order.customer_name ?? "-"} />
           <DetailItem label="Statut dossier" value={order.status} />
           <DetailItem label="Montant" value={formatCurrency(order.order_amount, order.currency)} />
           <DetailItem label="Type preuve" value={task.required_evidence_type} />
@@ -276,6 +277,7 @@ export default function EvidenceTaskDetailPage() {
                 <div>
                   <strong>{ticketResult.required_evidence_label}</strong>
                   <span>{ticketResult.restaurant_name}</span>
+                  {ticketResult.customer_name ? <span>{ticketResult.customer_name}</span> : null}
                   <span>{ticketResult.uber_order_number}</span>
                 </div>
               </div>

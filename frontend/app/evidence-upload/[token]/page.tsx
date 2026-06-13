@@ -77,6 +77,7 @@ export default function PublicEvidenceUploadPage() {
             <div className="detail-grid">
               <DetailItem label="Restaurant" value={link.restaurant_name} />
               <DetailItem label="Commande" value={link.uber_order_number} />
+              <DetailItem label="Client" value={link.customer_name ?? "-"} />
               <DetailItem label="Preuve" value={link.required_evidence_type} />
               <DetailItem label="Expiration" value={formatDate(link.expires_at)} />
             </div>

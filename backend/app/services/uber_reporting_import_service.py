@@ -39,6 +39,7 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
         "uber_id",
     ),
     "display_id": ("display_id", "visible_id", "short_order_id", "order_display_id"),
+    "customer_name": ("customer_name", "customer", "client", "eater_name", "nom_client", "nom du client", "client name"),
     "order_status": ("order_status", "status", "current_state", "state", "statut"),
     "placed_at": ("placed_at", "order_date", "date", "date_commande", "created_at"),
     "canceled_at": ("canceled_at", "cancellation_date", "cancellation_time", "heure_annulation", "annulation"),
@@ -78,6 +79,7 @@ ORDER_FIELDS = {
     "uber_store_name",
     "uber_order_id",
     "display_id",
+    "customer_name",
     "order_status",
     "placed_at",
     "canceled_at",
@@ -412,6 +414,7 @@ def create_or_update_snapshot(db: Session, data: dict[str, Any]) -> tuple[UberOr
         db.flush()
     snapshot.uber_store_id = data["uber_store_id"]
     snapshot.display_id = data.get("display_id")
+    snapshot.customer_name = clean_optional(data.get("customer_name"))
     snapshot.current_state = str(data.get("order_status") or "unknown")
     snapshot.placed_at = parse_datetime(data.get("placed_at"))
     snapshot.canceled_at = parse_datetime(data.get("canceled_at"))
@@ -580,6 +583,13 @@ def row_dedupe_key(data: dict[str, Any], report_type: str) -> tuple[Any, ...] | 
 
 def is_empty_row(row: dict[str, Any]) -> bool:
     return not any(value not in {None, ""} for value in row.values())
+
+
+def clean_optional(value: object) -> str | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
 
 
 def parse_decimal(value: object) -> Decimal | None:

@@ -211,7 +211,7 @@ export default function RecoveryCasesPage() {
                   <td>{item.restaurant_name}</td>
                   <td>{item.case_type}</td>
                   <td>{item.loss_category}</td>
-                  <td>{item.uber_order_number ?? "-"}</td>
+                  <td>{formatOrderIdentity(item.customer_name, item.uber_order_number)}</td>
                   <td>{formatCurrency(item.claimable_amount || item.detected_amount)}</td>
                   <td>
                     <StatusBadge status={item.recovery_stage} />
@@ -268,6 +268,11 @@ function toRecoveryFilters(filters: FilterState): RecoveryFilters {
     max_amount: filters.max_amount,
     needs_evidence: filters.needs_evidence === "" ? undefined : filters.needs_evidence === "true",
   };
+}
+
+function formatOrderIdentity(customerName: string | null | undefined, orderNumber: string | null | undefined): string {
+  const order = orderNumber ?? "-";
+  return customerName ? `${customerName} - ${order}` : order;
 }
 
 function saveBlob(blob: Blob, filename: string): void {

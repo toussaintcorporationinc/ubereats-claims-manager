@@ -22,6 +22,7 @@ type RestaurantForm = {
   name: string;
   legal_name: string;
   address: string;
+  phone_number: string;
   sender_email: string;
   uber_merchant_id: string;
   active: boolean;
@@ -33,6 +34,7 @@ function restaurantToForm(restaurant: Restaurant): RestaurantForm {
     name: restaurant.name,
     legal_name: restaurant.legal_name ?? "",
     address: restaurant.address ?? "",
+    phone_number: restaurant.phone_number ?? "",
     sender_email: restaurant.sender_email,
     uber_merchant_id: restaurant.uber_merchant_id ?? "",
     active: restaurant.active,
@@ -115,6 +117,7 @@ export default function EditRestaurantPage() {
         name: form.name.trim(),
         legal_name: emptyToNull(form.legal_name),
         address: emptyToNull(form.address),
+        phone_number: emptyToNull(form.phone_number),
         sender_email: form.sender_email.trim(),
         uber_merchant_id: emptyToNull(form.uber_merchant_id),
         active: form.active,
@@ -207,6 +210,17 @@ export default function EditRestaurantPage() {
               value={form.address}
               onChange={(event) =>
                 setForm((current) => (current ? { ...current, address: event.target.value } : current))
+              }
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="phone_number">Telephone restaurant</label>
+            <input
+              id="phone_number"
+              inputMode="tel"
+              value={form.phone_number}
+              onChange={(event) =>
+                setForm((current) => (current ? { ...current, phone_number: event.target.value } : current))
               }
             />
           </div>

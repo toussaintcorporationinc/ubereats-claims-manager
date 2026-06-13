@@ -395,6 +395,7 @@ class RestaurantCreate(BaseModel):
     name: str = Field(min_length=1)
     legal_name: str | None = None
     address: str | None = None
+    phone_number: str | None = None
     sender_email: str = Field(min_length=1)
     uber_merchant_id: str | None = None
     active: bool = True
@@ -405,6 +406,7 @@ class RestaurantUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1)
     legal_name: str | None = None
     address: str | None = None
+    phone_number: str | None = None
     sender_email: str | None = Field(default=None, min_length=1)
     uber_merchant_id: str | None = None
     active: bool | None = None
@@ -418,6 +420,7 @@ class RestaurantRead(BaseModel):
     name: str
     legal_name: str | None
     address: str | None
+    phone_number: str | None
     sender_email: str
     uber_merchant_id: str | None
     active: bool
@@ -1428,6 +1431,7 @@ class EvidenceRequestTaskSummary(BaseModel):
     restaurant_id: int
     restaurant_name: str
     uber_order_number: str
+    customer_name: str | None
     order_amount: Decimal | None
     currency: str
     claim_status: ClaimOrderStatus
@@ -1525,6 +1529,7 @@ class EvidencePrintTicketResponse(BaseModel):
     restaurant_id: int
     restaurant_name: str
     uber_order_number: str
+    customer_name: str | None
     required_evidence_type: EvidenceType
     required_evidence_label: str
     title: str
@@ -1545,6 +1550,7 @@ class PublicEvidenceUploadLinkRead(BaseModel):
     order_id: int
     restaurant_name: str
     uber_order_number: str
+    customer_name: str | None
     task_type: EvidenceRequestTaskType
     required_evidence_type: EvidenceType
     status: EvidenceRequestTaskStatus
@@ -1777,6 +1783,7 @@ class RecoveryCase(BaseModel):
     restaurant_id: int
     restaurant_name: str
     uber_order_number: str | None
+    customer_name: str | None = None
     loss_category: RecoveryLossCategory
     recovery_stage: RecoveryStage
     detected_amount: Decimal = Decimal("0")
