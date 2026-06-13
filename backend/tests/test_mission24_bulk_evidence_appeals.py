@@ -19,6 +19,8 @@ from app.models import (
     EmailAccount,
     EmailProviderDraft,
     EvidenceFile,
+    EvidenceImportBatch,
+    EvidenceImportedFile,
     EvidenceRequestTask,
     UberCustomerRefundDispute,
     User,
@@ -131,6 +133,103 @@ def test_zip_valid_extracts_files(configured_client: TestClient) -> None:
     assert data["source_type"] == "zip_upload"
     assert data["stored_files_count"] == 1
     assert data["status"] == "stored"
+
+
+def test_multi_file_import_removes_exact_duplicate_after_checksum_analysis(
+    configured_client: TestClient,
+    bulk_evidence_storage: Path,
+    db_session: Session,
+) -> None:
+    response = configured_client.post(
+        "/v1/evidence-imports",
+        files=[
+            ("files", ("receipt-a.pdf", b"same receipt payload", "application/pdf")),
+            ("files", ("receipt-copy.pdf", b"same receipt payload", "application/pdf")),
+            ("files", ("receipt-b.pdf", b"different receipt payload", "application/pdf")),
+        ],
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["total_files"] == 3
+    assert data["stored_files_count"] == 2
+    assert data["duplicate_files_count"] == 1
+    assert data["failed_files_count"] == 0
+    assert "duplicate_removed" in data["error_message"]
+
+    batch = db_session.get(EvidenceImportBatch, data["id"])
+    assert batch is not None
+    assert batch.duplicate_files_count == 1
+    assert len(batch.files) == 2
+    assert len(list((bulk_evidence_storage / "bulk_imports" / f"batch_{batch.id}").iterdir())) == 2
+    assert db_session.scalar(
+        select(AuditLog).where(
+            AuditLog.entity_type == "evidence_import_batch",
+            AuditLog.entity_id == batch.id,
+            AuditLog.action == "evidence_import_file.duplicate_removed",
+        )
+    )
+
+
+def test_zip_import_removes_exact_duplicate_member(
+    configured_client: TestClient,
+    bulk_evidence_storage: Path,
+    db_session: Session,
+) -> None:
+    payload = make_zip(
+        {
+            "receipt-a.pdf": b"same zip receipt payload",
+            "copy/receipt-a.pdf": b"same zip receipt payload",
+        }
+    )
+
+    response = configured_client.post(
+        "/v1/evidence-imports/zip",
+        files={"file": ("bulk.zip", payload, "application/zip")},
+    )
+
+    assert response.status_code == 201
+    data = response.json()
+    assert data["total_files"] == 2
+    assert data["stored_files_count"] == 1
+    assert data["duplicate_files_count"] == 1
+    batch = db_session.get(EvidenceImportBatch, data["id"])
+    assert batch is not None
+    assert len(list((bulk_evidence_storage / "bulk_imports" / f"batch_{batch.id}").iterdir())) == 1
+
+
+def test_import_removes_duplicate_already_stored_for_same_restaurant(
+    configured_client: TestClient,
+    bulk_evidence_storage: Path,
+    db_session: Session,
+) -> None:
+    restaurant = create_restaurant(configured_client)
+    first = configured_client.post(
+        "/v1/evidence-imports",
+        files=[("files", ("receipt-master.pdf", b"restaurant duplicate payload", "application/pdf"))],
+        data={"restaurant_id": str(restaurant["id"])},
+    )
+    assert first.status_code == 201
+
+    second = configured_client.post(
+        "/v1/evidence-imports",
+        files=[("files", ("receipt-again.pdf", b"restaurant duplicate payload", "application/pdf"))],
+        data={"restaurant_id": str(restaurant["id"])},
+    )
+
+    assert second.status_code == 201
+    data = second.json()
+    assert data["total_files"] == 1
+    assert data["stored_files_count"] == 0
+    assert data["duplicate_files_count"] == 1
+    assert data["status"] == "analyzed"
+    assert "duplicate_existing_import_checksum" in data["error_message"]
+
+    batch = db_session.get(EvidenceImportBatch, data["id"])
+    assert batch is not None
+    assert batch.files == []
+    assert len(list((bulk_evidence_storage / "bulk_imports" / f"batch_{batch.id}").iterdir())) == 0
+    assert db_session.scalar(select(EvidenceImportedFile).where(EvidenceImportedFile.batch_id == batch.id)) is None
 
 
 def test_zip_path_traversal_refused(configured_client: TestClient) -> None:

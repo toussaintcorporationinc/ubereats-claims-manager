@@ -1923,6 +1923,7 @@ class EvidenceImportBatchRead(BaseModel):
     auto_matched_count: int
     needs_review_count: int
     failed_files_count: int
+    duplicate_files_count: int
     error_message: str | None
     created_at: datetime
     updated_at: datetime

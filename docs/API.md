@@ -1764,6 +1764,9 @@ Endpoints :
 - `POST /v1/evidence-match-candidates/{candidate_id}/accept` : accepte un candidat propose.
 - `POST /v1/evidence-match-candidates/{candidate_id}/reject` : rejette un candidat propose.
 
+Les reponses batch incluent `duplicate_files_count`. TENNET supprime automatiquement uniquement les doublons exacts
+valides par checksum SHA256 dans le meme lot ou pour le meme restaurant, puis conserve le fichier canonique.
+
 `POST /v1/evidence-imports/{batch_id}/analyze` body :
 
 ```json
