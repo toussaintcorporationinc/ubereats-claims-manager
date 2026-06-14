@@ -7,7 +7,15 @@ from openpyxl import Workbook
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AuditLog, ClaimOrder, UberFinancialTransaction, UberOrderSnapshot, UberReconciliationResult, UberReconciliationRun
+from app.models import (
+    AuditLog,
+    ClaimOrder,
+    UberFinancialTransaction,
+    UberOrderSnapshot,
+    UberReconciliationResult,
+    UberReconciliationRun,
+    UberStoreMapping,
+)
 
 
 def auth_headers(token: str) -> dict[str, str]:
@@ -198,6 +206,29 @@ def test_owner_can_create_mapping_without_manual_store_id(unauthenticated_client
     assert payload["restaurant_id"] == restaurant["id"]
     assert payload["uber_store_name"] == "Asian Passion"
     assert payload["uber_store_id"] == f"restaurant-name:{restaurant['id']}"
+
+
+def test_historical_alias_mapping_is_hidden_from_mapping_list(
+    unauthenticated_client: TestClient,
+    db_session: Session,
+) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Asian Passion")
+    db_session.add(
+        UberStoreMapping(
+            restaurant_id=restaurant["id"],
+            uber_store_id=f"restaurant-name:{restaurant['id']}:historical:croustybest",
+            uber_store_name="Crousty Best",
+            external_reference_id="historical_alias",
+            active=True,
+        )
+    )
+    db_session.commit()
+
+    response = unauthenticated_client.get("/v1/uber/store-mappings", headers=auth_headers(owner_token))
+
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_manager_assigned_can_import_reporting_file(unauthenticated_client: TestClient, db_session: Session) -> None:
