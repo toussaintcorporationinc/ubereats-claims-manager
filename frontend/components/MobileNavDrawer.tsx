@@ -7,9 +7,17 @@ import type { UserRole } from "@/lib/api";
 export type NavItem = {
   href: string;
   label: string;
+  group: "main" | "work" | "follow" | "admin";
   ownerOnly?: boolean;
   ownerOrManagerOnly?: boolean;
 };
+
+const navGroups: Array<{ key: NavItem["group"]; label: string }> = [
+  { key: "main", label: "Essentiel" },
+  { key: "work", label: "Dossiers" },
+  { key: "follow", label: "Suivi" },
+  { key: "admin", label: "Pilotage" },
+];
 
 type Props = {
   open: boolean;
@@ -36,12 +44,25 @@ export default function MobileNavDrawer({ open, items, userRole, onClose, onLogo
             x
           </button>
         </div>
-        <nav className="nav-list">
-          {visibleItems.map((item) => (
-            <Link key={item.href} href={item.href} className="nav-link" onClick={onClose}>
-              {item.label}
-            </Link>
-          ))}
+        <nav className="nav-list nav-list--grouped">
+          {navGroups.map((group) => {
+            const groupItems = visibleItems.filter((item) => item.group === group.key);
+
+            if (groupItems.length === 0) {
+              return null;
+            }
+
+            return (
+              <div key={group.key} className="nav-section">
+                <span className="nav-section-title">{group.label}</span>
+                {groupItems.map((item) => (
+                  <Link key={item.href} href={item.href} className="nav-link" onClick={onClose}>
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
+            );
+          })}
         </nav>
         <button type="button" className="secondary-button" onClick={onLogout}>
           Deconnexion

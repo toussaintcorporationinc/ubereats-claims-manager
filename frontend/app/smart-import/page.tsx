@@ -92,18 +92,36 @@ export default function SmartImportPage() {
         <div className="heading-copy">
           <p className="eyebrow">Smart Import</p>
           <h1>Deposer sans renommer</h1>
-          <p>TENNET detecte le type par contenu et propose l'action la plus simple.</p>
+          <p>TENNET lit le contenu, propose la bonne destination, puis cree le workflow quand tu confirmes.</p>
         </div>
       </div>
 
       <ApiError error={error} />
       {success ? <div className="success-box">{success}</div> : null}
 
+      <section className="smart-import-steps" aria-label="Fonctionnement Smart Import">
+        <article className="smart-step">
+          <span>1</span>
+          <strong>Depose</strong>
+          <p>CSV, XLSX, PDF, image ou ZIP. Le nom du fichier n'a pas besoin d'etre propre.</p>
+        </article>
+        <article className="smart-step">
+          <span>2</span>
+          <strong>TENNET detecte</strong>
+          <p>Rapport Uber, paiement, ajustement, preuve ou fichier a verifier.</p>
+        </article>
+        <article className="smart-step">
+          <span>3</span>
+          <strong>Tu confirmes</strong>
+          <p>TENNET cree l'import Uber ou l'import preuves, sans valider les lignes a ta place.</p>
+        </article>
+      </section>
+
       {confirmResult ? (
         <section className="tool-panel">
           <div className="section-heading">
             <div>
-              <h2>Fichiers traites</h2>
+              <h2>Resultat Smart Import</h2>
               <p className="muted">
                 {confirmResult.routed_files.length} workflow(s) cree(s), {confirmResult.manual_review_files.length} a verifier,{" "}
                 {confirmResult.ignored_files.length} doublon(s) ou fichier(s) ignore(s).
@@ -122,10 +140,24 @@ export default function SmartImportPage() {
               ) : null}
             </div>
           </div>
-          <p className="muted">
-            Les imports Uber sont crees en brouillon de verification. Ouvre un batch Uber, verifie les lignes, puis confirme
-            l'import pour creer les snapshots et transactions.
-          </p>
+          <div className="simple-callout">
+            <strong>Prochaine etape</strong>
+            {hasDestination(confirmResult, "uber_reporting_batch") ? (
+              <p>
+                Ouvre l'import Uber cree, verifie les lignes, puis confirme. C'est a ce moment-la seulement que TENNET
+                cree les commandes et transactions.
+              </p>
+            ) : null}
+            {hasDestination(confirmResult, "evidence_import_batch") ? (
+              <p>
+                Ouvre l'import preuves cree, lance l'analyse locale/fake si besoin, puis attache les preuves
+                manuellement aux dossiers proposes.
+              </p>
+            ) : null}
+            {!hasDestination(confirmResult, "uber_reporting_batch") && !hasDestination(confirmResult, "evidence_import_batch") ? (
+              <p>Les fichiers douteux restent conserves en revue. Rien n'est supprime brutalement.</p>
+            ) : null}
+          </div>
           <div className="premium-card-grid">
             {confirmResult.routed_files.map((file) => (
               <article key={`${file.file_id}-${file.destination_type}`} className="premium-card">
@@ -211,11 +243,11 @@ export default function SmartImportPage() {
         <section className="tool-panel">
           <div className="section-heading">
             <div>
-              <h2>Preview</h2>
-              <p className="muted">Batch #{preview.batch_preview_id} - {preview.status}</p>
+              <h2>Ce que TENNET a compris</h2>
+              <p className="muted">Import temporaire #{preview.batch_preview_id}. Tu peux confirmer ou corriger.</p>
             </div>
             <button type="button" className="button" onClick={handleConfirm} disabled={confirming || preview.status === "confirmed"}>
-              {confirming ? "Confirmation" : "Confirmer"}
+              {confirming ? "Creation" : "Confirmer et creer les imports"}
             </button>
           </div>
           <div className="premium-card-grid">
@@ -223,53 +255,56 @@ export default function SmartImportPage() {
               <article key={file.id} className="premium-card">
                 <SmartImportPreviewCard file={file} />
                 {isExactDuplicate(file) ? <div className="success-box">Fichier doublon ignore automatiquement.</div> : null}
-                <div className="detail-grid detail-grid--compact">
-                  <label className="field">
-                    <span>Action</span>
-                    <select
-                      value={decisions[file.id]?.action ?? file.recommended_action}
-                      onChange={(event) =>
-                        updateDecision(file.id, { action: event.target.value as SmartImportRecommendedAction })
-                      }
-                      disabled={isExactDuplicate(file)}
-                    >
-                      <option value="import_uber_reporting">Creer import Uber</option>
-                      <option value="import_evidence_bulk">Creer import preuves</option>
-                      <option value="manual_review">A verifier</option>
-                      <option value="ignore">Ignorer</option>
-                    </select>
-                  </label>
-                  <label className="field">
-                    <span>Type Uber</span>
-                    <select
-                      value={decisions[file.id]?.report_type ?? file.detected_report_type ?? "combined_report"}
-                      onChange={(event) => updateDecision(file.id, { report_type: event.target.value as UberReportingReportType })}
-                      disabled={isExactDuplicate(file) || (decisions[file.id]?.action ?? file.recommended_action) !== "import_uber_reporting"}
-                    >
-                      <option value="combined_report">Rapport Uber detecte</option>
-                      <option value="orders_report">Commandes Uber</option>
-                      <option value="payments_report">Paiements Uber</option>
-                      <option value="adjustments_report">Ajustements Uber</option>
-                    </select>
-                  </label>
-                  <label className="field">
-                    <span>Restaurant</span>
-                    <select
-                      value={decisions[file.id]?.restaurant_id ?? ""}
-                      onChange={(event) =>
-                        updateDecision(file.id, { restaurant_id: event.target.value ? Number(event.target.value) : null })
-                      }
-                      disabled={isExactDuplicate(file)}
-                    >
-                      <option value="">Non force</option>
-                      {restaurants.map((restaurant) => (
-                        <option key={restaurant.id} value={restaurant.id}>
-                          {restaurant.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
+                <details className="simple-details simple-details--compact">
+                  <summary>Corriger si besoin</summary>
+                  <div className="detail-grid detail-grid--compact">
+                    <label className="field">
+                      <span>Destination</span>
+                      <select
+                        value={decisions[file.id]?.action ?? file.recommended_action}
+                        onChange={(event) =>
+                          updateDecision(file.id, { action: event.target.value as SmartImportRecommendedAction })
+                        }
+                        disabled={isExactDuplicate(file)}
+                      >
+                        <option value="import_uber_reporting">Import Uber</option>
+                        <option value="import_evidence_bulk">Import preuves</option>
+                        <option value="manual_review">A verifier</option>
+                        <option value="ignore">Ignorer</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Type Uber</span>
+                      <select
+                        value={decisions[file.id]?.report_type ?? file.detected_report_type ?? "combined_report"}
+                        onChange={(event) => updateDecision(file.id, { report_type: event.target.value as UberReportingReportType })}
+                        disabled={isExactDuplicate(file) || (decisions[file.id]?.action ?? file.recommended_action) !== "import_uber_reporting"}
+                      >
+                        <option value="combined_report">Rapport Uber detecte</option>
+                        <option value="orders_report">Commandes Uber</option>
+                        <option value="payments_report">Paiements Uber</option>
+                        <option value="adjustments_report">Ajustements Uber</option>
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Restaurant</span>
+                      <select
+                        value={decisions[file.id]?.restaurant_id ?? ""}
+                        onChange={(event) =>
+                          updateDecision(file.id, { restaurant_id: event.target.value ? Number(event.target.value) : null })
+                        }
+                        disabled={isExactDuplicate(file)}
+                      >
+                        <option value="">TENNET propose</option>
+                        {restaurants.map((restaurant) => (
+                          <option key={restaurant.id} value={restaurant.id}>
+                            {restaurant.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </details>
               </article>
             ))}
           </div>
@@ -282,7 +317,7 @@ export default function SmartImportPage() {
         </button>
         {preview ? (
           <button type="button" className="secondary-button" onClick={handleConfirm} disabled={confirming || preview.status === "confirmed"}>
-            Confirmer
+            Creer imports
           </button>
         ) : null}
       </MobileActionBar>

@@ -11,25 +11,31 @@ import MobileNavDrawer, { type NavItem } from "@/components/MobileNavDrawer";
 import { useAuth } from "@/lib/auth";
 
 const navigation: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/smart-import", label: "Smart Import", ownerOrManagerOnly: true },
-  { href: "/restaurants", label: "Restaurants" },
-  { href: "/orders", label: "Commandes" },
-  { href: "/imports", label: "Imports" },
-  { href: "/drafts", label: "Brouillons" },
-  { href: "/evidence-tasks", label: "Preuves" },
-  { href: "/live-evidence", label: "Station preuves" },
-  { href: "/evidence-imports", label: "Import preuves", ownerOrManagerOnly: true },
-  { href: "/followups", label: "Relances", ownerOrManagerOnly: true },
-  { href: "/appeals", label: "Appels / Refus Uber", ownerOrManagerOnly: true },
-  { href: "/autopilot", label: "AutoPilot", ownerOrManagerOnly: true },
-  { href: "/customer-refunds", label: "Deductions Uber", ownerOrManagerOnly: true },
-  { href: "/recovery", label: "Recuperation", ownerOrManagerOnly: true },
-  { href: "/reports", label: "Rapports", ownerOrManagerOnly: true },
-  { href: "/uber", label: "Uber", ownerOrManagerOnly: true },
-  { href: "/inbox", label: "Reponses Uber", ownerOrManagerOnly: true },
-  { href: "/settings/email", label: "Email", ownerOrManagerOnly: true },
-  { href: "/users", label: "Utilisateurs", ownerOnly: true },
+  { href: "/dashboard", label: "A faire", group: "main" },
+  { href: "/smart-import", label: "Deposer fichiers", group: "main", ownerOrManagerOnly: true },
+  { href: "/evidence-tasks", label: "Preuves", group: "main" },
+  { href: "/live-evidence", label: "Camera + tickets", group: "main" },
+  { href: "/recovery", label: "Recuperation", group: "main", ownerOrManagerOnly: true },
+  { href: "/restaurants", label: "Restaurants", group: "work", ownerOrManagerOnly: true },
+  { href: "/orders", label: "Dossiers", group: "work", ownerOrManagerOnly: true },
+  { href: "/uber", label: "Imports Uber", group: "work", ownerOrManagerOnly: true },
+  { href: "/evidence-imports", label: "Import preuves", group: "work", ownerOrManagerOnly: true },
+  { href: "/drafts", label: "Brouillons", group: "follow", ownerOrManagerOnly: true },
+  { href: "/followups", label: "Relances", group: "follow", ownerOrManagerOnly: true },
+  { href: "/appeals", label: "Appels / Refus", group: "follow", ownerOrManagerOnly: true },
+  { href: "/customer-refunds", label: "Deductions Uber", group: "follow", ownerOrManagerOnly: true },
+  { href: "/inbox", label: "Reponses Uber", group: "follow", ownerOrManagerOnly: true },
+  { href: "/autopilot", label: "AutoPilot", group: "admin", ownerOrManagerOnly: true },
+  { href: "/reports", label: "Rapports", group: "admin", ownerOrManagerOnly: true },
+  { href: "/settings/email", label: "Email", group: "admin", ownerOrManagerOnly: true },
+  { href: "/users", label: "Utilisateurs", group: "admin", ownerOnly: true },
+];
+
+const navGroups: Array<{ key: NavItem["group"]; label: string }> = [
+  { key: "main", label: "Essentiel" },
+  { key: "work", label: "Dossiers" },
+  { key: "follow", label: "Suivi" },
+  { key: "admin", label: "Pilotage" },
 ];
 
 const publicPaths = new Set(["/login", "/setup-owner"]);
@@ -64,13 +70,14 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     logout();
     router.replace("/login");
   };
+  const visibleNavigation = navigation.filter((item) => canSeeNavItem(item, user.role));
 
   return (
     <div className="app-shell">
       <MobileHeader onMenuClick={() => setMobileMenuOpen(true)} />
       <MobileNavDrawer
         open={mobileMenuOpen}
-        items={navigation}
+        items={visibleNavigation}
         userRole={user.role}
         onClose={() => setMobileMenuOpen(false)}
         onLogout={handleLogout}
@@ -79,15 +86,25 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <Link href="/dashboard" className="brand">
           <BrandLogo />
         </Link>
-        <nav className="nav-list">
-          {navigation
-            .filter((item) => !item.ownerOnly || user.role === "owner")
-            .filter((item) => !item.ownerOrManagerOnly || user.role === "owner" || user.role === "manager")
-            .map((item) => (
-              <Link key={item.href} href={item.href} className="nav-link">
-                {item.label}
-              </Link>
-            ))}
+        <nav className="nav-list nav-list--grouped">
+          {navGroups.map((group) => {
+            const groupItems = visibleNavigation.filter((item) => item.group === group.key);
+
+            if (groupItems.length === 0) {
+              return null;
+            }
+
+            return (
+              <div key={group.key} className="nav-section">
+                <span className="nav-section-title">{group.label}</span>
+                {groupItems.map((item) => (
+                  <Link key={item.href} href={item.href} className="nav-link">
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
+            );
+          })}
         </nav>
         <div className="user-card">
           <span>{user.full_name ?? user.email}</span>
@@ -104,4 +121,14 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       <main className="main-content">{children}</main>
     </div>
   );
+}
+
+function canSeeNavItem(item: NavItem, role: string): boolean {
+  if (item.ownerOnly && role !== "owner") {
+    return false;
+  }
+  if (item.ownerOrManagerOnly && role !== "owner" && role !== "manager") {
+    return false;
+  }
+  return true;
 }
