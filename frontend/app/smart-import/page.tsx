@@ -14,6 +14,7 @@ import {
   type SmartImportPreviewResponse,
   type SmartImportRecommendedAction,
   type UberReportingReportType,
+  type WorkspaceMachineRunResponse,
 } from "@/lib/api";
 
 const acceptedTypes = ".csv,.xlsx,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.zip,image/*,application/pdf";
@@ -24,6 +25,7 @@ export default function SmartImportPage() {
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [decisions, setDecisions] = useState<Record<number, SmartImportFileDecision>>({});
   const [confirmResult, setConfirmResult] = useState<SmartImportConfirmResponse | null>(null);
+  const [machineResult, setMachineResult] = useState<WorkspaceMachineRunResponse | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -62,6 +64,13 @@ export default function SmartImportPage() {
       setDecisions(recommendedDecisions);
       const confirmResponse = await api.confirmSmartImport(result.batch_preview_id, Object.values(recommendedDecisions));
       setConfirmResult(confirmResponse);
+      const machineResponse = await api.runWorkspaceMachine({
+        trigger: "smart_import",
+        smart_import_batch_id: result.batch_preview_id,
+        sync_gmail: true,
+        run_autopilot: true,
+      });
+      setMachineResult(machineResponse);
       setPreview((current) => (current ? { ...current, status: confirmResponse.status } : current));
       setSuccess(
         `TENNET a traite ${confirmResponse.routed_files.length} fichier(s), conserve ${confirmResponse.manual_review_files.length} a exploiter et ignore ${confirmResponse.ignored_files.length} doublon(s).`,
@@ -82,6 +91,13 @@ export default function SmartImportPage() {
     try {
       const result = await api.confirmSmartImport(preview.batch_preview_id, Object.values(decisions));
       setConfirmResult(result);
+      const machineResponse = await api.runWorkspaceMachine({
+        trigger: "smart_import",
+        smart_import_batch_id: preview.batch_preview_id,
+        sync_gmail: true,
+        run_autopilot: true,
+      });
+      setMachineResult(machineResponse);
       setSuccess(`Smart Import confirme : ${result.routed_files.length} fichier(s) route(s).`);
       setPreview((current) => (current ? { ...current, status: result.status } : current));
     } catch (apiError) {
@@ -133,7 +149,7 @@ export default function SmartImportPage() {
       ) : null}
 
       {confirmResult ? (
-        <SmartImportResultPanel result={confirmResult} />
+        <SmartImportResultPanel result={confirmResult} machineResult={machineResult} />
       ) : null}
 
       <section className="tool-panel smart-import-dropzone">
@@ -173,6 +189,7 @@ export default function SmartImportPage() {
               setPreview(null);
               setDecisions({});
               setConfirmResult(null);
+              setMachineResult(null);
               setSuccess(null);
             }}
           >
@@ -278,7 +295,13 @@ export default function SmartImportPage() {
   }
 }
 
-function SmartImportResultPanel({ result }: { result: SmartImportConfirmResponse }) {
+function SmartImportResultPanel({
+  result,
+  machineResult,
+}: {
+  result: SmartImportConfirmResponse;
+  machineResult: WorkspaceMachineRunResponse | null;
+}) {
   const summary = summarizeSmartImport(result);
   const nextActions = buildSmartImportNextActions(result);
 
@@ -332,6 +355,26 @@ function SmartImportResultPanel({ result }: { result: SmartImportConfirmResponse
           ))}
         </div>
       </div>
+
+      {machineResult ? (
+        <div className={`machine-result machine-result--${machineResult.status}`}>
+          <div>
+            <strong>Machine lancee automatiquement</strong>
+            <p>TENNET a enchaine detection, dossiers, brouillons, relances, appels, Gmail et AutoPilot selon tes regles.</p>
+          </div>
+          <div className="machine-stage-list">
+            {machineResult.stages.map((stage) => (
+              <article key={stage.name} className={`machine-stage machine-stage--${stage.status}`}>
+                <strong>{stageLabel(stage.name)}</strong>
+                <span>{stageStatusLabel(stage.status)}</span>
+                <small>
+                  {stage.processed_count} traite(s), {stage.created_count} cree(s), {stage.sent_count} envoye(s)
+                </small>
+              </article>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {summary.processedFiles > 0 ? (
         <ResultGroup title="Fichiers traites" description="TENNET les a envoyes dans le bon workflow." files={result.routed_files} />
@@ -543,4 +586,27 @@ function hasDestination(result: SmartImportConfirmResponse, destinationType: str
 
 function isExactDuplicate(file: { status?: string; destination_type?: string | null }): boolean {
   return file.status === "ignored" && file.destination_type === "duplicate_ignored";
+}
+
+function stageLabel(name: string): string {
+  const labels: Record<string, string> = {
+    deductions: "Deductions",
+    claim_orders: "Dossiers",
+    drafts: "Brouillons",
+    followups: "Relances",
+    appeals: "Appels",
+    gmail_sync: "Gmail",
+    autopilot: "AutoPilot",
+  };
+  return labels[name] ?? name;
+}
+
+function stageStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    completed: "termine",
+    skipped: "non requis",
+    warning: "a exploiter",
+    failed: "erreur",
+  };
+  return labels[status] ?? status;
 }

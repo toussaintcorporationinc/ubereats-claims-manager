@@ -9,7 +9,7 @@ import StatusBadge from "@/components/StatusBadge";
 import { useAuth } from "@/lib/auth";
 import { api, formatDate, type EmailDraftSummary, type GmailConnectionStatus } from "@/lib/api";
 
-const defaultRecipient = "merchants@uber.com";
+const defaultRecipient = "restaurantsfrance@uber.com";
 
 type GmailDraftForm = {
   to_email: string;

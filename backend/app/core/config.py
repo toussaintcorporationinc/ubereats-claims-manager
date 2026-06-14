@@ -27,7 +27,7 @@ class Settings(BaseSettings):
         "https://www.googleapis.com/auth/gmail.send "
         "https://www.googleapis.com/auth/gmail.readonly"
     )
-    default_uber_eats_support_email: str = "merchants@uber.com"
+    default_uber_eats_support_email: str = "restaurantsfrance@uber.com"
     email_provider_enabled: bool = False
     email_max_attachment_total_mb: int = 20
     resend_enabled: bool = False

@@ -28,7 +28,7 @@ import {
   type Restaurant,
 } from "@/lib/api";
 
-const defaultRecipient = "merchants@uber.com";
+const defaultRecipient = "restaurantsfrance@uber.com";
 
 type EvidenceForm = {
   evidence_type: EvidenceType;

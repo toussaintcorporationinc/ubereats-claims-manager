@@ -807,7 +807,7 @@ Retourne tous les brouillons internes avec les informations minimales utiles a l
     "provider_draft_id": "r123...",
     "provider_message_id": null,
     "provider_sent_at": null,
-    "provider_to_email": "merchants@uber.com"
+    "provider_to_email": "restaurantsfrance@uber.com"
   }
 ]
 ```
@@ -877,7 +877,7 @@ Body :
 
 ```json
 {
-  "to_email": "merchants@uber.com",
+  "to_email": "restaurantsfrance@uber.com",
   "include_evidence": true
 }
 ```
@@ -892,7 +892,7 @@ Reponse :
   "provider_draft_id": "r123...",
   "provider_thread_id": "thread-123",
   "provider_message_id": null,
-  "to_email": "merchants@uber.com",
+  "to_email": "restaurantsfrance@uber.com",
   "subject": "Demande de paiement - commande annulee apres preparation - UBER-123",
   "status": "provider_draft_created",
   "created_by_user_id": 1,
@@ -992,7 +992,7 @@ Body :
 ```json
 {
   "confirm_send": true,
-  "to_email": "merchants@uber.com",
+  "to_email": "restaurantsfrance@uber.com",
   "include_evidence": true
 }
 ```
@@ -1928,11 +1928,26 @@ Reponse confirm :
 }
 ```
 
-Smart Import cree les batches operationnels et applique automatiquement les lignes Uber valides. Les lignes invalides, non autorisees, dupliquees ou douteuses restent bloquees et visibles dans le detail du batch.
+Smart Import cree les batches operationnels et applique automatiquement les lignes Uber valides. Les lignes invalides, non autorisees, dupliquees ou douteuses restent conservees et visibles comme fichiers ou lignes a exploiter.
 
 Les exports Uber a deux lignes d'en-tete sont supportes : TENNET scanne les cinq premieres lignes, choisit le meilleur header et ignore le preambule.
 
 - `GET /v1/workspace/next-actions` : retourne les actions prioritaires par bucket `urgent`, `today`, `this_week`, `blocked` et `high_value`.
+- `POST /v1/workspace/machine/run` : owner/manager seulement. Lance la machine TENNET sur les moteurs existants : detection deductions, creation dossiers eligibles, brouillons internes eligibles, relances, appels, sync Gmail et AutoPilot si les flags serveur et limites de securite l'autorisent.
+
+Body :
+
+```json
+{
+  "trigger": "smart_import",
+  "restaurant_id": null,
+  "smart_import_batch_id": 123,
+  "sync_gmail": true,
+  "run_autopilot": true
+}
+```
+
+La reponse liste chaque etape avec `completed`, `skipped`, `warning` ou `failed`. Une etape `skipped` ne signifie pas perte du fichier : elle indique qu'une condition n'est pas remplie ou qu'aucun cas eligible n'existe.
 
 Permissions :
 
@@ -1943,6 +1958,6 @@ Permissions :
 ## Hors perimetre V1 actuelle
 
 - pas d'integration OpenAI API ;
-- pas d'envoi automatique Gmail ;
+- pas d'envoi automatique Gmail hors regles AutoPilot, limites et restaurant explicitement active ;
 - pas de generation d'email par la validation ;
 - pas de relance automatique.
