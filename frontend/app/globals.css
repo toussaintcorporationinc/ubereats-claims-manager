@@ -209,19 +209,19 @@ button {
 .machine-hero {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 22px;
+  grid-template-columns: minmax(280px, 0.9fr) 176px minmax(360px, 1.1fr);
+  gap: 28px;
   align-items: center;
   overflow: hidden;
-  border: 1px solid rgba(0, 210, 161, 0.35);
+  border: 1px solid rgba(52, 199, 235, 0.32);
   border-radius: 8px;
   background:
-    linear-gradient(135deg, rgba(0, 210, 161, 0.18), transparent 34%),
-    radial-gradient(circle at 78% 10%, rgba(94, 246, 255, 0.18), transparent 26%),
-    #061412;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.22);
-  color: #f5fffc;
-  padding: 22px;
+    linear-gradient(135deg, rgba(0, 210, 161, 0.12), transparent 36%),
+    radial-gradient(circle at 78% 0%, rgba(94, 246, 255, 0.22), transparent 30%),
+    linear-gradient(120deg, #ffffff 0%, #f8fffd 44%, #eefcff 100%);
+  box-shadow: 0 20px 48px rgba(27, 82, 96, 0.12);
+  color: var(--ink);
+  padding: 26px 28px;
 }
 
 .machine-hero--compact {
@@ -230,11 +230,15 @@ button {
 
 .machine-hero p,
 .machine-hero .muted {
-  color: rgba(245, 255, 252, 0.76);
+  color: #47636b;
 }
 
 .machine-hero .eyebrow {
-  color: #5ef6ff;
+  color: #007f6a;
+}
+
+.machine-hero .heading-copy {
+  max-width: 440px;
 }
 
 .machine-hero__actions {
@@ -243,10 +247,12 @@ button {
 }
 
 .machine-command {
+  position: relative;
   display: grid;
   place-items: center;
   width: 176px;
   min-height: 176px;
+  justify-self: center;
 }
 
 .machine-command__content {
@@ -259,6 +265,7 @@ button {
 }
 
 .machine-command__content strong {
+  color: #f5fffc;
   font-size: 1rem;
   text-transform: uppercase;
 }
@@ -280,7 +287,7 @@ button {
     conic-gradient(from 90deg, #00d2a1, #5ef6ff, #0b211e, #00d2a1),
     rgba(255, 255, 255, 0.04);
   box-shadow:
-    0 0 24px rgba(0, 210, 161, 0.28),
+    0 0 32px rgba(52, 199, 235, 0.3),
     inset 0 0 28px rgba(94, 246, 255, 0.14);
   animation: spin 3.4s linear infinite;
 }
@@ -290,7 +297,9 @@ button {
   width: 126px;
   height: 126px;
   border-radius: inherit;
-  background: #061412;
+  background:
+    radial-gradient(circle at 35% 25%, rgba(255, 255, 255, 0.14), transparent 30%),
+    #071a1b;
 }
 
 .machine-ring span {
@@ -317,9 +326,9 @@ button {
 }
 
 .machine-file-button {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.18);
-  color: #f5fffc;
+  border-color: rgba(52, 199, 235, 0.38);
+  background: #ffffff;
+  color: var(--ink);
 }
 
 .machine-result {
