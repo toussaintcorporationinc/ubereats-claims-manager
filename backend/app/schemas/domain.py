@@ -1263,6 +1263,62 @@ class UberUnmappedStoreMapRequest(BaseModel):
     restaurant_id: int
 
 
+class UberHistoricalReclassificationRequest(BaseModel):
+    restaurant_id: int | None = None
+    min_confidence: Decimal = Field(default=Decimal("0.85"), ge=Decimal("0.85"), le=Decimal("1.00"))
+    limit: int = Field(default=500, ge=1, le=5000)
+
+
+class UberHistoricalReclassificationApplyRequest(UberHistoricalReclassificationRequest):
+    confirm: bool = False
+
+
+class UberHistoricalReclassificationLinkedUpdate(BaseModel):
+    entity_type: str
+    entity_id: int
+    current_restaurant_id: int | None = None
+    target_restaurant_id: int | None = None
+    action: str | None = None
+    status: str | None = None
+    reason: str | None = None
+    conflicting_entity_id: int | None = None
+    from_restaurant_id: int | None = None
+    to_restaurant_id: int | None = None
+    linked_updates: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class UberHistoricalReclassificationCandidate(BaseModel):
+    key: str
+    entity_type: str
+    entity_id: int
+    uber_store_id: str | None = None
+    uber_store_name: str | None = None
+    uber_order_id: str | None = None
+    display_id: str | None = None
+    current_restaurant_id: int
+    current_restaurant_name: str
+    target_restaurant_id: int
+    target_restaurant_name: str
+    reason: str
+    confidence: Decimal
+    status: str
+    blockers: list[str] = Field(default_factory=list)
+    linked_updates: list[UberHistoricalReclassificationLinkedUpdate] = Field(default_factory=list)
+
+
+class UberHistoricalReclassificationResponse(BaseModel):
+    status: str
+    total_candidates: int
+    eligible_count: int
+    blocked_count: int
+    moved_count: int
+    skipped_count: int
+    candidates: list[UberHistoricalReclassificationCandidate]
+    moved: list[UberHistoricalReclassificationCandidate] = Field(default_factory=list)
+    skipped: list[UberHistoricalReclassificationCandidate] = Field(default_factory=list)
+    run_by_user_id: int
+
+
 class UberReconciliationRunRequest(BaseModel):
     restaurant_id: int | None = None
     date_from: date | None = None
