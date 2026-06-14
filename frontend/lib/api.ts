@@ -1307,6 +1307,60 @@ export type WorkspaceMachineRunResponse = {
   next_actions: WorkspaceNextActionsResponse;
 };
 
+export type RecoveryMachineRailKey = "refunds" | "cancellations";
+export type RecoveryMachineStageKey =
+  | "smart_import"
+  | "evidence_needed"
+  | "evidence_received"
+  | "uber_emails"
+  | "followups"
+  | "payments";
+export type RecoveryMachineStageStatus = "empty" | "ready" | "attention" | "working" | "done";
+
+export type RecoveryMachineStage = {
+  key: RecoveryMachineStageKey;
+  label: string;
+  description: string;
+  count: number;
+  amount: MoneyValue;
+  status: RecoveryMachineStageStatus;
+  href: string;
+};
+
+export type RecoveryMachineRail = {
+  key: RecoveryMachineRailKey;
+  title: string;
+  short_title: string;
+  description: string;
+  href: string;
+  primary_action_label: string;
+  primary_action_href: string;
+  detected_count: number;
+  detected_amount: MoneyValue;
+  claimable_amount: MoneyValue;
+  missing_evidence_count: number;
+  evidence_ready_count: number;
+  email_pipeline_count: number;
+  followup_or_appeal_count: number;
+  recovered_count: number;
+  recovered_amount: MoneyValue;
+  progress_percent: number;
+  health: "empty" | "good" | "attention" | "working";
+  next_action_label: string;
+  next_action_href: string;
+  stages: RecoveryMachineStage[];
+};
+
+export type RecoveryMachineResponse = {
+  title: string;
+  subtitle: string;
+  global_progress_percent: number;
+  total_detected_amount: MoneyValue;
+  total_recovered_amount: MoneyValue;
+  total_actions_count: number;
+  rails: RecoveryMachineRail[];
+};
+
 export type SmartImportFilePreview = {
   id: number;
   original_filename: string;
@@ -2531,6 +2585,7 @@ export const api = {
   getRecoveryActions: (filters: RecoveryFilters = {}) =>
     request<RecoveryActionsResponse>(`/v1/recovery/actions${buildQuery(filters)}`),
   getWorkspaceNextActions: () => request<WorkspaceNextActionsResponse>("/v1/workspace/next-actions"),
+  getWorkspaceRecoveryMachine: () => request<RecoveryMachineResponse>("/v1/workspace/recovery-machine"),
   runWorkspaceMachine: (payload: WorkspaceMachineRunPayload = {}) =>
     postJson<WorkspaceMachineRunResponse, WorkspaceMachineRunPayload>("/v1/workspace/machine/run", payload),
   previewSmartImport: (files: File[]) => {

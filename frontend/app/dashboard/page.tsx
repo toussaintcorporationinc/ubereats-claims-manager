@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import type { CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ApiError from "@/components/ApiError";
 import EmptyState from "@/components/EmptyState";
 import LoadingState from "@/components/LoadingState";
@@ -13,6 +14,9 @@ import { useAuth } from "@/lib/auth";
 import {
   api,
   type DashboardSummary,
+  type RecoveryMachineRail,
+  type RecoveryMachineResponse,
+  type RecoveryMachineStage,
   type SmartImportFileDecision,
   type WorkspaceNextActionsResponse,
   type WorkspaceMachineRunResponse,
@@ -25,6 +29,7 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [nextActions, setNextActions] = useState<WorkspaceNextActionsResponse | null>(null);
+  const [recoveryMachine, setRecoveryMachine] = useState<RecoveryMachineResponse | null>(null);
   const [machineResult, setMachineResult] = useState<WorkspaceMachineRunResponse | null>(null);
   const [homeFiles, setHomeFiles] = useState<File[]>([]);
   const [error, setError] = useState<unknown>(null);
@@ -32,11 +37,18 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [pilotRunning, setPilotRunning] = useState(false);
   const [importRunning, setImportRunning] = useState(false);
+  const autoPassageStarted = useRef(false);
+  const canRunRecoveryMachine = user?.role === "owner" || user?.role === "manager";
 
   const loadDashboard = useCallback(async () => {
-    const [summaryData, actionsData] = await Promise.all([api.getDashboardSummary(), api.getWorkspaceNextActions()]);
+    const [summaryData, actionsData, recoveryMachineData] = await Promise.all([
+      api.getDashboardSummary(),
+      api.getWorkspaceNextActions(),
+      api.getWorkspaceRecoveryMachine(),
+    ]);
     setSummary(summaryData);
     setNextActions(actionsData);
+    setRecoveryMachine(recoveryMachineData);
   }, []);
 
   useEffect(() => {
@@ -44,6 +56,21 @@ export default function DashboardPage() {
       .catch(setError)
       .finally(() => setLoading(false));
   }, [loadDashboard]);
+
+  useEffect(() => {
+    if (loading || !canRunRecoveryMachine || autoPassageStarted.current) {
+      return;
+    }
+    const storageKey = "tennet:auto-passage-complet:last-run";
+    const now = Date.now();
+    const lastRun = Number(window.sessionStorage.getItem(storageKey) ?? 0);
+    if (Number.isFinite(lastRun) && now - lastRun < 15 * 60 * 1000) {
+      return;
+    }
+    autoPassageStarted.current = true;
+    window.sessionStorage.setItem(storageKey, String(now));
+    void runTennetPilot();
+  }, [canRunRecoveryMachine, loading]);
 
   async function runTennetPilot() {
     setPilotRunning(true);
@@ -101,7 +128,7 @@ export default function DashboardPage() {
   }
 
   const nextActionCount = nextActions ? countNextActions(nextActions) : 0;
-  const canSeeBusinessMetrics = user?.role === "owner" || user?.role === "manager";
+  const canSeeBusinessMetrics = canRunRecoveryMachine;
 
   return (
     <section className="page-section page-section--simple">
@@ -120,8 +147,14 @@ export default function DashboardPage() {
               <span />
             </div>
             <div className="machine-command__content">
-              <strong>{pilotRunning || importRunning ? "TENNET travaille" : "Lancer TENNET"}</strong>
-              <span>{homeFiles.length > 0 ? `${homeFiles.length} fichier(s) prets` : "Import massif ou passage complet"}</span>
+              <strong>{pilotRunning || importRunning ? "TENNET travaille" : "Machine active"}</strong>
+              <span>
+                {homeFiles.length > 0
+                  ? `${homeFiles.length} fichier(s) prets`
+                  : recoveryMachine
+                    ? `${recoveryMachine.global_progress_percent}% du parcours`
+                    : "Import massif ou passage complet"}
+              </span>
             </div>
           </div>
         ) : null}
@@ -153,36 +186,13 @@ export default function DashboardPage() {
           ) : null}
           {canSeeBusinessMetrics ? (
             <button type="button" className="button button--hero" disabled={pilotRunning || importRunning} onClick={() => void runTennetPilot()}>
-              {pilotRunning ? "TENNET travaille" : "Passage complet"}
+              {pilotRunning ? "Passage complet auto" : "Relancer maintenant"}
             </button>
           ) : null}
         </div>
       </div>
 
-      {canSeeBusinessMetrics ? (
-        <section className="home-flow-panel" aria-label="Parcours principaux TENNET">
-          <Link href="/remboursements" className="home-flow-card home-flow-card--refunds">
-            <span>Remboursements</span>
-            <strong>Demandes client, articles manquants, qualite, ajustements</strong>
-            <small>Preuves, mails Uber, relances et paiements rattaches au bon restaurant.</small>
-          </Link>
-          <Link href="/annulations" className="home-flow-card home-flow-card--cancellations">
-            <span>Annulations</span>
-            <strong>Commandes annulees, non compensees ou partiellement payees</strong>
-            <small>Tickets, preparation, gaspillage, reconciliation et contestation.</small>
-          </Link>
-          <Link href="/evidence-tasks" className="home-flow-card home-flow-card--proofs">
-            <span>Preuves</span>
-            <strong>Ce qu'il faut photographier ou importer maintenant</strong>
-            <small>Chaque preuve indique si elle concerne un remboursement ou une annulation.</small>
-          </Link>
-          <Link href="/smart-import" className="home-flow-card home-flow-card--imports">
-            <span>Imports</span>
-            <strong>Voir ce que TENNET a classe et traite</strong>
-            <small>Fichiers traites, sources officielles gardees, doublons controles et suite logique.</small>
-          </Link>
-        </section>
-      ) : null}
+      {canSeeBusinessMetrics && recoveryMachine ? <RecoveryMachineRailsPanel machine={recoveryMachine} /> : null}
 
       <ApiError error={error} />
       <ApiError error={pilotError} />
@@ -365,6 +375,101 @@ export default function DashboardPage() {
         </>
       ) : null}
     </section>
+  );
+}
+
+function RecoveryMachineRailsPanel({ machine }: { machine: RecoveryMachineResponse }) {
+  return (
+    <section className="recovery-machine-panel" aria-label="Parcours de recuperation TENNET">
+      <div className="recovery-machine-panel__summary">
+        <div>
+          <p className="eyebrow">Parcours automatique</p>
+          <h2>Remboursements et annulations</h2>
+          <p className="muted">{machine.subtitle}</p>
+        </div>
+        <div className="recovery-machine-panel__numbers">
+          <div>
+            <span>Detecte</span>
+            <strong>{formatCurrency(machine.total_detected_amount)}</strong>
+          </div>
+          <div>
+            <span>Recupere</span>
+            <strong>{formatCurrency(machine.total_recovered_amount)}</strong>
+          </div>
+          <div>
+            <span>Actions</span>
+            <strong>{machine.total_actions_count}</strong>
+          </div>
+        </div>
+      </div>
+      <div className="recovery-rail-grid">
+        {machine.rails.map((rail) => (
+          <RecoveryMachineRailCard key={rail.key} rail={rail} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RecoveryMachineRailCard({ rail }: { rail: RecoveryMachineRail }) {
+  return (
+    <article className={`recovery-rail recovery-rail--${rail.health}`}>
+      <div className="recovery-rail__header">
+        <div>
+          <span className="rail-kicker">{rail.short_title}</span>
+          <h3>{rail.title}</h3>
+          <p>{rail.description}</p>
+        </div>
+        <div
+          className="rail-progress"
+          aria-label={`${rail.progress_percent}%`}
+          style={{ "--rail-progress": `${rail.progress_percent}%` } as CSSProperties}
+        >
+          <span>{rail.progress_percent}%</span>
+        </div>
+      </div>
+      <div className="rail-metrics">
+        <div>
+          <span>Detecte</span>
+          <strong>{formatCurrency(rail.detected_amount)}</strong>
+        </div>
+        <div>
+          <span>Contestable</span>
+          <strong>{formatCurrency(rail.claimable_amount)}</strong>
+        </div>
+        <div>
+          <span>Recupere</span>
+          <strong>{formatCurrency(rail.recovered_amount)}</strong>
+        </div>
+      </div>
+      <div className="rail-stage-track">
+        {rail.stages.map((stage) => (
+          <RecoveryRailStage key={stage.key} stage={stage} />
+        ))}
+      </div>
+      <div className="rail-actions">
+        <Link href={rail.next_action_href} className="button">
+          {rail.next_action_label}
+        </Link>
+        <Link href={rail.href} className="secondary-button">
+          Voir parcours
+        </Link>
+      </div>
+    </article>
+  );
+}
+
+function RecoveryRailStage({ stage }: { stage: RecoveryMachineStage }) {
+  return (
+    <Link href={stage.href} className={`rail-stage rail-stage--${stage.status}`}>
+      <div>
+        <strong>{stage.label}</strong>
+        <span>{stage.description}</span>
+      </div>
+      <small>
+        {stage.count} · {formatCurrency(stage.amount)}
+      </small>
+    </Link>
   );
 }
 
