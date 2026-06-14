@@ -8,18 +8,18 @@ export default function RemboursementsPage() {
       <div className="machine-hero machine-hero--compact">
         <div className="heading-copy">
           <p className="eyebrow">Remboursements Uber</p>
-          <h1>Depose les fichiers, TENNET classe et conteste</h1>
+          <h1>Depose tout, TENNET lance le parcours</h1>
           <p>
-            Pour les commandes non recues, articles manquants, mauvaises commandes, problemes qualite et ajustements
-            negatifs. TENNET garde les preuves, cree les dossiers et lance les actions autorisees.
+            Demandes de remboursement, commande non recue, article manquant, mauvaise commande ou ajustement negatif :
+            TENNET trie, rapproche, demande les preuves et suit les reponses Uber sans te faire chercher partout.
           </p>
         </div>
         <div className="simple-hero__actions machine-hero__actions">
-          <Link href="/dashboard" className="button button--hero">
-            Deposer et lancer
+          <Link href="/smart-import" className="button button--hero">
+            Deposer les fichiers
           </Link>
           <Link href="/customer-refunds" className="secondary-button">
-            Voir dossiers
+            Dossiers remboursement
           </Link>
         </div>
       </div>
@@ -33,25 +33,47 @@ export default function RemboursementsPage() {
         </div>
         <div className="machine-stage-list machine-stage-list--large">
           <article className="machine-stage machine-stage--completed">
-            <strong>1. Deposer</strong>
-            <span>Exports Uber, preuves ou ZIP</span>
-            <small>TENNET lit le contenu sans demander de renommer les fichiers.</small>
+            <strong>1. Deposer en masse</strong>
+            <span>Exports, photos, PDF ou ZIP</span>
+            <small>TENNET lit le contenu, detecte les doublons et garde un seul fichier canonique.</small>
           </article>
           <article className="machine-stage machine-stage--completed">
-            <strong>2. Analyser</strong>
-            <span>Motifs et montants</span>
-            <small>Remboursement client, article manquant, commande non recue, ajustement ou chargeback.</small>
+            <strong>2. Identifier les pertes</strong>
+            <span>Motif, commande, client, montant</span>
+            <small>Les remboursements vagues restent sources a completer; TENNET n'invente pas une ligne absente.</small>
           </article>
           <article className="machine-stage machine-stage--warning">
-            <strong>3. Completer</strong>
-            <span>Preuves obligatoires</span>
-            <small>Ticket, preparation, livraison, sac ou capture Uber selon le type de perte.</small>
+            <strong>3. Construire les preuves</strong>
+            <span>Ticket, commande, gaspillage</span>
+            <small>Objectif terrain : trois preuves propres par dossier quand le cas l'exige.</small>
           </article>
           <article className="machine-stage machine-stage--completed">
-            <strong>4. Recuperer</strong>
-            <span>Email, relance, appel</span>
-            <small>AutoPilot agit seulement si Gmail, preuves, limites et restaurant sont correctement configures.</small>
+            <strong>4. Envoyer et relancer</strong>
+            <span>Email Uber, reponses, appel</span>
+            <small>Si Gmail voit deja un paiement positif, TENNET bloque la relance pour eviter les doublons.</small>
           </article>
+          <article className="machine-stage machine-stage--completed">
+            <strong>5. Compter le recupere</strong>
+            <span>Jour, mois, annee</span>
+            <small>Les reponses positives alimentent le suivi; les refus restent actifs pour appel.</small>
+          </article>
+        </div>
+      </section>
+
+      <section className="tool-panel">
+        <div className="section-heading">
+          <div>
+            <h2>Action suivante</h2>
+            <p className="muted">Commence par Smart Import. Le reste du parcours se remplit automatiquement autour des dossiers.</p>
+          </div>
+        </div>
+        <div className="simple-hero__actions">
+          <Link href="/smart-import" className="button">
+            Importer remboursements et preuves
+          </Link>
+          <Link href="/recovery" className="secondary-button">
+            Voir argent a recuperer
+          </Link>
         </div>
       </section>
     </section>

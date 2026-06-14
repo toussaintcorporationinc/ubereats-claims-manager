@@ -29,6 +29,7 @@ Une contestation initiale peut etre envoyee seulement si :
 - les preuves obligatoires sont completes ;
 - le montant respecte `AUTOPILOT_MIN_AMOUNT` et `AUTOPILOT_MAX_AMOUNT_WITHOUT_OWNER_REVIEW` ;
 - aucun email sortant n'a deja ete envoye pour ce dossier ;
+- aucune review ou analyse Gmail fiable n'indique deja `accepted`, `payment_to_verify` ou `payment_confirmed` ;
 - aucune reponse inbound non traitee ne bloque le dossier.
 
 Une relance automatique peut etre envoyee seulement si :
@@ -36,6 +37,7 @@ Une relance automatique peut etre envoyee seulement si :
 - `AUTOPILOT_FOLLOWUPS_ENABLED=true` ;
 - une tache `followup_1`, `followup_2` ou `escalation` est due ;
 - le dossier n'est pas dans un statut final ;
+- aucune review ou analyse Gmail fiable n'indique deja `accepted`, `payment_to_verify` ou `payment_confirmed` ;
 - aucune reponse inbound non traitee n'existe ;
 - le cooldown `AUTOPILOT_COOLDOWN_HOURS` est respecte ;
 - `MAX_FOLLOWUPS_PER_ORDER` n'est pas depasse.
@@ -46,6 +48,7 @@ Un appel automatique peut etre envoye seulement si :
 - un `AppealWorkflow` actif existe apres refus ;
 - la reponse Gmail refusee est rattachee a un dossier TENNET par thread Gmail connu ou numero de commande fiable ;
 - le dossier n'est pas `accepted` ou `payment_confirmed` ;
+- aucune review ou analyse Gmail fiable n'indique deja `accepted`, `payment_to_verify` ou `payment_confirmed` ;
 - le destinataire AutoPilot correspond au filtre support configure (`GMAIL_SUPPORT_SENDER_FILTER`, `uber.com` par defaut) ;
 - le cooldown est respecte ;
 - `AUTOPILOT_MAX_APPEAL_ATTEMPTS` n'est pas depasse ;
@@ -63,6 +66,7 @@ Avec `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true`, cette sync peut tourner sans clic u
 - `AUTOPILOT_MAX_APPEAL_ATTEMPTS` bloque les boucles d'appel.
 - Un refus Uber ne cloture jamais automatiquement un dossier.
 - Les messages Gmail sont dedupliques par compte + message id.
+- Les relances et appels sont bloques si Gmail ou une review TENNET signale deja un paiement accorde, a verifier ou confirme.
 - Les appels sont bloques si le destinataire support configure ne correspond pas au filtre Uber attendu.
 
 ## Dry-run et audit

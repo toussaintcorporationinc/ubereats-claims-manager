@@ -14,10 +14,12 @@ from app.models import (
     AutopilotAction,
     AutopilotRun,
     ClaimOrder,
+    ClaimResponseReview,
     EmailDraft,
     EmailProviderDraft,
     EmailThread,
     FollowUpTask,
+    GmailResponseAnalysis,
     InboundEmailMessage,
     Restaurant,
     User,
@@ -38,6 +40,8 @@ from app.services.email_provider import EmailConnectionStatus, EmailProvider, Em
 from app.services.followup_policy_service import complete_task_for_sent_provider_draft
 
 AUTOPILOT_FINAL_ORDER_STATUSES = FINAL_CLAIM_STATUSES | {"accepted", "payment_to_verify", "payment_confirmed"}
+POSITIVE_PAYMENT_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confirmed"}
+POSITIVE_PAYMENT_SIGNAL_CONFIDENCE = Decimal("0.70")
 ELIGIBLE_APPEAL_STATUSES = {
     "active",
     "appeal_needed",
@@ -435,6 +439,9 @@ def initial_claim_skip_reason(db: Session, order: ClaimOrder) -> str | None:
     settings = get_settings()
     if order.status in AUTOPILOT_FINAL_ORDER_STATUSES:
         return "final_status"
+    positive_signal_reason = positive_payment_signal_skip_reason(db, order.id)
+    if positive_signal_reason is not None:
+        return positive_signal_reason
     if order.status != "ready_to_send":
         return "not_ready_to_send"
     if order.restaurant is None or not order.restaurant.autopilot_enabled:
@@ -462,6 +469,9 @@ def followup_skip_reason(db: Session, task: FollowUpTask) -> str | None:
     order = task.order
     if order.status in FINAL_CLAIM_STATUSES:
         return "final_status"
+    positive_signal_reason = positive_payment_signal_skip_reason(db, order.id)
+    if positive_signal_reason is not None:
+        return positive_signal_reason
     if has_unreviewed_inbound(db, order.id):
         return "unreviewed_inbound_response"
     if order.retry_count >= settings.max_followups_per_order:
@@ -479,6 +489,10 @@ def appeal_skip_reason(db: Session, workflow: AppealWorkflow) -> str | None:
         return "terminal_appeal_status"
     if workflow.claim_order is not None and workflow.claim_order.status in {"accepted", "payment_confirmed"}:
         return "claim_order_resolved"
+    if workflow.claim_order is not None:
+        positive_signal_reason = positive_payment_signal_skip_reason(db, workflow.claim_order.id)
+        if positive_signal_reason is not None:
+            return positive_signal_reason
     if workflow.appeal_attempt_count >= settings.autopilot_max_appeal_attempts:
         return "max_appeal_attempts_reached"
     if not settings.autopilot_refusal_retry_enabled:
@@ -519,6 +533,41 @@ def has_unreviewed_inbound(db: Session, order_id: int) -> bool:
         )
         is not None
     )
+
+
+def positive_payment_signal_skip_reason(db: Session, order_id: int) -> str | None:
+    if (
+        db.scalar(
+            select(ClaimResponseReview.id)
+            .where(
+                ClaimResponseReview.order_id == order_id,
+                ClaimResponseReview.review_type.in_(POSITIVE_PAYMENT_REVIEW_TYPES),
+            )
+            .limit(1)
+        )
+        is not None
+    ):
+        return "positive_payment_review_exists"
+
+    if (
+        db.scalar(
+            select(GmailResponseAnalysis.id)
+            .where(
+                GmailResponseAnalysis.order_id == order_id,
+                GmailResponseAnalysis.status.in_(("analyzed", "applied")),
+                GmailResponseAnalysis.recommended_review_type.in_(POSITIVE_PAYMENT_REVIEW_TYPES),
+                or_(
+                    GmailResponseAnalysis.confidence_score.is_(None),
+                    GmailResponseAnalysis.confidence_score >= POSITIVE_PAYMENT_SIGNAL_CONFIDENCE,
+                ),
+            )
+            .limit(1)
+        )
+        is not None
+    ):
+        return "positive_gmail_payment_signal_detected"
+
+    return None
 
 
 def has_sent_provider_draft(db: Session, order_id: int) -> bool:

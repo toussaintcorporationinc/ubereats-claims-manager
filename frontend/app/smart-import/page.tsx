@@ -311,7 +311,7 @@ function SmartImportResultPanel({
         <div>
           <p className="eyebrow">Traitement termine</p>
           <h2>Ce que TENNET a fait</h2>
-          <p className="muted">Aucun fichier n'a disparu : chaque fichier est range, exploite, ignore comme doublon ou signale.</p>
+          <p className="muted">Aucun fichier n'a disparu : chaque fichier est range, exploite, ignore comme doublon ou garde comme source a completer.</p>
         </div>
         <div className="actions">
           {summary.uberBatches > 0 ? (
@@ -330,7 +330,7 @@ function SmartImportResultPanel({
       <div className="smart-import-status-grid">
         <StatusTile label="Fichiers recus" value={summary.totalFiles} tone="neutral" />
         <StatusTile label="Traites" value={summary.processedFiles} tone="success" />
-        <StatusTile label="A exploiter" value={summary.blockedFiles} tone={summary.blockedFiles > 0 ? "warning" : "neutral"} />
+        <StatusTile label="A completer" value={summary.blockedFiles} tone={summary.blockedFiles > 0 ? "warning" : "neutral"} />
         <StatusTile label="Doublons ignores" value={summary.ignoredFiles} tone="neutral" />
       </div>
 
@@ -341,7 +341,7 @@ function SmartImportResultPanel({
         <TimelineStep
           state={summary.blockedFiles > 0 ? "attention" : "done"}
           title="4. Action suivante"
-          description={summary.blockedFiles > 0 ? "Certains fichiers sont conserves pour exploitation." : "Rien de critique ne demande ton attention."}
+          description={summary.blockedFiles > 0 ? "Certains fichiers officiels demandent un export plus detaille ou un mapping." : "Rien de critique ne demande ton attention."}
         />
       </div>
 
@@ -384,15 +384,15 @@ function SmartImportResultPanel({
         <section id="smart-import-blocked" className="smart-import-group smart-import-group--attention">
           <div className="section-heading">
             <div>
-              <h3>A exploiter / a verifier</h3>
-              <p className="muted">TENNET conserve ces fichiers officiels et les garde visibles quand il ne peut pas encore creer une transaction fiable.</p>
+              <h3>Sources a completer</h3>
+              <p className="muted">TENNET garde ces fichiers officiels visibles quand il manque une commande, un montant ou un mapping fiable.</p>
             </div>
           </div>
           <div className="premium-card-grid">
             {result.manual_review_files.map((file) => (
               <article key={`manual-${file.file_id}`} className="premium-card premium-card--warning">
                 <h3>{file.original_filename}</h3>
-                <p className="muted">Conserve pour exploitation. TENNET n'efface pas ce fichier.</p>
+                <p className="muted">Conserve comme source officielle. Ajoute l'export detaille ou le mapping manquant pour que TENNET le transforme en action.</p>
               </article>
             ))}
             {result.errors.map((item) => (
@@ -562,7 +562,7 @@ function buildSmartImportNextActions(result: SmartImportConfirmResponse): Array<
     actions.push({ label: "Voir preuves importees", href: "/evidence-imports", primary: actions.length === 0 });
   }
   if (result.manual_review_files.length > 0 || result.errors.length > 0) {
-    actions.push({ label: "Voir fichiers a exploiter", href: "#smart-import-blocked", primary: actions.length === 0 });
+    actions.push({ label: "Voir sources a completer", href: "#smart-import-blocked", primary: actions.length === 0 });
   }
   if (actions.length === 0) {
     actions.push({ label: "Deposer d'autres fichiers", href: "/smart-import", primary: true });
