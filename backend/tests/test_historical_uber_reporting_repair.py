@@ -228,6 +228,89 @@ def test_historical_import_repair_resolves_known_old_store_name_alias(
     assert candidate["reason"] == "store_name_mapping"
 
 
+def test_historical_import_repair_reads_french_analytics_order_amount_alias(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    _krousty, asian = create_restaurants(db_session)
+    db_session.add(
+        UberStoreMapping(
+            restaurant_id=asian.id,
+            uber_store_id=f"restaurant-name:{asian.id}:historical:croustybest",
+            uber_store_name="Crousty Best",
+            external_reference_id="historical_alias",
+            active=True,
+        )
+    )
+    row = create_batch_with_row(
+        db_session,
+        report_type="combined_report",
+        raw_data={
+            "restaurant": "Crousty Best",
+            "id de la commande": "OLD-CROUSTY-ANALYTICS",
+            "uuid de la commande": "UUID-OLD-CROUSTY-ANALYTICS",
+            "statut de la commande": "annulee",
+            "montant moyen des commandes": "21,50",
+            "code de devise": "EUR",
+            "date de la commande": "2026-01-05",
+        },
+    )
+    db_session.commit()
+
+    response = client.post("/v1/uber/historical-import-repair/apply", json={"confirm": True})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["repaired_count"] == 1
+    snapshot = db_session.scalar(select(UberOrderSnapshot).where(UberOrderSnapshot.uber_order_id == "OLD-CROUSTY-ANALYTICS"))
+    db_session.refresh(row)
+    assert snapshot is not None
+    assert snapshot.restaurant_id == asian.id
+    assert snapshot.order_total_amount == Decimal("21.50")
+    assert row.status == "created"
+
+
+def test_historical_import_repair_reads_french_merchant_refund_amount_alias(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    _krousty, asian = create_restaurants(db_session)
+    db_session.add(
+        UberStoreMapping(
+            restaurant_id=asian.id,
+            uber_store_id=f"restaurant-name:{asian.id}:historical:croustybest",
+            uber_store_name="Crousty Best",
+            external_reference_id="historical_alias",
+            active=True,
+        )
+    )
+    row = create_batch_with_row(
+        db_session,
+        report_type="adjustments_report",
+        raw_data={
+            "restaurant": "Crousty Best",
+            "id de la commande": "OLD-CROUSTY-REFUND",
+            "heure du remboursement": "2026-01-06",
+            "probleme avec la commande": "Article manquant",
+            "remboursement non pris en charge par le commercant": "8,75",
+            "code de devise": "EUR",
+        },
+    )
+    db_session.commit()
+
+    response = client.post("/v1/uber/historical-import-repair/apply", json={"confirm": True})
+
+    assert response.status_code == 200, response.text
+    assert response.json()["repaired_count"] == 1
+    transaction = db_session.scalar(
+        select(UberFinancialTransaction).where(UberFinancialTransaction.uber_order_id == "OLD-CROUSTY-REFUND")
+    )
+    db_session.refresh(row)
+    assert transaction is not None
+    assert transaction.restaurant_id == asian.id
+    assert transaction.amount == Decimal("-8.75")
+    assert row.status == "created"
+
+
 def test_historical_import_repair_finds_eligible_rows_after_blocked_preview_limit(
     client: TestClient,
     db_session: Session,
