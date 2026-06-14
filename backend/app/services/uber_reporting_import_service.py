@@ -406,14 +406,33 @@ def normalize_report_row(
     normalize_order_accuracy_identifiers(row, normalized)
 
     mapping = resolve_mapping(db, normalized.get("uber_store_id"))
+    if not mapping:
+        mapping = resolve_mapping_by_store_name(db, normalized.get("uber_store_name"))
+        if mapping and not normalized.get("uber_store_id"):
+            normalized["uber_store_id"] = mapping.uber_store_id
+            warnings.append("missing_store_id_resolved_by_store_name")
     if mapping:
         normalized["restaurant_id"] = mapping.restaurant_id
         if not can_access_restaurant(db, current_user, mapping.restaurant_id):
             errors.append("restaurant_access_denied")
-    elif normalized.get("uber_store_id"):
-        warnings.append("unmapped_store")
     else:
-        errors.append("missing_uber_store_id")
+        restaurant = resolve_restaurant_by_store_name(db, normalized.get("uber_store_name"))
+        if restaurant:
+            normalized["restaurant_id"] = restaurant.id
+            if not normalized.get("uber_store_id"):
+                normalized["uber_store_id"] = derived_store_id_from_restaurant(restaurant)
+                warnings.append("missing_store_id_resolved_by_restaurant_name")
+            else:
+                warnings.append("restaurant_matched_by_store_name")
+            if not can_access_restaurant(db, current_user, restaurant.id):
+                errors.append("restaurant_access_denied")
+        elif normalized.get("uber_store_id"):
+            warnings.append("unmapped_store")
+        elif normalized.get("uber_store_name"):
+            warnings.append("unmapped_store_name")
+            errors.append("missing_uber_store_id")
+        else:
+            errors.append("missing_uber_store_id")
 
     row_kind = infer_row_kind(normalized, report_type)
     normalized["row_kind"] = row_kind
@@ -728,6 +747,32 @@ def resolve_mapping(db: Session, uber_store_id: object) -> UberStoreMapping | No
     if not uber_store_id:
         return None
     return db.scalar(select(UberStoreMapping).where(UberStoreMapping.uber_store_id == str(uber_store_id).strip()))
+
+
+def resolve_mapping_by_store_name(db: Session, uber_store_name: object) -> UberStoreMapping | None:
+    key = normalize_restaurant_lookup_key(uber_store_name)
+    if not key:
+        return None
+    mappings = db.scalars(select(UberStoreMapping).where(UberStoreMapping.active.is_(True))).all()
+    matches = [mapping for mapping in mappings if normalize_restaurant_lookup_key(mapping.uber_store_name) == key]
+    return matches[0] if len(matches) == 1 else None
+
+
+def resolve_restaurant_by_store_name(db: Session, uber_store_name: object) -> Restaurant | None:
+    key = normalize_restaurant_lookup_key(uber_store_name)
+    if not key:
+        return None
+    restaurants = db.scalars(select(Restaurant).where(Restaurant.active.is_(True))).all()
+    matches = [restaurant for restaurant in restaurants if normalize_restaurant_lookup_key(restaurant.name) == key]
+    return matches[0] if len(matches) == 1 else None
+
+
+def derived_store_id_from_restaurant(restaurant: Restaurant) -> str:
+    return f"restaurant-name:{restaurant.id}"
+
+
+def normalize_restaurant_lookup_key(value: object) -> str:
+    return normalize_for_match(value).replace(" ", "")
 
 
 def row_dedupe_key(data: dict[str, Any], report_type: str) -> tuple[Any, ...] | None:

@@ -17,6 +17,7 @@ from app.models import (
     SmartImportPreviewBatch,
     UberCustomerRefundDispute,
     UberFinancialTransaction,
+    UberOrderSnapshot,
     UberReportingImportBatch,
     UberReportingImportRow,
     UberStoreMapping,
@@ -432,6 +433,108 @@ def test_smart_confirm_forced_restaurant_applies_unmapped_uber_report(client: Te
     rows = db_session.scalars(select(UberReportingImportRow).where(UberReportingImportRow.batch_id == batch.id)).all()
     assert rows[0].normalized_data["restaurant_id"] == restaurant.id
     assert rows[0].status == "created"
+
+
+def test_smart_confirm_preserves_per_row_store_mapping_when_restaurant_override_supplied(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    krousty = Restaurant(name="Krousty Bat", sender_email="krousty@example.com")
+    asian = Restaurant(name="Asian Passion", sender_email="asian@example.com")
+    db_session.add_all([krousty, asian])
+    db_session.flush()
+    db_session.add_all(
+        [
+            UberStoreMapping(
+                restaurant_id=krousty.id,
+                uber_store_id="store-krousty",
+                uber_store_name="Krousty Bat",
+                active=True,
+            ),
+            UberStoreMapping(
+                restaurant_id=asian.id,
+                uber_store_id="store-asian",
+                uber_store_name="Asian Passion",
+                active=True,
+            ),
+        ]
+    )
+    db_session.commit()
+    csv_content = (
+        "Id. du restaurant,Nom du restaurant,Id. de la commande,Date de la commande,Statut de la commande,Ventes (TVA incluse),Devise\n"
+        "store-krousty,Krousty Bat,UBER-MULTI-KROUSTY-001,01/05/2026,canceled,22.50,EUR\n"
+        "store-asian,Asian Passion,UBER-MULTI-ASIAN-001,01/05/2026,canceled,18.90,EUR\n"
+    )
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("multi-restaurants.csv", csv_content.encode("utf-8"), "text/csv"))],
+    ).json()
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [
+                {
+                    "file_id": preview["files"][0]["id"],
+                    "action": "import_uber_reporting",
+                    "report_type": "orders_report",
+                    "restaurant_id": krousty.id,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    routed = response.json()["routed_files"][0]
+    assert routed["created_snapshots_count"] == 2
+    asian_snapshot = db_session.scalar(
+        select(UberOrderSnapshot).where(UberOrderSnapshot.uber_order_id == "UBER-MULTI-ASIAN-001")
+    )
+    assert asian_snapshot is not None
+    assert asian_snapshot.restaurant_id == asian.id
+    krousty_snapshot = db_session.scalar(
+        select(UberOrderSnapshot).where(UberOrderSnapshot.uber_order_id == "UBER-MULTI-KROUSTY-001")
+    )
+    assert krousty_snapshot is not None
+    assert krousty_snapshot.restaurant_id == krousty.id
+
+
+def test_smart_confirm_matches_restaurant_by_exact_store_name_when_store_id_missing(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    krousty = Restaurant(name="Krousty Bat", sender_email="krousty@example.com")
+    asian = Restaurant(name="Asian Passion", sender_email="asian@example.com")
+    db_session.add_all([krousty, asian])
+    db_session.commit()
+    csv_content = (
+        "Nom du restaurant,Id. de la commande,Date de la commande,Statut de la commande,Ventes (TVA incluse),Devise\n"
+        "Krousty Bat,UBER-NAME-KROUSTY-001,01/05/2026,canceled,22.50,EUR\n"
+        "Asian Passion,UBER-NAME-ASIAN-001,01/05/2026,canceled,18.90,EUR\n"
+    )
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("restaurants-without-store-id.csv", csv_content.encode("utf-8"), "text/csv"))],
+    ).json()
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [{"file_id": preview["files"][0]["id"], "action": "import_uber_reporting", "report_type": "orders_report"}],
+        },
+    )
+
+    assert response.status_code == 200
+    routed = response.json()["routed_files"][0]
+    assert routed["created_snapshots_count"] == 2
+    asian_snapshot = db_session.scalar(
+        select(UberOrderSnapshot).where(UberOrderSnapshot.uber_order_id == "UBER-NAME-ASIAN-001")
+    )
+    assert asian_snapshot is not None
+    assert asian_snapshot.restaurant_id == asian.id
+    assert asian_snapshot.uber_store_id == f"restaurant-name:{asian.id}"
 
 
 def test_smart_import_preview_marks_exact_duplicate_by_checksum(client: TestClient, db_session: Session) -> None:
