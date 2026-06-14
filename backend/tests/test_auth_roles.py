@@ -236,6 +236,17 @@ def test_owner_can_archive_and_restore_restaurant_without_deleting_history(
     assert archive_response.json()["active"] is False
     assert db_session.get(ClaimOrder, order["id"]) is not None
 
+    orders_after_archive = unauthenticated_client.get("/v1/orders", headers=auth_headers(owner["access_token"]))
+    assert orders_after_archive.status_code == 200
+    assert orders_after_archive.json() == []
+
+    create_archived_order = unauthenticated_client.post(
+        "/v1/orders",
+        json=order_payload(restaurant["id"], "UBER-ARCHIVED-2"),
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert create_archived_order.status_code == 403
+
     default_list = unauthenticated_client.get("/v1/restaurants", headers=auth_headers(owner["access_token"]))
     assert [item["name"] for item in default_list.json()] == []
 
@@ -255,6 +266,10 @@ def test_owner_can_archive_and_restore_restaurant_without_deleting_history(
 
     assert restore_response.status_code == 200
     assert restore_response.json()["active"] is True
+
+    orders_after_restore = unauthenticated_client.get("/v1/orders", headers=auth_headers(owner["access_token"]))
+    assert orders_after_restore.status_code == 200
+    assert [item["id"] for item in orders_after_restore.json()] == [order["id"]]
 
 
 def test_creating_archived_restaurant_restores_existing_record(unauthenticated_client: TestClient) -> None:
