@@ -494,7 +494,8 @@ def ensure_bulk_storage_root() -> Path:
 
 
 def allowed_extensions() -> set[str]:
-    return {item.strip().lower() for item in get_settings().bulk_evidence_allowed_extensions.split(",") if item.strip()}
+    configured = {item.strip().lower() for item in get_settings().bulk_evidence_allowed_extensions.split(",") if item.strip()}
+    return configured | {".csv", ".xlsx"}
 
 
 def add_import_audit_log(db: Session, user: User, batch: EvidenceImportBatch, errors: list[str]) -> None:

@@ -52,18 +52,34 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
 }
 
 COLUMN_ALIASES["uber_store_id"] += ("id. du restaurant", "id du restaurant")
+COLUMN_ALIASES["uber_store_id"] += ("id. externe du restaurant", "id externe du restaurant", "external restaurant id")
 COLUMN_ALIASES["uber_store_name"] += ("nom du restaurant",)
 COLUMN_ALIASES["uber_order_id"] += ("id. du flux", "id du flux", "id. de la commande", "id de la commande")
+COLUMN_ALIASES["uber_order_id"] += ("uuid du processus", "process uuid")
 COLUMN_ALIASES["display_id"] += ("id. de la commande", "id de la commande")
 COLUMN_ALIASES["order_status"] += ("statut de la commande",)
 COLUMN_ALIASES["placed_at"] += ("date de la commande", "heure d'acceptation de la commande")
+COLUMN_ALIASES["placed_at"] += ("heure de la commande", "heure d'acceptation par le marchand")
 COLUMN_ALIASES["order_total_amount"] += ("ventes (tva incluse)",)
-COLUMN_ALIASES["transaction_date"] += ("date de la commande",)
+COLUMN_ALIASES["transaction_date"] += ("date de la commande", "heure du remboursement", "heure de la commande")
 COLUMN_ALIASES["payout_reference"] += ("id. de reference du versement", "id. de référence du versement")
+COLUMN_ALIASES["transaction_type"] += (
+    "probleme avec la commande",
+    "problème avec la commande",
+    "informations concernant le probleme lie a l'article",
+    "informations concernant le problème lié à l'article",
+    "articles incorrects",
+    "personnalisations incorrectes",
+)
+COLUMN_ALIASES["currency"] += ("code de devise",)
 COLUMN_ALIASES["amount"] += (
     "ajustements lies a des erreurs de commande (tva incluse)",
     "ajustements liés à des erreurs de commande (tva incluse)",
     "remboursements",
+    "remboursement pris en charge par le commercant",
+    "remboursement pris en charge par le commerçant",
+    "client rembourse",
+    "client remboursé",
 )
 
 ORDER_ERROR_ADJUSTMENT_AMOUNT_ALIASES = (
@@ -72,7 +88,14 @@ ORDER_ERROR_ADJUSTMENT_AMOUNT_ALIASES = (
     "ajustements lies a des erreurs de commande (hors tva)",
     "ajustements liés à des erreurs de commande (hors tva)",
 )
-CUSTOMER_REFUND_AMOUNT_ALIASES = ("remboursements", "remboursements du client")
+CUSTOMER_REFUND_AMOUNT_ALIASES = (
+    "remboursement pris en charge par le commercant",
+    "remboursement pris en charge par le commerçant",
+    "remboursements",
+    "remboursements du client",
+    "client rembourse",
+    "client remboursé",
+)
 
 ORDER_FIELDS = {
     "uber_store_id",
@@ -297,6 +320,7 @@ def normalize_report_row(
         if value not in {None, ""}:
             normalized[field] = value
     infer_combined_report_transaction_type(row, normalized, report_type)
+    normalize_order_accuracy_identifiers(row, normalized)
 
     mapping = resolve_mapping(db, normalized.get("uber_store_id"))
     if mapping:
@@ -341,18 +365,47 @@ def infer_row_kind(row: dict[str, Any], report_type: str) -> str:
 
 
 def infer_combined_report_transaction_type(row: dict[str, Any], normalized: dict[str, Any], report_type: str) -> None:
-    if report_type != "combined_report" or normalized.get("transaction_type"):
+    if report_type not in {"combined_report", "adjustments_report"}:
         return
+    existing_transaction_type = normalized.get("transaction_type")
     adjustment_amount = get_column_value_from_aliases(row, ORDER_ERROR_ADJUSTMENT_AMOUNT_ALIASES)
     refund_amount = get_column_value_from_aliases(row, CUSTOMER_REFUND_AMOUNT_ALIASES)
     parsed_adjustment = parse_decimal(adjustment_amount)
     parsed_refund = parse_decimal(refund_amount)
     if parsed_adjustment is not None and parsed_adjustment != Decimal("0"):
         normalized["amount"] = adjustment_amount
-        normalized["transaction_type"] = "order_error_adjustment"
+        if not existing_transaction_type:
+            normalized["transaction_type"] = "order_error_adjustment"
     elif parsed_refund is not None and parsed_refund != Decimal("0"):
         normalized["amount"] = refund_amount
-        normalized["transaction_type"] = "customer_refund"
+        if not existing_transaction_type or row_looks_like_order_accuracy_export(row):
+            normalized["transaction_type"] = "customer_refund"
+
+
+def row_looks_like_order_accuracy_export(row: dict[str, Any]) -> bool:
+    text = normalize_for_match(" ".join(str(key) for key in row))
+    return any(
+        marker in text
+        for marker in (
+            "probleme avec la commande",
+            "informations concernant le probleme lie a l article",
+            "articles incorrects",
+            "personnalisations incorrectes",
+            "remboursement pris en charge par le commercant",
+            "client rembourse",
+        )
+    )
+
+
+def normalize_order_accuracy_identifiers(row: dict[str, Any], normalized: dict[str, Any]) -> None:
+    if not row_looks_like_order_accuracy_export(row):
+        return
+    process_uuid = get_column_value_from_aliases(row, ("uuid du processus", "process uuid"))
+    order_number = get_column_value_from_aliases(row, ("id. de la commande", "id de la commande"))
+    if process_uuid not in {None, ""}:
+        normalized["uber_order_id"] = process_uuid
+    if order_number not in {None, ""}:
+        normalized["display_id"] = order_number
 
 
 def normalize_order_values(row: dict[str, Any], errors: list[str], warnings: list[str]) -> None:
@@ -596,6 +649,8 @@ def parse_decimal(value: object) -> Decimal | None:
     if value is None or str(value).strip() == "":
         return None
     text = str(value).strip().replace(" ", "")
+    for token in ("€", "EUR", "eur"):
+        text = text.replace(token, "")
     if "," in text and "." in text:
         if text.rfind(",") > text.rfind("."):
             text = text.replace(".", "").replace(",", ".")
