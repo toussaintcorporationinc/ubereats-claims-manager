@@ -312,6 +312,9 @@ class HistoricalUberReportingRepairService:
             candidate.blockers.append("missing_dedupe_key")
 
     def is_candidate_relevant(self, row: UberReportingImportRow, candidate: HistoricalImportRepairCandidate) -> bool:
+        already_exists_blockers = {"snapshot_already_exists", "transaction_already_exists"}
+        if candidate.blockers and set(candidate.blockers).issubset(already_exists_blockers):
+            return False
         if not candidate.blockers:
             return True
         old_blockers = set(row.errors or []) | set(row.warnings or [])
@@ -324,7 +327,7 @@ class HistoricalUberReportingRepairService:
         }
         if old_blockers & repair_signals:
             return True
-        if candidate.target_restaurant_id is not None and candidate.uber_order_id:
+        if candidate.target_restaurant_id is not None and candidate.uber_order_id and not (set(candidate.blockers) & already_exists_blockers):
             return True
         return False
 
