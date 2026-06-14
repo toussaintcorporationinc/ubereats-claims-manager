@@ -1156,7 +1156,7 @@ class UberStatusRead(BaseModel):
 
 class UberStoreMappingCreate(BaseModel):
     restaurant_id: int
-    uber_store_id: str = Field(min_length=1)
+    uber_store_id: str | None = Field(default=None, min_length=1)
     uber_store_name: str = Field(min_length=1)
     merchant_store_id: str | None = None
     external_reference_id: str | None = None

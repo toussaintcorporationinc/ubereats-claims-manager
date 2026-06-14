@@ -60,7 +60,7 @@ export default function UberStoresPage() {
     try {
       await api.createUberStoreMapping({
         restaurant_id: Number(manualRestaurantId),
-        uber_store_id: manualUberStoreId,
+        uber_store_id: manualUberStoreId.trim() || null,
         uber_store_name: manualUberStoreName,
         active: true,
       });
@@ -84,8 +84,8 @@ export default function UberStoresPage() {
       <div className="page-heading">
         <div className="heading-copy">
           <p className="eyebrow">Uber Eats</p>
-          <h1>Stores Uber</h1>
-          <p className="muted">Choisis le store detecte par TENNET, puis le restaurant correspondant. Pas besoin de recopier le Store ID.</p>
+          <h1>Restaurants Uber</h1>
+          <p className="muted">Relie un nom Uber au bon restaurant TENNET. L'identifiant technique est optionnel.</p>
         </div>
       </div>
 
@@ -151,7 +151,7 @@ export default function UberStoresPage() {
       </section>
 
       <details className="simple-details">
-        <summary>Mapping manuel avance</summary>
+        <summary>Ajouter un restaurant Uber manuellement</summary>
         <form className="tool-panel form-grid" onSubmit={handleManualSubmit}>
           <div className="field">
             <label htmlFor="manual_restaurant_id">Restaurant TENNET</label>
@@ -170,25 +170,27 @@ export default function UberStoresPage() {
             </select>
           </div>
           <div className="field">
-            <label htmlFor="manual_uber_store_id">Uber store id</label>
-            <input
-              id="manual_uber_store_id"
-              value={manualUberStoreId}
-              onChange={(event) => setManualUberStoreId(event.target.value)}
-              required
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="manual_uber_store_name">Nom store Uber</label>
+            <label htmlFor="manual_uber_store_name">Nom vu dans Uber</label>
             <input
               id="manual_uber_store_name"
               value={manualUberStoreName}
               onChange={(event) => setManualUberStoreName(event.target.value)}
+              placeholder="Ex : Krousty Bat"
               required
             />
           </div>
+          <div className="field">
+            <label htmlFor="manual_uber_store_id">ID Uber si tu l'as</label>
+            <input
+              id="manual_uber_store_id"
+              value={manualUberStoreId}
+              onChange={(event) => setManualUberStoreId(event.target.value)}
+              placeholder="Optionnel : TENNET le genere sinon"
+            />
+            <small className="muted">Tu peux laisser vide. TENNET utilisera un identifiant interne stable.</small>
+          </div>
           <button type="submit" className="secondary-button" disabled={submitting}>
-            {submitting ? "Creation" : "Creer mapping manuel"}
+            {submitting ? "Creation" : "Relier ce restaurant Uber"}
           </button>
         </form>
       </details>

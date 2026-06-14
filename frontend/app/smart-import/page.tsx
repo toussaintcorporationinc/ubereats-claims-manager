@@ -73,7 +73,7 @@ export default function SmartImportPage() {
       setMachineResult(machineResponse);
       setPreview((current) => (current ? { ...current, status: confirmResponse.status } : current));
       setSuccess(
-        `TENNET a traite ${confirmResponse.routed_files.length} fichier(s), conserve ${confirmResponse.manual_review_files.length} a exploiter et ignore ${confirmResponse.ignored_files.length} doublon(s).`,
+        `TENNET a traite ${confirmResponse.routed_files.length} fichier(s), garde ${confirmResponse.manual_review_files.length} source(s) officielle(s) a exploiter et ignore ${confirmResponse.ignored_files.length} doublon(s).`,
       );
     } catch (apiError) {
       setError(apiError);
@@ -330,7 +330,7 @@ function SmartImportResultPanel({
       <div className="smart-import-status-grid">
         <StatusTile label="Fichiers recus" value={summary.totalFiles} tone="neutral" />
         <StatusTile label="Traites" value={summary.processedFiles} tone="success" />
-        <StatusTile label="A completer" value={summary.blockedFiles} tone={summary.blockedFiles > 0 ? "warning" : "neutral"} />
+        <StatusTile label="Sources a exploiter" value={summary.blockedFiles} tone={summary.blockedFiles > 0 ? "warning" : "neutral"} />
         <StatusTile label="Doublons ignores" value={summary.ignoredFiles} tone="neutral" />
       </div>
 
@@ -340,8 +340,12 @@ function SmartImportResultPanel({
         <TimelineStep state="done" title="3. Traitement" description={`${summary.createdItems} element(s) cree(s) ou analyses.`} />
         <TimelineStep
           state={summary.blockedFiles > 0 ? "attention" : "done"}
-          title="4. Action suivante"
-          description={summary.blockedFiles > 0 ? "Certains fichiers officiels demandent un export plus detaille ou un mapping." : "Rien de critique ne demande ton attention."}
+          title="4. Suite logique"
+          description={
+            summary.blockedFiles > 0
+              ? "TENNET garde ces fichiers officiels et attend une donnee fiable pour les transformer en action."
+              : "Rien de critique ne demande ton attention."
+          }
         />
       </div>
 
@@ -384,15 +388,15 @@ function SmartImportResultPanel({
         <section id="smart-import-blocked" className="smart-import-group smart-import-group--attention">
           <div className="section-heading">
             <div>
-              <h3>Sources a completer</h3>
-              <p className="muted">TENNET garde ces fichiers officiels visibles quand il manque une commande, un montant ou un mapping fiable.</p>
+              <h3>Sources officielles gardees</h3>
+              <p className="muted">TENNET ne les jette pas : il les conserve, les rattache au contexte et attend une commande, un montant ou un mapping fiable.</p>
             </div>
           </div>
           <div className="premium-card-grid">
             {result.manual_review_files.map((file) => (
               <article key={`manual-${file.file_id}`} className="premium-card premium-card--warning">
                 <h3>{file.original_filename}</h3>
-                <p className="muted">Conserve comme source officielle. Ajoute l'export detaille ou le mapping manquant pour que TENNET le transforme en action.</p>
+                <p className="muted">Source officielle conservee. TENNET l'exploitera des qu'un lien fiable avec une commande ou un restaurant existe.</p>
               </article>
             ))}
             {result.errors.map((item) => (
@@ -562,7 +566,7 @@ function buildSmartImportNextActions(result: SmartImportConfirmResponse): Array<
     actions.push({ label: "Voir preuves importees", href: "/evidence-imports", primary: actions.length === 0 });
   }
   if (result.manual_review_files.length > 0 || result.errors.length > 0) {
-    actions.push({ label: "Voir sources a completer", href: "#smart-import-blocked", primary: actions.length === 0 });
+    actions.push({ label: "Voir sources gardees", href: "#smart-import-blocked", primary: actions.length === 0 });
   }
   if (actions.length === 0) {
     actions.push({ label: "Deposer d'autres fichiers", href: "/smart-import", primary: true });

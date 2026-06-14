@@ -183,6 +183,23 @@ def test_owner_can_create_mapping_and_manager_non_assigned_cannot_see_it(unauthe
     assert mapping["uber_store_id"] == "store-a"
 
 
+def test_owner_can_create_mapping_without_manual_store_id(unauthenticated_client: TestClient) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Asian Passion")
+
+    response = unauthenticated_client.post(
+        "/v1/uber/store-mappings",
+        json={"restaurant_id": restaurant["id"], "uber_store_name": "Asian Passion", "active": True},
+        headers=auth_headers(owner_token),
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["restaurant_id"] == restaurant["id"]
+    assert payload["uber_store_name"] == "Asian Passion"
+    assert payload["uber_store_id"] == f"restaurant-name:{restaurant['id']}"
+
+
 def test_manager_assigned_can_import_reporting_file(unauthenticated_client: TestClient, db_session: Session) -> None:
     owner_token = bootstrap_owner(unauthenticated_client)
     restaurant = create_restaurant(unauthenticated_client, owner_token, "Restaurant Uber Import")
