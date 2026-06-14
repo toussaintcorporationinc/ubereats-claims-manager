@@ -295,27 +295,40 @@ def apply_restaurant_override_to_reporting_batch(
         .order_by(UberReportingImportRow.row_number)
     ).all()
     updated_rows = 0
+    preserved_rows = 0
     for row in rows:
         if not row.normalized_data or row.status == "duplicate":
             continue
         normalized_data = dict(row.normalized_data)
+        existing_restaurant_id = normalized_data.get("restaurant_id")
+        if isinstance(existing_restaurant_id, int):
+            preserved_rows += 1
+            continue
         normalized_data["restaurant_id"] = restaurant_id
         row.normalized_data = normalized_data
-        row.warnings = [warning for warning in row.warnings if warning != "unmapped_store"]
+        row.warnings = [
+            warning for warning in row.warnings if warning not in {"unmapped_store", "unmapped_store_name"}
+        ]
         row.errors = [error for error in row.errors if error != "restaurant_access_denied"]
+        if "restaurant_selected_as_fallback" not in row.warnings:
+            row.warnings = [*row.warnings, "restaurant_selected_as_fallback"]
         if row.status == "invalid" and not row.errors:
             row.status = "warning" if row.warnings else "valid"
         elif row.status == "warning" and not row.warnings:
             row.status = "valid"
         updated_rows += 1
-    if updated_rows:
+    if updated_rows or preserved_rows:
         add_audit_log(
             db,
             entity_type="uber_reporting_import_batch",
             entity_id=batch.id,
             action="smart_import.restaurant_override_applied",
             user_id=current_user.id,
-            new_value={"restaurant_id": restaurant_id, "updated_rows": updated_rows},
+            new_value={
+                "restaurant_id": restaurant_id,
+                "updated_rows": updated_rows,
+                "preserved_rows": preserved_rows,
+            },
         )
 
 
