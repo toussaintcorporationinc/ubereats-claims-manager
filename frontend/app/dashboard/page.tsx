@@ -179,7 +179,7 @@ export default function DashboardPage() {
           <Link href="/smart-import" className="home-flow-card home-flow-card--imports">
             <span>Imports</span>
             <strong>Voir ce que TENNET a classe et traite</strong>
-            <small>Fichiers traites, bloques, doublons conserves et actions suivantes.</small>
+            <small>Fichiers traites, sources officielles gardees, doublons controles et suite logique.</small>
           </Link>
         </section>
       ) : null}

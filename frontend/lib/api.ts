@@ -1618,7 +1618,7 @@ export type UberStoreMapping = {
 
 export type UberStoreMappingCreatePayload = {
   restaurant_id: number;
-  uber_store_id: string;
+  uber_store_id?: string | null;
   uber_store_name: string;
   merchant_store_id?: string | null;
   external_reference_id?: string | null;

@@ -57,6 +57,7 @@ from app.services.uber_reporting_import_service import (
     ROW_PREVIEW_LIMIT,
     confirm_uber_reporting_batch,
     create_uber_reporting_preview,
+    derived_store_id_from_restaurant,
     import_uber_reporting_file,
     map_unmapped_store,
     preview_metadata,
@@ -96,12 +97,16 @@ def create_store_mapping(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_owner),
 ) -> UberStoreMapping:
-    if db.get(Restaurant, payload.restaurant_id) is None:
+    restaurant = db.get(Restaurant, payload.restaurant_id)
+    if restaurant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found")
-    existing = db.scalar(select(UberStoreMapping).where(UberStoreMapping.uber_store_id == payload.uber_store_id))
+    store_id = (payload.uber_store_id or "").strip() or derived_store_id_from_restaurant(restaurant)
+    existing = db.scalar(select(UberStoreMapping).where(UberStoreMapping.uber_store_id == store_id))
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Uber store mapping already exists")
-    mapping = UberStoreMapping(**payload.model_dump())
+    mapping_data = payload.model_dump()
+    mapping_data["uber_store_id"] = store_id
+    mapping = UberStoreMapping(**mapping_data)
     db.add(mapping)
     db.flush()
     add_audit_log(
@@ -110,7 +115,7 @@ def create_store_mapping(
         entity_id=mapping.id,
         action="create_uber_store_mapping",
         user_id=current_user.id,
-        new_value=payload.model_dump(),
+        new_value=mapping_data,
     )
     db.commit()
     db.refresh(mapping)
