@@ -1990,6 +1990,62 @@ class WorkspaceMachineRunResponse(BaseModel):
     next_actions: WorkspaceNextActionsResponse
 
 
+RecoveryMachineRailKey = Literal["refunds", "cancellations"]
+RecoveryMachineStageKey = Literal[
+    "smart_import",
+    "evidence_needed",
+    "evidence_received",
+    "uber_emails",
+    "followups",
+    "payments",
+]
+RecoveryMachineStageStatus = Literal["empty", "ready", "attention", "working", "done"]
+
+
+class RecoveryMachineStageRead(BaseModel):
+    key: RecoveryMachineStageKey
+    label: str
+    description: str
+    count: int = 0
+    amount: Decimal = Decimal("0")
+    status: RecoveryMachineStageStatus
+    href: str
+
+
+class RecoveryMachineRailRead(BaseModel):
+    key: RecoveryMachineRailKey
+    title: str
+    short_title: str
+    description: str
+    href: str
+    primary_action_label: str
+    primary_action_href: str
+    detected_count: int = 0
+    detected_amount: Decimal = Decimal("0")
+    claimable_amount: Decimal = Decimal("0")
+    missing_evidence_count: int = 0
+    evidence_ready_count: int = 0
+    email_pipeline_count: int = 0
+    followup_or_appeal_count: int = 0
+    recovered_count: int = 0
+    recovered_amount: Decimal = Decimal("0")
+    progress_percent: int = 0
+    health: Literal["empty", "good", "attention", "working"] = "empty"
+    next_action_label: str
+    next_action_href: str
+    stages: list[RecoveryMachineStageRead]
+
+
+class RecoveryMachineResponse(BaseModel):
+    title: str = "Machine de recuperation"
+    subtitle: str
+    global_progress_percent: int = 0
+    total_detected_amount: Decimal = Decimal("0")
+    total_recovered_amount: Decimal = Decimal("0")
+    total_actions_count: int = 0
+    rails: list[RecoveryMachineRailRead]
+
+
 class SmartImportFilePreviewRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

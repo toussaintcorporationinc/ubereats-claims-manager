@@ -5,10 +5,16 @@ from app.core.auth import get_current_user, require_owner_or_manager
 from app.core.database import get_db
 from app.routes.email import get_gmail_provider
 from app.models import User
-from app.schemas.domain import WorkspaceMachineRunRequest, WorkspaceMachineRunResponse, WorkspaceNextActionsResponse
+from app.schemas.domain import (
+    RecoveryMachineResponse,
+    WorkspaceMachineRunRequest,
+    WorkspaceMachineRunResponse,
+    WorkspaceNextActionsResponse,
+)
 from app.services.email_provider import EmailProvider
 from app.services.workspace_action_service import WorkspaceActionService
 from app.services.workspace_machine_service import WorkspaceMachineError, WorkspaceMachineService
+from app.services.recovery_machine_service import RecoveryMachineService
 
 router = APIRouter(prefix="/v1/workspace", tags=["workspace"])
 
@@ -19,6 +25,14 @@ def workspace_next_actions(
     current_user: User = Depends(get_current_user),
 ) -> WorkspaceNextActionsResponse:
     return WorkspaceActionService(db, current_user).next_actions()
+
+
+@router.get("/recovery-machine", response_model=RecoveryMachineResponse)
+def workspace_recovery_machine(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> RecoveryMachineResponse:
+    return RecoveryMachineService(db, current_user).summary()
 
 
 @router.post("/machine/run", response_model=WorkspaceMachineRunResponse)
