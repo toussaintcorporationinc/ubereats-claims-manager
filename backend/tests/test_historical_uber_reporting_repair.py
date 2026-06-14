@@ -12,6 +12,7 @@ from app.models import (
     UberOrderSnapshot,
     UberReportingImportBatch,
     UberReportingImportRow,
+    UberStoreMapping,
 )
 
 
@@ -187,6 +188,44 @@ def test_historical_import_repair_does_not_guess_unknown_restaurant(
     assert payload["eligible_count"] == 0
     assert payload["blocked_count"] == 1
     assert "missing_target_restaurant" in payload["candidates"][0]["blockers"]
+
+
+def test_historical_import_repair_resolves_known_old_store_name_alias(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    _krousty, asian = create_restaurants(db_session)
+    db_session.add(
+        UberStoreMapping(
+            restaurant_id=asian.id,
+            uber_store_id=f"restaurant-name:{asian.id}:historical:croustybest",
+            uber_store_name="Crousty Best",
+            external_reference_id="historical_alias",
+            active=True,
+        )
+    )
+    create_batch_with_row(
+        db_session,
+        report_type="orders_report",
+        raw_data={
+            "store_name": "Crousty Best",
+            "order_id": "UBER-OLD-CROUSTY-BEST",
+            "status": "cancelled",
+            "amount": "21.00",
+            "currency": "EUR",
+        },
+    )
+    db_session.commit()
+
+    response = client.post("/v1/uber/historical-import-repair/preview", json={})
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["eligible_count"] == 1
+    candidate = payload["candidates"][0]
+    assert candidate["target_restaurant_id"] == asian.id
+    assert candidate["target_restaurant_name"] == "Asian Passion"
+    assert candidate["reason"] == "store_name_mapping"
 
 
 def test_historical_import_repair_finds_eligible_rows_after_blocked_preview_limit(

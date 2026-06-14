@@ -1,7 +1,7 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import ensure_can_access_restaurant, get_accessible_restaurant_ids, get_current_user, require_owner, require_owner_or_manager
@@ -84,7 +84,11 @@ def list_store_mappings(
 ) -> list[UberStoreMapping]:
     if current_user.role == "staff":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
-    statement = select(UberStoreMapping).order_by(UberStoreMapping.id)
+    statement = (
+        select(UberStoreMapping)
+        .where(or_(UberStoreMapping.external_reference_id.is_(None), UberStoreMapping.external_reference_id != "historical_alias"))
+        .order_by(UberStoreMapping.id)
+    )
     accessible_ids = get_accessible_restaurant_ids(db, current_user)
     if accessible_ids is not None:
         statement = statement.where(UberStoreMapping.restaurant_id.in_(accessible_ids))
