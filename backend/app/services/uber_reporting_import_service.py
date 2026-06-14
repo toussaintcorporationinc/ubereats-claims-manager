@@ -60,7 +60,12 @@ COLUMN_ALIASES["display_id"] += ("id. de la commande", "id de la commande")
 COLUMN_ALIASES["order_status"] += ("statut de la commande",)
 COLUMN_ALIASES["placed_at"] += ("date de la commande", "heure d'acceptation de la commande")
 COLUMN_ALIASES["placed_at"] += ("heure de la commande", "heure d'acceptation par le marchand")
-COLUMN_ALIASES["order_total_amount"] += ("ventes (tva incluse)",)
+COLUMN_ALIASES["order_total_amount"] += (
+    "ventes (tva incluse)",
+    "montant moyen des commandes",
+    "montant moyen de la commande",
+    "average order amount",
+)
 COLUMN_ALIASES["transaction_date"] += ("date de la commande", "heure du remboursement", "heure de la commande")
 COLUMN_ALIASES["payout_reference"] += ("id. de reference du versement", "id. de référence du versement")
 COLUMN_ALIASES["transaction_type"] += (
@@ -134,6 +139,7 @@ COLUMN_ALIASES["amount"] += (
     "montant du remboursement",
     "montant rembourse",
     "montant facture au commercant",
+    "remboursement non pris en charge par le commercant",
     "montant deduit",
     "montant debit",
 )
@@ -176,6 +182,7 @@ CUSTOMER_REFUND_AMOUNT_ALIASES += (
     "montant du remboursement",
     "montant rembourse",
     "montant facture au commercant",
+    "remboursement non pris en charge par le commercant",
     "montant deduit",
     "montant debit",
 )
