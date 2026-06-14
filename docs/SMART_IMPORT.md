@@ -43,13 +43,22 @@ Depuis Mission 31, Smart Import lance le vrai workflow TENNET :
 - un fichier douteux reste en revue manuelle ;
 - un fichier ignore est audite.
 
+Depuis le cockpit autonome, Smart Import enchaine ensuite la machine TENNET :
+- detection des deductions Uber exploitables ;
+- creation des dossiers quand les informations minimales existent ;
+- creation des brouillons internes quand les preuves sont completes ;
+- recalcul des relances et appels ;
+- synchronisation Gmail et AutoPilot uniquement si les flags serveur, Gmail et les limites de securite l'autorisent.
+
+Les fichiers douteux ne sont pas refuses. Ils sont conserves comme fichiers a exploiter, visibles dans le resultat, afin de ne jamais perdre un export officiel.
+
 Exemple :
 1. L'utilisateur depose `download.csv`.
 2. TENNET detecte "Rapport Uber detecte".
 3. TENNET cree l'import Uber et applique les lignes fiables.
 4. L'utilisateur ouvre le detail uniquement si des lignes sont bloquees ou si TENNET demande une verification.
 
-Smart Import ne cree pas de dossier de contestation automatiquement et n'invente jamais de montant, preuve ou numero de commande. Les preuves ne sont pas auto-attachees, sauf reglage explicite ulterieur et confiance suffisante. OpenAI reste desactive par defaut.
+Smart Import ne confirme pas une information incertaine et n'invente jamais de montant, preuve ou numero de commande. Les preuves ne sont pas auto-attachees, sauf reglage explicite ulterieur et confiance suffisante. OpenAI reste desactive par defaut.
 
 Les fichiers de preview sont conserves temporairement jusqu'a confirmation, avec expiration par defaut apres 24 heures (`SMART_IMPORT_PREVIEW_EXPIRY_HOURS=24`).
 

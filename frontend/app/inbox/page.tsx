@@ -260,7 +260,7 @@ export default function InboxPage() {
             {syncResult.negative_responses_detected > 0 ? (
               <span>
                 Reponses negatives: {syncResult.negative_responses_detected}. AutoPilot:{" "}
-                {syncResult.autopilot_sent_count} envoyee(s), {syncResult.autopilot_skipped_count} bloquee(s),{" "}
+                {syncResult.autopilot_sent_count} envoyee(s), {syncResult.autopilot_skipped_count} a exploiter,{" "}
                 {syncResult.autopilot_failed_count} erreur(s).
               </span>
             ) : null}

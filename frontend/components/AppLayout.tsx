@@ -13,6 +13,8 @@ import { useAuth } from "@/lib/auth";
 const navigation: NavItem[] = [
   { href: "/dashboard", label: "A faire", group: "main" },
   { href: "/smart-import", label: "Deposer fichiers", group: "main", ownerOrManagerOnly: true },
+  { href: "/remboursements", label: "Remboursements", group: "main", ownerOrManagerOnly: true },
+  { href: "/annulations", label: "Annulations", group: "main", ownerOrManagerOnly: true },
   { href: "/evidence-tasks", label: "Preuves", group: "main" },
   { href: "/live-evidence", label: "Camera + tickets", group: "main" },
   { href: "/recovery", label: "Recuperation", group: "main", ownerOrManagerOnly: true },
@@ -23,7 +25,7 @@ const navigation: NavItem[] = [
   { href: "/drafts", label: "Brouillons", group: "follow", ownerOrManagerOnly: true },
   { href: "/followups", label: "Relances", group: "follow", ownerOrManagerOnly: true },
   { href: "/appeals", label: "Appels / Refus", group: "follow", ownerOrManagerOnly: true },
-  { href: "/customer-refunds", label: "Deductions Uber", group: "follow", ownerOrManagerOnly: true },
+  { href: "/customer-refunds", label: "Dossiers remboursements", group: "follow", ownerOrManagerOnly: true },
   { href: "/inbox", label: "Reponses Uber", group: "follow", ownerOrManagerOnly: true },
   { href: "/autopilot", label: "AutoPilot", group: "admin", ownerOrManagerOnly: true },
   { href: "/reports", label: "Rapports", group: "admin", ownerOrManagerOnly: true },

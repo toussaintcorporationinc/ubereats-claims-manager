@@ -229,7 +229,9 @@ Before production rollout, repeat the import and reconciliation scenarios with r
 
 ## Smart Import and mobile usage
 
-Open `/smart-import` to drop Uber reports, evidence images, PDFs or ZIP files without renaming them. TENNET detects the content, routes the file, applies safe Uber rows automatically and keeps doubtful rows for review. Evidence files are stored and analyzed locally by default, with manual review when confidence is low.
+Open `/dashboard` or `/smart-import` to drop Uber reports, evidence images, PDFs or ZIP files without renaming them. TENNET detects the content, routes the file, applies safe Uber rows automatically, keeps doubtful rows visible, then runs the recovery machine: deductions, claim files, drafts, followups, appeals, Gmail sync and AutoPilot when the configured safety rules allow it.
+
+Use `/remboursements` for customer refund disputes and `/annulations` for cancelled prepared orders. These pages are business paths; the technical screens remain available for audit and verification.
 
 On mobile, use the header menu, evidence cards and sticky action bars to work in the restaurant. Staff users should focus on "Mes preuves a fournir", uploading photos or PDFs only for assigned restaurants.
 

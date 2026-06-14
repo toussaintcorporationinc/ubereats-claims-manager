@@ -614,6 +614,80 @@ def test_staff_next_actions_limited_to_evidence(client: TestClient, db_session: 
     assert {item["action_type"] for item in actions} == {"upload_evidence"}
 
 
+def test_workspace_machine_runs_refund_pipeline_for_owner(client: TestClient, db_session: Session) -> None:
+    restaurant = Restaurant(name="Restaurant Machine", sender_email="claims@example.com")
+    db_session.add(restaurant)
+    db_session.flush()
+    db_session.add(
+        UberFinancialTransaction(
+            restaurant_id=restaurant.id,
+            uber_store_id="store-machine",
+            uber_order_id="UBER-MACHINE-001",
+            transaction_type="Commande non recue",
+            amount=Decimal("-19.90"),
+            currency="EUR",
+            transaction_date=datetime(2026, 6, 1).date(),
+            payout_reference="PAY-MACHINE-001",
+            raw_payload_json={"description": "Commande non recue par le client"},
+            imported_from="manager_export",
+        )
+    )
+    db_session.commit()
+
+    response = client.post(
+        "/v1/workspace/machine/run",
+        json={"trigger": "refunds", "sync_gmail": False, "run_autopilot": False},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["recipient_email"] == "restaurantsfrance@uber.com"
+    stages = {stage["name"]: stage for stage in payload["stages"]}
+    assert stages["deductions"]["created_count"] == 1
+    assert stages["claim_orders"]["created_count"] == 1
+    assert stages["gmail_sync"]["status"] == "skipped"
+    dispute = db_session.scalar(select(UberCustomerRefundDispute))
+    assert dispute is not None
+    assert dispute.dispute_type == "order_not_received"
+    assert dispute.claim_order_id is not None
+    assert db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "UBER-MACHINE-001")) is not None
+
+
+def test_workspace_machine_reports_autopilot_disabled_without_failure(client: TestClient) -> None:
+    response = client.post("/v1/workspace/machine/run", json={"sync_gmail": False, "run_autopilot": True})
+
+    assert response.status_code == 200
+    payload = response.json()
+    stages = {stage["name"]: stage for stage in payload["stages"]}
+    assert stages["autopilot"]["status"] == "skipped"
+    assert "autopilot_disabled" in stages["autopilot"]["warnings"]
+
+
+def test_staff_cannot_run_workspace_machine(client: TestClient, db_session: Session) -> None:
+    restaurant, _order = create_restaurant_order_and_task(db_session)
+    staff = client.post(
+        "/v1/users",
+        json={
+            "email": "staff-machine@example.com",
+            "password": "staff-password",
+            "full_name": "Staff Machine",
+            "role": "staff",
+            "active": True,
+        },
+    ).json()
+    client.post(f"/v1/users/{staff['id']}/restaurants", json={"restaurant_id": restaurant.id})
+    login_response = client.post("/v1/auth/login", json={"email": "staff-machine@example.com", "password": "staff-password"})
+    token = login_response.json()["access_token"]
+
+    response = client.post(
+        "/v1/workspace/machine/run",
+        json={"sync_gmail": False, "run_autopilot": False},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 403
+
+
 def create_restaurant_order_and_task(db: Session) -> tuple[Restaurant, ClaimOrder]:
     owner = db.scalar(select(User).where(User.email == "owner@example.com"))
     restaurant = Restaurant(name="Restaurant Next Actions", sender_email="claims@example.com")

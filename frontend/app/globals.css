@@ -206,6 +206,194 @@ button {
   gap: 10px;
 }
 
+.machine-hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 22px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(0, 210, 161, 0.35);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(0, 210, 161, 0.18), transparent 34%),
+    radial-gradient(circle at 78% 10%, rgba(94, 246, 255, 0.18), transparent 26%),
+    #061412;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.22);
+  color: #f5fffc;
+  padding: 22px;
+}
+
+.machine-hero--compact {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.machine-hero p,
+.machine-hero .muted {
+  color: rgba(245, 255, 252, 0.76);
+}
+
+.machine-hero .eyebrow {
+  color: #5ef6ff;
+}
+
+.machine-hero__actions {
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.machine-command {
+  display: grid;
+  place-items: center;
+  width: 176px;
+  min-height: 176px;
+}
+
+.machine-command__content {
+  position: absolute;
+  z-index: 1;
+  display: grid;
+  max-width: 136px;
+  gap: 4px;
+  text-align: center;
+}
+
+.machine-command__content strong {
+  font-size: 1rem;
+  text-transform: uppercase;
+}
+
+.machine-command__content span {
+  color: rgba(245, 255, 252, 0.72);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.machine-ring {
+  position: relative;
+  display: grid;
+  width: 168px;
+  height: 168px;
+  place-items: center;
+  border-radius: 999px;
+  background:
+    conic-gradient(from 90deg, #00d2a1, #5ef6ff, #0b211e, #00d2a1),
+    rgba(255, 255, 255, 0.04);
+  box-shadow:
+    0 0 24px rgba(0, 210, 161, 0.28),
+    inset 0 0 28px rgba(94, 246, 255, 0.14);
+  animation: spin 3.4s linear infinite;
+}
+
+.machine-ring::before {
+  content: "";
+  width: 126px;
+  height: 126px;
+  border-radius: inherit;
+  background: #061412;
+}
+
+.machine-ring span {
+  position: absolute;
+  width: 72px;
+  height: 3px;
+  border-radius: 999px;
+  background: #5ef6ff;
+  box-shadow: 0 0 18px rgba(94, 246, 255, 0.75);
+}
+
+.machine-command--running .machine-ring {
+  animation-duration: 0.9s;
+}
+
+.machine-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.machine-file-button {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #f5fffc;
+}
+
+.machine-result {
+  display: grid;
+  gap: 16px;
+  border: 1px solid rgba(0, 210, 161, 0.28);
+  border-radius: 8px;
+  background: #061412;
+  color: #f5fffc;
+  padding: 18px;
+}
+
+.machine-result p {
+  margin: 6px 0 0;
+  color: rgba(245, 255, 252, 0.72);
+}
+
+.machine-result--warning {
+  border-color: rgba(245, 196, 107, 0.6);
+}
+
+.machine-result--failed {
+  border-color: rgba(242, 112, 90, 0.7);
+}
+
+.machine-stage-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.machine-stage-list--large {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.machine-stage {
+  display: grid;
+  gap: 6px;
+  min-height: 112px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 12px;
+}
+
+.machine-stage strong {
+  color: #f5fffc;
+}
+
+.machine-stage span {
+  color: #5ef6ff;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.machine-stage small {
+  color: rgba(245, 255, 252, 0.68);
+  line-height: 1.4;
+}
+
+.machine-stage--completed {
+  border-color: rgba(0, 210, 161, 0.42);
+}
+
+.machine-stage--warning,
+.machine-stage--skipped {
+  border-color: rgba(245, 196, 107, 0.6);
+}
+
+.machine-stage--failed {
+  border-color: rgba(242, 112, 90, 0.72);
+}
+
 .page-heading,
 .section-heading {
   display: flex;
@@ -1123,9 +1311,32 @@ textarea {
   }
 
   .simple-hero,
+  .machine-hero,
   .page-heading,
   .section-heading {
     display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .machine-command {
+    justify-self: center;
+    width: 150px;
+    min-height: 150px;
+  }
+
+  .machine-ring {
+    width: 144px;
+    height: 144px;
+  }
+
+  .machine-ring::before {
+    width: 108px;
+    height: 108px;
+  }
+
+  .machine-stage-list,
+  .machine-stage-list--large {
+    grid-template-columns: 1fr;
   }
 
   .simple-hero__actions {

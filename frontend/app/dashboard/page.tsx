@@ -12,28 +12,26 @@ import StatusBadge from "@/components/StatusBadge";
 import { useAuth } from "@/lib/auth";
 import {
   api,
-  type AutopilotRunDetail,
   type DashboardSummary,
-  type GmailInboundSyncResponse,
+  type SmartImportFileDecision,
   type WorkspaceNextActionsResponse,
+  type WorkspaceMachineRunResponse,
   formatCurrency,
 } from "@/lib/api";
 
-type PilotRunResult = {
-  sync: GmailInboundSyncResponse | null;
-  autopilot: AutopilotRunDetail | null;
-  warnings: string[];
-};
+const acceptedTypes = ".csv,.xlsx,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.zip,image/*,application/pdf";
 
 export default function DashboardPage() {
   const { user } = useAuth();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [nextActions, setNextActions] = useState<WorkspaceNextActionsResponse | null>(null);
-  const [pilotResult, setPilotResult] = useState<PilotRunResult | null>(null);
+  const [machineResult, setMachineResult] = useState<WorkspaceMachineRunResponse | null>(null);
+  const [homeFiles, setHomeFiles] = useState<File[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [pilotError, setPilotError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [pilotRunning, setPilotRunning] = useState(false);
+  const [importRunning, setImportRunning] = useState(false);
 
   const loadDashboard = useCallback(async () => {
     const [summaryData, actionsData] = await Promise.all([api.getDashboardSummary(), api.getWorkspaceNextActions()]);
@@ -50,39 +48,51 @@ export default function DashboardPage() {
   async function runTennetPilot() {
     setPilotRunning(true);
     setPilotError(null);
-    setPilotResult(null);
-
-    const warnings: string[] = [];
-    let sync: GmailInboundSyncResponse | null = null;
-    let autopilot: AutopilotRunDetail | null = null;
+    setMachineResult(null);
 
     try {
-      try {
-        sync = await api.syncInboundGmail({
-          lookback_days: 30,
-          max_messages: 100,
-          analyze_responses: true,
-          apply_reviews: true,
-          run_autopilot_after_sync: true,
-        });
-      } catch (syncError) {
-        warnings.push(`Gmail bloque: ${errorMessage(syncError)}`);
-      }
-
-      try {
-        autopilot = await api.runAutopilot({ mode: "all", restaurant_id: null });
-      } catch (autopilotError) {
-        warnings.push(`AutoPilot bloque: ${errorMessage(autopilotError)}`);
-      }
-
-      if (!sync && !autopilot) {
-        setPilotError(new Error(warnings.join(" | ") || "TENNET n'a rien pu lancer."));
-      }
-
-      setPilotResult({ sync, autopilot, warnings });
+      const result = await api.runWorkspaceMachine({ trigger: "manual", sync_gmail: true, run_autopilot: true });
+      setMachineResult(result);
+      setNextActions(result.next_actions);
       await loadDashboard();
+    } catch (apiError) {
+      setPilotError(apiError);
     } finally {
       setPilotRunning(false);
+    }
+  }
+
+  async function runSmartImportFromDashboard() {
+    if (homeFiles.length === 0) {
+      setPilotError(new Error("Ajoute au moins un fichier."));
+      return;
+    }
+    setImportRunning(true);
+    setPilotError(null);
+    setMachineResult(null);
+    try {
+      const preview = await api.previewSmartImport(homeFiles);
+      const decisions: SmartImportFileDecision[] = preview.files.map((file) => ({
+        file_id: file.id,
+        action: file.recommended_action,
+        report_type: file.detected_report_type ?? "combined_report",
+        restaurant_id: null,
+      }));
+      await api.confirmSmartImport(preview.batch_preview_id, decisions);
+      const result = await api.runWorkspaceMachine({
+        trigger: "smart_import",
+        smart_import_batch_id: preview.batch_preview_id,
+        sync_gmail: true,
+        run_autopilot: true,
+      });
+      setMachineResult(result);
+      setNextActions(result.next_actions);
+      setHomeFiles([]);
+      await loadDashboard();
+    } catch (apiError) {
+      setPilotError(apiError);
+    } finally {
+      setImportRunning(false);
     }
   }
 
@@ -95,24 +105,60 @@ export default function DashboardPage() {
 
   return (
     <section className="page-section page-section--simple">
-      <div className="simple-hero">
+      <div className="machine-hero">
         <div className="heading-copy">
           <p className="eyebrow">TENNET</p>
-          <h1>{user?.role === "staff" ? "Mes preuves a faire" : "A faire maintenant"}</h1>
+          <h1>{user?.role === "staff" ? "Mes preuves a faire" : "Machine de recuperation"}</h1>
           <p>
-            TENNET met devant toi les prochaines actions utiles. Les tableaux et details restent disponibles, mais ils
-            ne doivent plus te ralentir.
+            Depose tes exports Uber, preuves ou ZIP. TENNET classe, traite, detecte, prepare les dossiers et lance les
+            actions autorisees par tes regles.
           </p>
         </div>
-        <div className="simple-hero__actions">
+        {canSeeBusinessMetrics ? (
+          <div className={`machine-command ${pilotRunning || importRunning ? "machine-command--running" : ""}`}>
+            <div className="machine-ring" aria-hidden="true">
+              <span />
+            </div>
+            <div className="machine-command__content">
+              <strong>{pilotRunning || importRunning ? "TENNET travaille" : "Lancer TENNET"}</strong>
+              <span>{homeFiles.length > 0 ? `${homeFiles.length} fichier(s) prets` : "Import massif ou passage complet"}</span>
+            </div>
+          </div>
+        ) : null}
+        <div className="simple-hero__actions machine-hero__actions">
           {canSeeBusinessMetrics ? (
-            <button type="button" className="button button--hero" disabled={pilotRunning} onClick={() => void runTennetPilot()}>
-              {pilotRunning ? "TENNET travaille" : "Faire bosser TENNET"}
+            <label className="secondary-button machine-file-button" htmlFor="dashboard-smart-files">
+              Deposer fichiers
+            </label>
+          ) : null}
+          {canSeeBusinessMetrics ? (
+            <input
+              id="dashboard-smart-files"
+              className="machine-file-input"
+              type="file"
+              multiple
+              accept={acceptedTypes}
+              onChange={(event) => setHomeFiles(Array.from(event.target.files ?? []))}
+            />
+          ) : null}
+          {canSeeBusinessMetrics && homeFiles.length > 0 ? (
+            <button
+              type="button"
+              className="button button--hero"
+              disabled={pilotRunning || importRunning}
+              onClick={() => void runSmartImportFromDashboard()}
+            >
+              {importRunning ? "Traitement" : "Importer et lancer"}
+            </button>
+          ) : null}
+          {canSeeBusinessMetrics ? (
+            <button type="button" className="button button--hero" disabled={pilotRunning || importRunning} onClick={() => void runTennetPilot()}>
+              {pilotRunning ? "TENNET travaille" : "Passage complet"}
             </button>
           ) : null}
           {canSeeBusinessMetrics ? (
             <Link href="/smart-import" className="secondary-button">
-              Deposer fichiers
+              Detail imports
             </Link>
           ) : null}
           <Link href="/evidence-tasks" className="secondary-button">
@@ -123,7 +169,7 @@ export default function DashboardPage() {
 
       <ApiError error={error} />
       <ApiError error={pilotError} />
-      {pilotResult ? <PilotResultBox result={pilotResult} /> : null}
+      {machineResult ? <MachineResultBox result={machineResult} /> : null}
 
       {summary ? (
         <>
@@ -305,37 +351,45 @@ export default function DashboardPage() {
   );
 }
 
-function PilotResultBox({ result }: { result: PilotRunResult }) {
-  const sync = result.sync;
-  const autopilot = result.autopilot?.run ?? null;
-
+function MachineResultBox({ result }: { result: WorkspaceMachineRunResponse }) {
   return (
-    <section className="simple-callout simple-callout--pilot">
+    <section className={`machine-result machine-result--${result.status}`}>
       <div>
-        <strong>TENNET a termine son passage automatique</strong>
-        <p>Il a traite ce qui etait faisable, et bloque ce qui demande une condition manquante.</p>
+        <strong>TENNET a termine son passage</strong>
+        <p>Destinataire Uber configure : {result.recipient_email}. Les conditions non remplies restent visibles.</p>
       </div>
       <div className="simple-pilot-grid">
         <div className="detail-item">
-          <span>Emails analyses</span>
-          <strong>{sync ? sync.analyzed_messages : 0}</strong>
+          <span>Etapes</span>
+          <strong>{result.stages.length}</strong>
         </div>
         <div className="detail-item">
-          <span>Decisions appliquees</span>
-          <strong>{sync ? sync.applied_reviews : 0}</strong>
+          <span>Cree</span>
+          <strong>{sumStages(result, "created_count")}</strong>
         </div>
         <div className="detail-item">
           <span>Envoyes</span>
-          <strong>{(sync?.autopilot_sent_count ?? 0) + (autopilot?.sent_count ?? 0)}</strong>
+          <strong>{sumStages(result, "sent_count")}</strong>
         </div>
         <div className="detail-item">
-          <span>Bloques</span>
-          <strong>{(sync?.autopilot_skipped_count ?? 0) + (autopilot?.skipped_count ?? 0)}</strong>
+          <span>A exploiter</span>
+          <strong>{sumStages(result, "skipped_count") + sumStages(result, "failed_count")}</strong>
         </div>
       </div>
-      {result.warnings.length > 0 ? (
+      <div className="machine-stage-list">
+        {result.stages.map((stage) => (
+          <article key={stage.name} className={`machine-stage machine-stage--${stage.status}`}>
+            <strong>{stageLabel(stage.name)}</strong>
+            <span>{stageStatusLabel(stage.status)}</span>
+            <small>
+              {stage.processed_count} traite(s), {stage.created_count} cree(s), {stage.sent_count} envoye(s)
+            </small>
+          </article>
+        ))}
+      </div>
+      {machineWarnings(result).length > 0 ? (
         <div className="chip-list">
-          {result.warnings.map((warning) => (
+          {machineWarnings(result).map((warning) => (
             <span key={warning} className="chip">
               {warning}
             </span>
@@ -344,6 +398,37 @@ function PilotResultBox({ result }: { result: PilotRunResult }) {
       ) : null}
     </section>
   );
+}
+
+function sumStages(result: WorkspaceMachineRunResponse, key: "created_count" | "sent_count" | "skipped_count" | "failed_count") {
+  return result.stages.reduce((total, stage) => total + stage[key], 0);
+}
+
+function machineWarnings(result: WorkspaceMachineRunResponse): string[] {
+  return result.stages.flatMap((stage) => [...stage.warnings, ...stage.errors]);
+}
+
+function stageLabel(name: string): string {
+  const labels: Record<string, string> = {
+    deductions: "Deductions",
+    claim_orders: "Dossiers",
+    drafts: "Brouillons",
+    followups: "Relances",
+    appeals: "Appels",
+    gmail_sync: "Gmail",
+    autopilot: "AutoPilot",
+  };
+  return labels[name] ?? name;
+}
+
+function stageStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    completed: "termine",
+    skipped: "non requis",
+    warning: "a verifier",
+    failed: "erreur",
+  };
+  return labels[status] ?? status;
 }
 
 function NextActionsGrid({ nextActions }: { nextActions: WorkspaceNextActionsResponse }) {
@@ -381,11 +466,4 @@ function countNextActions(nextActions: WorkspaceNextActionsResponse): number {
 function formatPercent(value: string | number | null): string {
   const numericValue = typeof value === "number" ? value : Number(value ?? 0);
   return `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(numericValue * 100)} %`;
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return "condition non remplie";
 }

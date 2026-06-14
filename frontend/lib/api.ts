@@ -1277,6 +1277,36 @@ export type WorkspaceNextActionsResponse = {
   high_value: WorkspaceAction[];
 };
 
+export type WorkspaceMachineTrigger = "manual" | "smart_import" | "refunds" | "cancellations";
+
+export type WorkspaceMachineRunPayload = {
+  trigger?: WorkspaceMachineTrigger;
+  restaurant_id?: number | null;
+  smart_import_batch_id?: number | null;
+  sync_gmail?: boolean;
+  run_autopilot?: boolean;
+};
+
+export type WorkspaceMachineStage = {
+  name: string;
+  status: "completed" | "skipped" | "warning" | "failed";
+  processed_count: number;
+  created_count: number;
+  sent_count: number;
+  skipped_count: number;
+  failed_count: number;
+  warnings: string[];
+  errors: string[];
+};
+
+export type WorkspaceMachineRunResponse = {
+  status: "completed" | "warning" | "failed";
+  trigger: WorkspaceMachineTrigger;
+  recipient_email: string;
+  stages: WorkspaceMachineStage[];
+  next_actions: WorkspaceNextActionsResponse;
+};
+
 export type SmartImportFilePreview = {
   id: number;
   original_filename: string;
@@ -2501,6 +2531,8 @@ export const api = {
   getRecoveryActions: (filters: RecoveryFilters = {}) =>
     request<RecoveryActionsResponse>(`/v1/recovery/actions${buildQuery(filters)}`),
   getWorkspaceNextActions: () => request<WorkspaceNextActionsResponse>("/v1/workspace/next-actions"),
+  runWorkspaceMachine: (payload: WorkspaceMachineRunPayload = {}) =>
+    postJson<WorkspaceMachineRunResponse, WorkspaceMachineRunPayload>("/v1/workspace/machine/run", payload),
   previewSmartImport: (files: File[]) => {
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file));

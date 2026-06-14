@@ -1847,6 +1847,37 @@ class WorkspaceNextActionsResponse(BaseModel):
     high_value: list[WorkspaceAction] = Field(default_factory=list)
 
 
+WorkspaceMachineTrigger = Literal["manual", "smart_import", "refunds", "cancellations"]
+
+
+class WorkspaceMachineRunRequest(BaseModel):
+    trigger: WorkspaceMachineTrigger = "manual"
+    restaurant_id: int | None = None
+    smart_import_batch_id: int | None = None
+    sync_gmail: bool = True
+    run_autopilot: bool = True
+
+
+class WorkspaceMachineStage(BaseModel):
+    name: str
+    status: Literal["completed", "skipped", "warning", "failed"]
+    processed_count: int = 0
+    created_count: int = 0
+    sent_count: int = 0
+    skipped_count: int = 0
+    failed_count: int = 0
+    warnings: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
+class WorkspaceMachineRunResponse(BaseModel):
+    status: Literal["completed", "warning", "failed"]
+    trigger: WorkspaceMachineTrigger
+    recipient_email: str
+    stages: list[WorkspaceMachineStage]
+    next_actions: WorkspaceNextActionsResponse
+
+
 class SmartImportFilePreviewRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
