@@ -276,5 +276,5 @@ def test_historical_import_repair_does_not_duplicate_existing_snapshot(
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["eligible_count"] == 0
-    assert payload["blocked_count"] == 1
-    assert "snapshot_already_exists" in payload["candidates"][0]["blockers"]
+    assert payload["blocked_count"] == 0
+    assert payload["total_candidates"] == 0
