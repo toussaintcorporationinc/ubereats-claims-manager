@@ -1,5 +1,6 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 const TOKEN_STORAGE_KEY = "ubereats_claims_manager_token";
+const REFRESH_TOKEN_STORAGE_KEY = "ubereats_claims_manager_refresh_token";
 const SESSION_EXPIRED_STORAGE_KEY = "tennet_session_expired_message";
 
 export const SESSION_EXPIRED_MESSAGE = "Votre session a expiré. Veuillez vous reconnecter.";
@@ -1899,6 +1900,7 @@ export type User = {
 
 export type TokenResponse = {
   access_token: string;
+  refresh_token: string;
   token_type: "bearer";
   user: User;
 };
@@ -2091,11 +2093,26 @@ export function setStoredToken(token: string): void {
   window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 
+export function getStoredRefreshToken(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  return window.localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+}
+
+export function setStoredRefreshToken(token: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, token);
+}
+
 export function clearStoredToken(): void {
   if (typeof window === "undefined") {
     return;
   }
   window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+  window.localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
   window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 
@@ -2123,10 +2140,41 @@ function handleUnauthorizedResponse(): void {
 }
 
 function shouldHandleUnauthorized(path: string): boolean {
-  return !path.startsWith("/v1/auth/login") && !path.startsWith("/v1/auth/register");
+  return !path.startsWith("/v1/auth/login") && !path.startsWith("/v1/auth/register") && !path.startsWith("/v1/auth/refresh");
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+let refreshPromise: Promise<string | null> | null = null;
+
+async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = getStoredRefreshToken();
+  if (!refreshToken) {
+    return null;
+  }
+  if (!refreshPromise) {
+    refreshPromise = fetch(`${API_BASE_URL}/v1/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          return null;
+        }
+        const payload = (await response.json()) as TokenResponse;
+        setStoredToken(payload.access_token);
+        setStoredRefreshToken(payload.refresh_token);
+        return payload.access_token;
+      })
+      .catch(() => null)
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return refreshPromise;
+}
+
+async function request<T>(path: string, init: RequestInit = {}, retryOnUnauthorized = true): Promise<T> {
   const token = getStoredToken();
   const isFormData = init.body instanceof FormData;
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -2143,6 +2191,12 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!response.ok) {
     if (response.status === 401 && shouldHandleUnauthorized(path)) {
+      if (retryOnUnauthorized) {
+        const refreshedToken = await refreshAccessToken();
+        if (refreshedToken) {
+          return request<T>(path, init, false);
+        }
+      }
       handleUnauthorizedResponse();
     }
     throw new ApiError(response.status, payload);
@@ -2212,7 +2266,7 @@ function buildQuery(filters: Record<string, string | number | boolean | null | u
   return query ? `?${query}` : "";
 }
 
-async function downloadBlob(path: string): Promise<Blob> {
+async function downloadBlob(path: string, retryOnUnauthorized = true): Promise<Blob> {
   const token = getStoredToken();
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
@@ -2224,6 +2278,12 @@ async function downloadBlob(path: string): Promise<Blob> {
   if (!response.ok) {
     const payload = contentType.includes("application/json") ? await response.json() : await response.text();
     if (response.status === 401 && shouldHandleUnauthorized(path)) {
+      if (retryOnUnauthorized) {
+        const refreshedToken = await refreshAccessToken();
+        if (refreshedToken) {
+          return downloadBlob(path, false);
+        }
+      }
       handleUnauthorizedResponse();
     }
     throw new ApiError(response.status, payload);
@@ -2235,11 +2295,13 @@ export const api = {
   login: async (payload: LoginPayload) => {
     const response = await postJson<TokenResponse, LoginPayload>("/v1/auth/login", payload);
     setStoredToken(response.access_token);
+    setStoredRefreshToken(response.refresh_token);
     return response;
   },
   registerOwner: async (payload: RegisterOwnerPayload) => {
     const response = await postJson<TokenResponse, RegisterOwnerPayload>("/v1/auth/register", payload);
     setStoredToken(response.access_token);
+    setStoredRefreshToken(response.refresh_token);
     return response;
   },
   getMe: () => request<User>("/v1/auth/me"),

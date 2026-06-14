@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -20,6 +21,8 @@ from app.services.customer_refund_dispute_service import create_claim_orders_bul
 from app.services.email_provider import EmailProvider, EmailProviderError
 from app.services.followup_policy_service import FOLLOWUP_ELIGIBLE_STATUSES, FollowUpPolicyService
 from app.services.gmail_inbound_sync_service import GmailInboundSyncService
+from app.services.historical_restaurant_reclassification_service import HistoricalRestaurantReclassificationService
+from app.services.historical_uber_reporting_repair_service import HistoricalUberReportingRepairService
 from app.services.workspace_action_service import WorkspaceActionService
 
 
@@ -44,6 +47,8 @@ class WorkspaceMachineService:
             raise WorkspaceMachineError("Restaurant access denied", 403)
 
         stages = [
+            self.stage("historical_reclassification", lambda: self.reclassify_historical_restaurants(payload.restaurant_id)),
+            self.stage("historical_import_repair", lambda: self.repair_historical_import_rows(payload.restaurant_id)),
             self.stage("deductions", lambda: self.detect_customer_refunds(payload.restaurant_id)),
             self.stage("claim_orders", lambda: self.create_customer_refund_claim_orders(payload.restaurant_id)),
             self.stage("drafts", lambda: self.create_customer_refund_drafts(payload.restaurant_id)),
@@ -102,6 +107,58 @@ class WorkspaceMachineService:
             processed_count=result.detected_count + result.needs_evidence_count + result.manual_review_count,
             created_count=result.detected_count,
             warnings=result.errors,
+        )
+
+    def reclassify_historical_restaurants(self, restaurant_id: int | None) -> WorkspaceMachineStage:
+        if self.current_user.role != "owner":
+            return WorkspaceMachineStage(
+                name="historical_reclassification",
+                status="skipped",
+                warnings=["owner_required_for_historical_cleanup"],
+            )
+        result = HistoricalRestaurantReclassificationService().apply(
+            self.db,
+            self.current_user,
+            restaurant_id=restaurant_id,
+            min_confidence=Decimal("0.90"),
+            limit=5000,
+        )
+        blocked_count = int(result.get("blocked_count", 0))
+        moved_count = int(result.get("moved_count", 0))
+        warnings = [f"{blocked_count}_historical_case(s)_need_manual_review"] if blocked_count else []
+        return WorkspaceMachineStage(
+            name="historical_reclassification",
+            status="warning" if blocked_count else "completed",
+            processed_count=int(result.get("total_candidates", 0)),
+            created_count=moved_count,
+            skipped_count=int(result.get("skipped_count", 0)) + blocked_count,
+            warnings=warnings,
+        )
+
+    def repair_historical_import_rows(self, restaurant_id: int | None) -> WorkspaceMachineStage:
+        if self.current_user.role != "owner":
+            return WorkspaceMachineStage(
+                name="historical_import_repair",
+                status="skipped",
+                warnings=["owner_required_for_import_repair"],
+            )
+        result = HistoricalUberReportingRepairService().apply(
+            self.db,
+            self.current_user,
+            restaurant_id=restaurant_id,
+            min_confidence=Decimal("0.90"),
+            limit=10000,
+        )
+        blocked_count = int(result.get("blocked_count", 0))
+        repaired_count = int(result.get("repaired_count", 0))
+        warnings = [f"{blocked_count}_import_row(s)_need_manual_review"] if blocked_count else []
+        return WorkspaceMachineStage(
+            name="historical_import_repair",
+            status="warning" if blocked_count else "completed",
+            processed_count=int(result.get("scanned_count", 0)),
+            created_count=repaired_count,
+            skipped_count=int(result.get("skipped_count", 0)) + blocked_count,
+            warnings=warnings,
         )
 
     def create_customer_refund_claim_orders(self, restaurant_id: int | None) -> WorkspaceMachineStage:

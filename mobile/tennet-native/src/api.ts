@@ -15,6 +15,7 @@ export type User = {
 
 export type Session = {
   access_token: string;
+  refresh_token: string;
   token_type: string;
   user: User;
 };
@@ -202,8 +203,45 @@ export async function login(email: string, password: string): Promise<Session> {
   return session;
 }
 
+let refreshPromise: Promise<Session | null> | null = null;
+
+async function refreshSession(session: Session | null): Promise<Session | null> {
+  if (!session?.refresh_token) {
+    return null;
+  }
+  if (!refreshPromise) {
+    refreshPromise = fetch(`${API_BASE_URL}/v1/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: session.refresh_token }),
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          return null;
+        }
+        const refreshed = (await response.json()) as Session;
+        await saveSession(refreshed);
+        return refreshed;
+      })
+      .catch(() => null)
+      .finally(() => {
+        refreshPromise = null;
+      });
+  }
+  return refreshPromise;
+}
+
 export async function request<T>(path: string, init: RequestInit = {}, session?: Session | null): Promise<T> {
   const activeSession = session === undefined ? await loadSession() : session;
+  return requestWithSession<T>(path, init, activeSession, true);
+}
+
+async function requestWithSession<T>(
+  path: string,
+  init: RequestInit = {},
+  activeSession: Session | null,
+  retryOnUnauthorized: boolean,
+): Promise<T> {
   const headers = new Headers(init.headers);
   if (!headers.has("Content-Type") && init.body && typeof init.body === "string") {
     headers.set("Content-Type", "application/json");
@@ -219,6 +257,13 @@ export async function request<T>(path: string, init: RequestInit = {}, session?:
   const text = await response.text();
   const payload = text ? safeJson(text) : null;
   if (!response.ok) {
+    if (response.status === 401 && retryOnUnauthorized) {
+      const refreshed = await refreshSession(activeSession);
+      if (refreshed) {
+        return requestWithSession<T>(path, init, refreshed, false);
+      }
+      await clearSession();
+    }
     const detail = payload && typeof payload === "object" && "detail" in payload ? String(payload.detail) : response.statusText;
     throw new Error(detail || `HTTP ${response.status}`);
   }

@@ -189,6 +189,60 @@ def test_historical_import_repair_does_not_guess_unknown_restaurant(
     assert "missing_target_restaurant" in payload["candidates"][0]["blockers"]
 
 
+def test_historical_import_repair_finds_eligible_rows_after_blocked_preview_limit(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    _krousty, asian = create_restaurants(db_session)
+    batch = UberReportingImportBatch(
+        uploaded_by_user_id=1,
+        original_filename="bulk.csv",
+        report_type="orders_report",
+        file_type="csv",
+        status="partially_imported",
+        total_rows=1002,
+        invalid_rows=1002,
+    )
+    db_session.add(batch)
+    db_session.flush()
+    for index in range(1001):
+        db_session.add(
+            UberReportingImportRow(
+                batch_id=batch.id,
+                row_number=index + 2,
+                raw_data={"store_name": "Unknown Restaurant", "order_id": f"BLOCKED-{index}", "amount": "10.00"},
+                status="invalid",
+                errors=["missing_uber_store_id"],
+                warnings=[],
+            )
+        )
+    db_session.add(
+        UberReportingImportRow(
+            batch_id=batch.id,
+            row_number=1004,
+            raw_data={
+                "store_name": "Asian Passion",
+                "order_id": "UBER-AFTER-BLOCKED",
+                "status": "cancelled",
+                "amount": "18.00",
+                "currency": "EUR",
+            },
+            status="invalid",
+            errors=["missing_uber_store_id"],
+            warnings=[],
+        )
+    )
+    db_session.commit()
+
+    response = client.post("/v1/uber/historical-import-repair/preview", json={})
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["eligible_count"] == 1
+    assert payload["blocked_count"] == 1000
+    assert any(candidate["target_restaurant_id"] == asian.id for candidate in payload["candidates"])
+
+
 def test_historical_import_repair_apply_requires_confirm(client: TestClient, db_session: Session) -> None:
     create_restaurants(db_session)
     create_batch_with_row(

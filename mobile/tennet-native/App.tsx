@@ -288,14 +288,16 @@ function LoginScreen({ onLoggedIn }: { onLoggedIn: (session: Session) => void })
 function FullTennetScreen({ session }: { session: Session }) {
   const injectedAuth = useMemo(() => {
     const token = JSON.stringify(session.access_token);
+    const refreshToken = JSON.stringify(session.refresh_token);
     return `
       (function() {
         window.localStorage.setItem("ubereats_claims_manager_token", ${token});
+        window.localStorage.setItem("ubereats_claims_manager_refresh_token", ${refreshToken});
         window.sessionStorage.removeItem("ubereats_claims_manager_token");
         true;
       })();
     `;
-  }, [session.access_token]);
+  }, [session.access_token, session.refresh_token]);
 
   const shouldStartLoad = (request: { url: string }) => {
     const url = request.url;

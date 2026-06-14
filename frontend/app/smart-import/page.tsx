@@ -594,6 +594,8 @@ function isExactDuplicate(file: { status?: string; destination_type?: string | n
 
 function stageLabel(name: string): string {
   const labels: Record<string, string> = {
+    historical_reclassification: "Restaurants corriges",
+    historical_import_repair: "Imports repares",
     deductions: "Deductions",
     claim_orders: "Dossiers",
     drafts: "Brouillons",

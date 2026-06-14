@@ -52,8 +52,24 @@ def create_access_token(subject: str, extra_claims: dict[str, Any] | None = None
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=JWT_ALGORITHM)
 
 
+def create_refresh_token(subject: str, extra_claims: dict[str, Any] | None = None) -> str:
+    settings = get_settings()
+    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expire_days)
+    payload: dict[str, Any] = {"sub": subject, "exp": expires_at, "purpose": "refresh"}
+    if extra_claims:
+        payload.update(extra_claims)
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=JWT_ALGORITHM)
+
+
 def decode_access_token(token: str) -> dict[str, Any]:
     try:
         return jwt.decode(token, get_settings().jwt_secret_key, algorithms=[JWT_ALGORITHM])
     except InvalidTokenError as exc:
         raise ValueError("Invalid access token") from exc
+
+
+def decode_refresh_token(token: str) -> dict[str, Any]:
+    payload = decode_access_token(token)
+    if payload.get("purpose") != "refresh":
+        raise ValueError("Invalid refresh token")
+    return payload

@@ -11,6 +11,7 @@ import RecoveryActionCard from "@/components/RecoveryActionCard";
 import StatCard from "@/components/StatCard";
 import StatusBadge from "@/components/StatusBadge";
 import { useAuth } from "@/lib/auth";
+import { notifyWorkspaceMachineFinished, prepareFinishNotification } from "@/lib/tennetNotifications";
 import {
   api,
   type DashboardSummary,
@@ -69,18 +70,22 @@ export default function DashboardPage() {
     }
     autoPassageStarted.current = true;
     window.sessionStorage.setItem(storageKey, String(now));
-    void runTennetPilot();
+    void runTennetPilot(false);
   }, [canRunRecoveryMachine, loading]);
 
-  async function runTennetPilot() {
+  async function runTennetPilot(askNotificationPermission = true) {
     setPilotRunning(true);
     setPilotError(null);
     setMachineResult(null);
 
     try {
+      if (askNotificationPermission) {
+        await prepareFinishNotification();
+      }
       const result = await api.runWorkspaceMachine({ trigger: "manual", sync_gmail: true, run_autopilot: true });
       setMachineResult(result);
       setNextActions(result.next_actions);
+      notifyWorkspaceMachineFinished(result);
       await loadDashboard();
     } catch (apiError) {
       setPilotError(apiError);
@@ -98,6 +103,7 @@ export default function DashboardPage() {
     setPilotError(null);
     setMachineResult(null);
     try {
+      await prepareFinishNotification();
       const preview = await api.previewSmartImport(homeFiles);
       const decisions: SmartImportFileDecision[] = preview.files.map((file) => ({
         file_id: file.id,
@@ -114,6 +120,7 @@ export default function DashboardPage() {
       });
       setMachineResult(result);
       setNextActions(result.next_actions);
+      notifyWorkspaceMachineFinished(result);
       setHomeFiles([]);
       await loadDashboard();
     } catch (apiError) {
@@ -532,6 +539,8 @@ function machineWarnings(result: WorkspaceMachineRunResponse): string[] {
 
 function stageLabel(name: string): string {
   const labels: Record<string, string> = {
+    historical_reclassification: "Restaurants corriges",
+    historical_import_repair: "Imports repares",
     deductions: "Deductions",
     claim_orders: "Dossiers",
     drafts: "Brouillons",

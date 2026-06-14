@@ -32,6 +32,7 @@ REPAIR_LIMIT_DEFAULT = 1000
 REPAIR_LIMIT_MAX = 10000
 REPAIR_MIN_CONFIDENCE = Decimal("0.85")
 REPAIRABLE_SOURCE_STATUSES = {"invalid", "skipped", "duplicate", "warning", "valid"}
+REPAIR_BLOCKED_PREVIEW_LIMIT = 1000
 
 
 @dataclass(slots=True)
@@ -228,12 +229,20 @@ class HistoricalUberReportingRepairService:
 
         candidates: list[HistoricalImportRepairCandidate] = []
         scanned = 0
+        eligible_count = 0
+        blocked_preview_count = 0
         for row, batch in db.execute(statement).all():
             scanned += 1
             candidate = self.build_candidate(db, current_user, row, batch, restaurant_id, min_confidence)
             if candidate is not None:
-                candidates.append(candidate)
-            if len(candidates) >= bounded_limit:
+                if candidate.blockers:
+                    if blocked_preview_count < min(REPAIR_BLOCKED_PREVIEW_LIMIT, bounded_limit):
+                        candidates.append(candidate)
+                        blocked_preview_count += 1
+                else:
+                    candidates.append(candidate)
+                    eligible_count += 1
+            if eligible_count >= bounded_limit:
                 break
         return candidates, scanned
 
