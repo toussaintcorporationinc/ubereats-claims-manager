@@ -123,7 +123,11 @@ def workspace_action_type(action: RecoveryAction) -> str:
 
 def action_description(action: RecoveryAction) -> str:
     if action.action_type == "upload_evidence":
-        return "Preuve attendue pour debloquer le dossier."
+        if action.case_type == "customer_refund_dispute":
+            return "Preuve attendue pour une contestation de remboursement Uber."
+        if "remboursement" in action.label.lower():
+            return "Preuve attendue pour une contestation de remboursement Uber."
+        return "Preuve attendue pour une contestation d'annulation Uber."
     if action.case_type == "customer_refund_dispute":
         return "Deduction Uber a verifier avec preuves avant contestation."
     if action.case_type == "appeal_workflow":

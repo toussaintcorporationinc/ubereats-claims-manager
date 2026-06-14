@@ -280,7 +280,7 @@ class RecoveryCockpitService:
                 priority=task.priority,
                 amount=money(task.order.order_amount if task.order else None),
                 due_at=task.due_at,
-                label=task.title,
+                label=evidence_task_action_label(task),
                 url=f"/evidence-tasks/{task.id}",
             )
             for task in tasks
@@ -531,16 +531,40 @@ def next_action_for_stage(stage: str) -> str | None:
 
 def customer_refund_action(dispute: UberCustomerRefundDispute) -> tuple[str, str, str]:
     if dispute.claim_order_id is None:
-        return "create_claim_order", "Creer dossier TENNET", "high"
+        return "create_claim_order", f"Creer dossier {customer_refund_short_label(dispute.dispute_type)}", "high"
     if dispute.evidence_status in {"missing", "partial"}:
-        return "upload_evidence", "Completer les preuves", "high"
+        return "upload_evidence", f"Preuves {customer_refund_short_label(dispute.dispute_type)} a completer", "high"
     if dispute.dispute_email_draft_id is None and dispute.evidence_status in {"complete", "not_required"}:
-        return "create_draft", "Creer brouillon interne", "normal"
+        return "create_draft", f"Preparer contestation {customer_refund_short_label(dispute.dispute_type)}", "normal"
     if dispute.provider_draft_id is None and dispute.dispute_email_draft_id is not None:
-        return "create_gmail_draft", "Creer brouillon Gmail", "normal"
+        return "create_gmail_draft", f"Creer Gmail {customer_refund_short_label(dispute.dispute_type)}", "normal"
     if dispute.status in {"sent", "payment_to_verify", "manual_review"}:
-        return "process_response", "Traiter la decision Uber", "normal"
+        return "process_response", f"Traiter reponse {customer_refund_short_label(dispute.dispute_type)}", "normal"
     return "manual_review", "Revue manuelle", "normal"
+
+
+def evidence_task_action_label(task: EvidenceRequestTask) -> str:
+    if task.customer_refund_dispute_id:
+        return "Preuves remboursement a completer"
+    if task.reconciliation_result_id:
+        return "Preuves annulation a completer"
+    if task.order and task.order.loss_type == "customer_refund_dispute":
+        return "Preuves remboursement a completer"
+    return "Preuves annulation a completer"
+
+
+def customer_refund_short_label(dispute_type: str) -> str:
+    labels = {
+        "order_not_received": "commande non recue",
+        "missing_item": "article manquant",
+        "incorrect_item": "mauvaise commande",
+        "quality_issue": "qualite",
+        "order_error_adjustment": "ajustement Uber",
+        "chargeback": "chargeback",
+        "customer_refund": "remboursement",
+        "unknown": "remboursement a verifier",
+    }
+    return labels.get(dispute_type, "remboursement")
 
 
 def claimable_amount(amount: Decimal, stage: str, recovered: Decimal, refused: Decimal) -> Decimal:
