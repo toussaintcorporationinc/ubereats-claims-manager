@@ -57,6 +57,68 @@ const warningStatuses = new Set([
 ]);
 const closedStatuses = new Set(["refused", "closed", "inactive", "failed", "cancelled", "invalid", "skipped", "ignored", "low"]);
 
+const statusLabels: Record<string, string> = {
+  accepted: "Accepte",
+  active: "Actif",
+  already_claimed: "Deja reclame",
+  analyzed: "Analyse",
+  appeal_needed: "Appel a faire",
+  appeal_sent: "Appel envoye",
+  auto_attached: "Attache auto",
+  cancelled: "Annule",
+  closed: "Clos",
+  compensated: "Compense",
+  completed: "Termine",
+  customer_refund: "Remboursement client",
+  detected: "Detecte",
+  draft: "Brouillon",
+  draft_created: "Brouillon cree",
+  draft_email_created: "Brouillon cree",
+  draft_needed: "Brouillon a creer",
+  escalated: "Escalade",
+  evidence: "Preuve",
+  evidence_needed: "Preuve a fournir",
+  evidence_ready: "Preuves pretes",
+  evidence_requested: "Preuves demandees",
+  failed: "Echec",
+  followup_needed: "Relance a faire",
+  gmail_draft_created: "Brouillon Gmail",
+  gmail_draft_needed: "Brouillon Gmail a creer",
+  high: "Urgent",
+  ignored: "Ignore",
+  information_requested: "Information demandee",
+  invalid: "Invalide",
+  linked: "Lie",
+  low: "Faible",
+  manual_review: "A verifier",
+  missing_evidence: "Preuves manquantes",
+  needs_evidence: "Preuves requises",
+  normal: "Normal",
+  not_compensated: "Non compense",
+  parsed: "Pret a verifier",
+  partially_compensated: "Partiel",
+  payment_confirmed: "Paye",
+  payment_to_verify: "Paiement a verifier",
+  pending: "En attente",
+  provider_draft_created: "Brouillon fournisseur",
+  ready_to_send: "Pret a envoyer",
+  refused: "Refuse",
+  response_received: "Reponse recue",
+  running: "En cours",
+  send_requested: "Envoi demande",
+  sent: "Envoye",
+  skipped: "Ignore",
+  success: "OK",
+  under_appeal: "Appel en cours",
+  uber_reporting: "Rapport Uber",
+  unlinked: "Non lie",
+  unreviewed: "A verifier",
+  unknown: "A verifier",
+  uploaded: "Upload fait",
+  valid: "Valide",
+  zip: "Archive ZIP",
+};
+
 export default function StatusBadge({ status }: { status: string }) {
   const tone = positiveStatuses.has(status)
     ? "positive"
@@ -66,5 +128,5 @@ export default function StatusBadge({ status }: { status: string }) {
         ? "closed"
         : "neutral";
 
-  return <span className={`status-badge status-badge--${tone}`}>{status.replaceAll("_", " ")}</span>;
+  return <span className={`status-badge status-badge--${tone}`}>{statusLabels[status] ?? status.replaceAll("_", " ")}</span>;
 }
