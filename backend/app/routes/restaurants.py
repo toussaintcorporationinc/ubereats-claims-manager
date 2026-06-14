@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import ensure_can_access_restaurant, get_accessible_restaurant_ids, get_current_user, require_owner
@@ -41,10 +41,13 @@ def _restaurant_audit_value(restaurant: Restaurant) -> dict:
 
 @router.get("", response_model=list[RestaurantRead])
 def list_restaurants(
+    include_inactive: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[Restaurant]:
     statement = select(Restaurant).order_by(Restaurant.id)
+    if not include_inactive:
+        statement = statement.where(Restaurant.active.is_(True))
     accessible_ids = get_accessible_restaurant_ids(db, current_user)
     if accessible_ids is not None:
         if not accessible_ids:
@@ -59,7 +62,31 @@ def create_restaurant(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_owner),
 ) -> Restaurant:
-    restaurant = Restaurant(**_normalise_restaurant_values(payload.model_dump()))
+    values = _normalise_restaurant_values(payload.model_dump())
+    archived_restaurant = db.scalar(
+        select(Restaurant).where(
+            func.lower(Restaurant.name) == values["name"].lower(),
+            Restaurant.active.is_(False),
+        )
+    )
+    if archived_restaurant is not None:
+        old_value = _restaurant_audit_value(archived_restaurant)
+        for field, value in values.items():
+            setattr(archived_restaurant, field, value)
+        add_audit_log(
+            db,
+            entity_type="restaurant",
+            entity_id=archived_restaurant.id,
+            action="restaurant.restored_from_create",
+            user_id=current_user.id,
+            old_value=old_value,
+            new_value=_restaurant_audit_value(archived_restaurant),
+        )
+        db.commit()
+        db.refresh(archived_restaurant)
+        return archived_restaurant
+
+    restaurant = Restaurant(**values)
     db.add(restaurant)
     db.flush()
     add_audit_log(
@@ -69,6 +96,57 @@ def create_restaurant(
         action="restaurant.created",
         user_id=current_user.id,
         new_value=_restaurant_audit_value(restaurant),
+    )
+    db.commit()
+    db.refresh(restaurant)
+    return restaurant
+
+
+@router.delete("/{restaurant_id}", response_model=RestaurantRead)
+def archive_restaurant(
+    restaurant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner),
+) -> Restaurant:
+    restaurant = db.get(Restaurant, restaurant_id)
+    if restaurant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found")
+    old_value = _restaurant_audit_value(restaurant)
+    restaurant.active = False
+    restaurant.autopilot_enabled = False
+    add_audit_log(
+        db,
+        entity_type="restaurant",
+        entity_id=restaurant.id,
+        action="restaurant.archived",
+        old_value=old_value,
+        new_value=_restaurant_audit_value(restaurant),
+        user_id=current_user.id,
+    )
+    db.commit()
+    db.refresh(restaurant)
+    return restaurant
+
+
+@router.post("/{restaurant_id}/restore", response_model=RestaurantRead)
+def restore_restaurant(
+    restaurant_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner),
+) -> Restaurant:
+    restaurant = db.get(Restaurant, restaurant_id)
+    if restaurant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found")
+    old_value = _restaurant_audit_value(restaurant)
+    restaurant.active = True
+    add_audit_log(
+        db,
+        entity_type="restaurant",
+        entity_id=restaurant.id,
+        action="restaurant.restored",
+        old_value=old_value,
+        new_value=_restaurant_audit_value(restaurant),
+        user_id=current_user.id,
     )
     db.commit()
     db.refresh(restaurant)

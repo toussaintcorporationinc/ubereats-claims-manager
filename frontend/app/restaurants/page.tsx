@@ -21,7 +21,7 @@ export default function RestaurantsPage() {
   useEffect(() => {
     async function loadData() {
       const [restaurantData, gmailData, uberData] = await Promise.all([
-        api.getRestaurants(),
+        api.getRestaurants({ include_inactive: true }),
         api.getGmailRestaurantMappings().catch(() => [] as GmailRestaurantMapping[]),
         api.getUberStoreMappings().catch(() => [] as UberStoreMapping[]),
       ]);
@@ -50,6 +50,35 @@ export default function RestaurantsPage() {
     }
   }
 
+  async function archiveRestaurant(restaurant: Restaurant) {
+    if (!window.confirm(`Retirer ${restaurant.name} des pages TENNET ? L'historique reste conserve.`)) {
+      return;
+    }
+    setUpdatingRestaurantId(restaurant.id);
+    setError(null);
+    try {
+      const updated = await api.archiveRestaurant(restaurant.id);
+      setRestaurants((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+    } catch (apiError) {
+      setError(apiError);
+    } finally {
+      setUpdatingRestaurantId(null);
+    }
+  }
+
+  async function restoreRestaurant(restaurant: Restaurant) {
+    setUpdatingRestaurantId(restaurant.id);
+    setError(null);
+    try {
+      const updated = await api.restoreRestaurant(restaurant.id);
+      setRestaurants((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+    } catch (apiError) {
+      setError(apiError);
+    } finally {
+      setUpdatingRestaurantId(null);
+    }
+  }
+
   if (loading) {
     return <LoadingState label="Chargement des restaurants" />;
   }
@@ -70,9 +99,9 @@ export default function RestaurantsPage() {
 
       <ApiError error={error} />
 
-      {restaurants.length > 0 ? (
+      {restaurants.filter((restaurant) => restaurant.active).length > 0 ? (
         <div className="restaurant-card-grid">
-          {restaurants.map((restaurant) => {
+          {restaurants.filter((restaurant) => restaurant.active).map((restaurant) => {
             const gmailMapping = gmailMappings.find((mapping) => mapping.restaurant_id === restaurant.id);
             const stores = uberMappings.filter((mapping) => mapping.restaurant_id === restaurant.id);
             return (
@@ -114,6 +143,14 @@ export default function RestaurantsPage() {
                       >
                         {restaurant.autopilot_enabled ? "Desactiver AutoPilot" : "Activer AutoPilot"}
                       </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={updatingRestaurantId === restaurant.id}
+                        onClick={() => void archiveRestaurant(restaurant)}
+                      >
+                        Retirer
+                      </button>
                     </>
                   ) : (
                     <span className="muted">Lecture seule</span>
@@ -124,8 +161,47 @@ export default function RestaurantsPage() {
           })}
         </div>
       ) : (
-        <EmptyState title="Aucun restaurant" />
+        <EmptyState title="Aucun restaurant actif" description="Cree un restaurant ou restaure un restaurant archive." />
       )}
+
+      {user?.role === "owner" && restaurants.some((restaurant) => !restaurant.active) ? (
+        <details className="simple-details">
+          <summary>Restaurants archives</summary>
+          <div className="restaurant-card-grid">
+            {restaurants
+              .filter((restaurant) => !restaurant.active)
+              .map((restaurant) => (
+                <article className="restaurant-card restaurant-card--archived" key={restaurant.id}>
+                  <div className="card-row">
+                    <div className="stack-sm">
+                      <h2>{restaurant.name}</h2>
+                      <span className="muted">Historique conserve, masque des pages operationnelles.</span>
+                    </div>
+                    <StatusBadge status="inactive" />
+                  </div>
+                  <div className="detail-grid detail-grid--compact">
+                    <DetailItem label="Adresse" value={restaurant.address ?? "-"} />
+                    <DetailItem label="Telephone" value={restaurant.phone_number ?? "-"} />
+                    <DetailItem label="Email restaurant" value={restaurant.sender_email} />
+                  </div>
+                  <div className="actions">
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={updatingRestaurantId === restaurant.id}
+                      onClick={() => void restoreRestaurant(restaurant)}
+                    >
+                      Restaurer
+                    </button>
+                    <Link href={`/restaurants/${restaurant.id}`} className="secondary-button">
+                      Modifier
+                    </Link>
+                  </div>
+                </article>
+              ))}
+          </div>
+        </details>
+      ) : null}
     </section>
   );
 }

@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AuditLog
+from app.models import AuditLog, ClaimOrder
 
 
 def auth_headers(token: str) -> dict[str, str]:
@@ -217,6 +217,71 @@ def test_owner_can_update_restaurant(unauthenticated_client: TestClient, db_sess
     assert audit_log is not None
     assert json.loads(audit_log.new_value or "{}")["phone_number"] == "+33123456789"
     assert json.loads(audit_log.new_value or "{}")["sender_email"] == "restauranta@example.com"
+
+
+def test_owner_can_archive_and_restore_restaurant_without_deleting_history(
+    unauthenticated_client: TestClient,
+    db_session: Session,
+) -> None:
+    owner = register_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner["access_token"], "Archive Test")
+    order = create_order(unauthenticated_client, owner["access_token"], restaurant["id"])
+
+    archive_response = unauthenticated_client.delete(
+        f"/v1/restaurants/{restaurant['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+
+    assert archive_response.status_code == 200
+    assert archive_response.json()["active"] is False
+    assert db_session.get(ClaimOrder, order["id"]) is not None
+
+    default_list = unauthenticated_client.get("/v1/restaurants", headers=auth_headers(owner["access_token"]))
+    assert [item["name"] for item in default_list.json()] == []
+
+    archived_list = unauthenticated_client.get(
+        "/v1/restaurants?include_inactive=true",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert archived_list.status_code == 200
+    assert archived_list.json()[0]["name"] == "Archive Test"
+    assert archived_list.json()[0]["active"] is False
+
+    restore_response = unauthenticated_client.post(
+        f"/v1/restaurants/{restaurant['id']}/restore",
+        json={},
+        headers=auth_headers(owner["access_token"]),
+    )
+
+    assert restore_response.status_code == 200
+    assert restore_response.json()["active"] is True
+
+
+def test_creating_archived_restaurant_restores_existing_record(unauthenticated_client: TestClient) -> None:
+    owner = register_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner["access_token"], "Restore Me")
+    archive_response = unauthenticated_client.delete(
+        f"/v1/restaurants/{restaurant['id']}",
+        headers=auth_headers(owner["access_token"]),
+    )
+    assert archive_response.status_code == 200
+
+    restore_response = unauthenticated_client.post(
+        "/v1/restaurants",
+        json={
+            "name": "Restore Me",
+            "sender_email": "new-claims@example.com",
+            "phone_number": "+33123456789",
+        },
+        headers=auth_headers(owner["access_token"]),
+    )
+
+    assert restore_response.status_code == 201
+    restored = restore_response.json()
+    assert restored["id"] == restaurant["id"]
+    assert restored["active"] is True
+    assert restored["sender_email"] == "new-claims@example.com"
+    assert restored["phone_number"] == "+33123456789"
 
 
 def test_manager_cannot_update_restaurant_settings(unauthenticated_client: TestClient) -> None:
