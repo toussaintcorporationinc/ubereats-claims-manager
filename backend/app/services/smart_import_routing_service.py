@@ -6,15 +6,22 @@ from io import BytesIO
 from typing import Any
 
 from fastapi import HTTPException, UploadFile, status
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
 
-from app.models import SmartImportPreviewBatch, SmartImportPreviewFile, User
+from app.core.auth import ensure_can_access_restaurant
+from app.models import SmartImportPreviewBatch, SmartImportPreviewFile, UberReportingImportBatch, UberReportingImportRow, User
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.bulk_evidence_import_service import create_multi_file_import, create_zip_import
+from app.services.evidence_ai_analysis_service import EvidenceAIAnalysisService
 from app.services.smart_import_classifier_service import mark_exact_duplicate_preview_files, resolve_preview_file_path
-from app.services.uber_reporting_import_service import REPORT_TYPES, create_uber_reporting_preview_from_content
+from app.services.uber_reporting_import_service import (
+    REPORT_TYPES,
+    confirm_uber_reporting_batch,
+    create_uber_reporting_preview_from_content,
+)
 
 
 @dataclass(frozen=True)
@@ -164,17 +171,34 @@ def route_uber_reporting_file(
         content=content,
         report_type=report_type,
     )
+    if decision.restaurant_id is not None:
+        apply_restaurant_override_to_reporting_batch(db, current_user, batch, decision.restaurant_id)
+    confirm_result = confirm_uber_reporting_batch(db, current_user, batch)
     preview_file.status = "routed"
     preview_file.destination_type = "uber_reporting_batch"
     preview_file.destination_id = batch.id
     preview_file.destination_url = f"/uber/reporting/{batch.id}"
+    set_processing_metadata(
+        preview_file,
+        processing_status=confirm_result["status"],
+        created_snapshots_count=confirm_result["created_snapshots_count"],
+        created_transactions_count=confirm_result["created_transactions_count"],
+        skipped_rows=confirm_result["skipped_rows"],
+        processing_errors=confirm_result["errors"],
+    )
     add_audit_log(
         db,
         entity_type="smart_import_preview_file",
         entity_id=preview_file.id,
-        action="smart_import_file.routed_uber_reporting",
+        action="smart_import_file.routed_uber_reporting_auto_confirmed",
         user_id=current_user.id,
-        new_value={"uber_reporting_batch_id": batch.id, "report_type": report_type},
+        new_value={
+            "uber_reporting_batch_id": batch.id,
+            "report_type": report_type,
+            "created_snapshots_count": confirm_result["created_snapshots_count"],
+            "created_transactions_count": confirm_result["created_transactions_count"],
+            "skipped_rows": confirm_result["skipped_rows"],
+        },
     )
     return result_payload(preview_file, "import_uber_reporting")
 
@@ -188,10 +212,19 @@ def route_evidence_zip_file(
     content = resolve_preview_file_path(preview_file).read_bytes()
     upload = upload_from_bytes(preview_file.original_filename, content, preview_file.mime_type)
     batch = create_zip_import(db, current_user, file=upload, restaurant_id=decision.restaurant_id)
+    analysis_result = analyze_evidence_batch_safely(db, current_user, batch)
     preview_file.status = "routed"
     preview_file.destination_type = "evidence_import_batch"
     preview_file.destination_id = batch.id
     preview_file.destination_url = f"/evidence-imports/{batch.id}"
+    set_processing_metadata(
+        preview_file,
+        processing_status=analysis_result.get("status") if analysis_result else batch.status,
+        analyzed_files_count=analysis_result.get("analyzed_files_count") if analysis_result else batch.analyzed_files_count,
+        auto_matched_count=analysis_result.get("auto_matched_count") if analysis_result else batch.auto_matched_count,
+        needs_review_count=analysis_result.get("needs_review_count") if analysis_result else batch.needs_review_count,
+        processing_errors=analysis_result.get("errors", []) if analysis_result else [],
+    )
     add_audit_log(
         db,
         entity_type="smart_import_preview_file",
@@ -214,12 +247,21 @@ def route_evidence_files_group(
         for preview_file, _decision in group
     ]
     batch = create_multi_file_import(db, current_user, files=uploads, restaurant_id=restaurant_id)
+    analysis_result = analyze_evidence_batch_safely(db, current_user, batch)
     results: list[dict[str, Any]] = []
     for preview_file, _decision in group:
         preview_file.status = "routed"
         preview_file.destination_type = "evidence_import_batch"
         preview_file.destination_id = batch.id
         preview_file.destination_url = f"/evidence-imports/{batch.id}"
+        set_processing_metadata(
+            preview_file,
+            processing_status=analysis_result.get("status") if analysis_result else batch.status,
+            analyzed_files_count=analysis_result.get("analyzed_files_count") if analysis_result else batch.analyzed_files_count,
+            auto_matched_count=analysis_result.get("auto_matched_count") if analysis_result else batch.auto_matched_count,
+            needs_review_count=analysis_result.get("needs_review_count") if analysis_result else batch.needs_review_count,
+            processing_errors=analysis_result.get("errors", []) if analysis_result else [],
+        )
         add_audit_log(
             db,
             entity_type="smart_import_preview_file",
@@ -240,7 +282,69 @@ def upload_from_bytes(filename: str, content: bytes, mime_type: str | None) -> U
     )
 
 
+def apply_restaurant_override_to_reporting_batch(
+    db: Session,
+    current_user: User,
+    batch: UberReportingImportBatch,
+    restaurant_id: int,
+) -> None:
+    ensure_can_access_restaurant(db, current_user, restaurant_id)
+    rows = db.scalars(
+        select(UberReportingImportRow)
+        .where(UberReportingImportRow.batch_id == batch.id)
+        .order_by(UberReportingImportRow.row_number)
+    ).all()
+    updated_rows = 0
+    for row in rows:
+        if not row.normalized_data or row.status == "duplicate":
+            continue
+        normalized_data = dict(row.normalized_data)
+        normalized_data["restaurant_id"] = restaurant_id
+        row.normalized_data = normalized_data
+        row.warnings = [warning for warning in row.warnings if warning != "unmapped_store"]
+        row.errors = [error for error in row.errors if error != "restaurant_access_denied"]
+        if row.status == "invalid" and not row.errors:
+            row.status = "warning" if row.warnings else "valid"
+        elif row.status == "warning" and not row.warnings:
+            row.status = "valid"
+        updated_rows += 1
+    if updated_rows:
+        add_audit_log(
+            db,
+            entity_type="uber_reporting_import_batch",
+            entity_id=batch.id,
+            action="smart_import.restaurant_override_applied",
+            user_id=current_user.id,
+            new_value={"restaurant_id": restaurant_id, "updated_rows": updated_rows},
+        )
+
+
+def analyze_evidence_batch_safely(db: Session, current_user: User, batch: Any) -> dict[str, Any] | None:
+    if batch.stored_files_count <= 0:
+        return None
+    try:
+        return EvidenceAIAnalysisService().analyze_batch(db, current_user, batch, provider="fake", limit=500)
+    except HTTPException as exc:
+        batch.error_message = f"Analyse locale non lancee: {exc.detail}"
+        add_audit_log(
+            db,
+            entity_type="evidence_import_batch",
+            entity_id=batch.id,
+            action="smart_import.evidence_analysis_skipped",
+            user_id=current_user.id,
+            new_value={"error": exc.detail},
+        )
+        return {"status": batch.status, "errors": [str(exc.detail)]}
+
+
+def set_processing_metadata(preview_file: SmartImportPreviewFile, **values: Any) -> None:
+    metadata = dict(preview_file.metadata_json or {})
+    metadata.update(values)
+    preview_file.metadata_json = metadata
+
+
 def result_payload(preview_file: SmartImportPreviewFile, action: str) -> dict[str, Any]:
+    metadata = preview_file.metadata_json or {}
     return {
         "file_id": preview_file.id,
         "original_filename": preview_file.original_filename,
@@ -248,6 +352,14 @@ def result_payload(preview_file: SmartImportPreviewFile, action: str) -> dict[st
         "destination_type": preview_file.destination_type,
         "destination_id": preview_file.destination_id,
         "destination_url": preview_file.destination_url,
+        "processing_status": metadata.get("processing_status"),
+        "created_snapshots_count": metadata.get("created_snapshots_count"),
+        "created_transactions_count": metadata.get("created_transactions_count"),
+        "analyzed_files_count": metadata.get("analyzed_files_count"),
+        "auto_matched_count": metadata.get("auto_matched_count"),
+        "needs_review_count": metadata.get("needs_review_count"),
+        "skipped_rows": metadata.get("skipped_rows"),
+        "processing_errors": metadata.get("processing_errors") or [],
     }
 
 

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import ApiError from "@/components/ApiError";
 import EmptyState from "@/components/EmptyState";
 import LoadingState from "@/components/LoadingState";
@@ -10,24 +10,81 @@ import RecoveryActionCard from "@/components/RecoveryActionCard";
 import StatCard from "@/components/StatCard";
 import StatusBadge from "@/components/StatusBadge";
 import { useAuth } from "@/lib/auth";
-import { api, type DashboardSummary, type WorkspaceNextActionsResponse, formatCurrency } from "@/lib/api";
+import {
+  api,
+  type AutopilotRunDetail,
+  type DashboardSummary,
+  type GmailInboundSyncResponse,
+  type WorkspaceNextActionsResponse,
+  formatCurrency,
+} from "@/lib/api";
+
+type PilotRunResult = {
+  sync: GmailInboundSyncResponse | null;
+  autopilot: AutopilotRunDetail | null;
+  warnings: string[];
+};
 
 export default function DashboardPage() {
   const { user } = useAuth();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [nextActions, setNextActions] = useState<WorkspaceNextActionsResponse | null>(null);
+  const [pilotResult, setPilotResult] = useState<PilotRunResult | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [pilotError, setPilotError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
+  const [pilotRunning, setPilotRunning] = useState(false);
+
+  const loadDashboard = useCallback(async () => {
+    const [summaryData, actionsData] = await Promise.all([api.getDashboardSummary(), api.getWorkspaceNextActions()]);
+    setSummary(summaryData);
+    setNextActions(actionsData);
+  }, []);
 
   useEffect(() => {
-    Promise.all([api.getDashboardSummary(), api.getWorkspaceNextActions()])
-      .then(([summaryData, actionsData]) => {
-        setSummary(summaryData);
-        setNextActions(actionsData);
-      })
+    loadDashboard()
       .catch(setError)
       .finally(() => setLoading(false));
-  }, []);
+  }, [loadDashboard]);
+
+  async function runTennetPilot() {
+    setPilotRunning(true);
+    setPilotError(null);
+    setPilotResult(null);
+
+    const warnings: string[] = [];
+    let sync: GmailInboundSyncResponse | null = null;
+    let autopilot: AutopilotRunDetail | null = null;
+
+    try {
+      try {
+        sync = await api.syncInboundGmail({
+          lookback_days: 30,
+          max_messages: 100,
+          analyze_responses: true,
+          apply_reviews: true,
+          run_autopilot_after_sync: true,
+        });
+      } catch (syncError) {
+        warnings.push(`Gmail bloque: ${errorMessage(syncError)}`);
+      }
+
+      try {
+        autopilot = await api.runAutopilot({ mode: "all", restaurant_id: null });
+      } catch (autopilotError) {
+        warnings.push(`AutoPilot bloque: ${errorMessage(autopilotError)}`);
+      }
+
+      if (!sync && !autopilot) {
+        setPilotError(new Error(warnings.join(" | ") || "TENNET n'a rien pu lancer."));
+      }
+
+      setPilotResult({ sync, autopilot, warnings });
+      await loadDashboard();
+    } finally {
+      setPilotRunning(false);
+    }
+  }
 
   if (loading) {
     return <LoadingState label="Chargement du dashboard" />;
@@ -49,22 +106,24 @@ export default function DashboardPage() {
         </div>
         <div className="simple-hero__actions">
           {canSeeBusinessMetrics ? (
-            <Link href="/smart-import" className="button">
-              Deposer des fichiers
+            <button type="button" className="button button--hero" disabled={pilotRunning} onClick={() => void runTennetPilot()}>
+              {pilotRunning ? "TENNET travaille" : "Faire bosser TENNET"}
+            </button>
+          ) : null}
+          {canSeeBusinessMetrics ? (
+            <Link href="/smart-import" className="secondary-button">
+              Deposer fichiers
             </Link>
           ) : null}
           <Link href="/evidence-tasks" className="secondary-button">
             Preuves
           </Link>
-          {canSeeBusinessMetrics ? (
-            <Link href="/recovery" className="secondary-button">
-              Recuperation
-            </Link>
-          ) : null}
         </div>
       </div>
 
       <ApiError error={error} />
+      <ApiError error={pilotError} />
+      {pilotResult ? <PilotResultBox result={pilotResult} /> : null}
 
       {summary ? (
         <>
@@ -246,6 +305,47 @@ export default function DashboardPage() {
   );
 }
 
+function PilotResultBox({ result }: { result: PilotRunResult }) {
+  const sync = result.sync;
+  const autopilot = result.autopilot?.run ?? null;
+
+  return (
+    <section className="simple-callout simple-callout--pilot">
+      <div>
+        <strong>TENNET a termine son passage automatique</strong>
+        <p>Il a traite ce qui etait faisable, et bloque ce qui demande une condition manquante.</p>
+      </div>
+      <div className="simple-pilot-grid">
+        <div className="detail-item">
+          <span>Emails analyses</span>
+          <strong>{sync ? sync.analyzed_messages : 0}</strong>
+        </div>
+        <div className="detail-item">
+          <span>Decisions appliquees</span>
+          <strong>{sync ? sync.applied_reviews : 0}</strong>
+        </div>
+        <div className="detail-item">
+          <span>Envoyes</span>
+          <strong>{(sync?.autopilot_sent_count ?? 0) + (autopilot?.sent_count ?? 0)}</strong>
+        </div>
+        <div className="detail-item">
+          <span>Bloques</span>
+          <strong>{(sync?.autopilot_skipped_count ?? 0) + (autopilot?.skipped_count ?? 0)}</strong>
+        </div>
+      </div>
+      {result.warnings.length > 0 ? (
+        <div className="chip-list">
+          {result.warnings.map((warning) => (
+            <span key={warning} className="chip">
+              {warning}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function NextActionsGrid({ nextActions }: { nextActions: WorkspaceNextActionsResponse }) {
   const actions = [
     ...nextActions.urgent,
@@ -281,4 +381,11 @@ function countNextActions(nextActions: WorkspaceNextActionsResponse): number {
 function formatPercent(value: string | number | null): string {
   const numericValue = typeof value === "number" ? value : Number(value ?? 0);
   return `${new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(numericValue * 100)} %`;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "condition non remplie";
 }

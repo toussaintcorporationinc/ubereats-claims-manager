@@ -48,18 +48,23 @@ export default function SmartImportPage() {
       const result = await api.previewSmartImport(files);
       setPreview(result);
       setConfirmResult(null);
-      setDecisions(
-        Object.fromEntries(
-          result.files.map((file) => [
-            file.id,
-            {
-              file_id: file.id,
-              action: file.recommended_action,
-              report_type: file.detected_report_type ?? "combined_report",
-              restaurant_id: null,
-            },
-          ]),
-        ),
+      const recommendedDecisions: Record<number, SmartImportFileDecision> = Object.fromEntries(
+        result.files.map((file) => [
+          file.id,
+          {
+            file_id: file.id,
+            action: file.recommended_action,
+            report_type: file.detected_report_type ?? "combined_report",
+            restaurant_id: null,
+          },
+        ]),
+      );
+      setDecisions(recommendedDecisions);
+      const confirmResponse = await api.confirmSmartImport(result.batch_preview_id, Object.values(recommendedDecisions));
+      setConfirmResult(confirmResponse);
+      setPreview((current) => (current ? { ...current, status: confirmResponse.status } : current));
+      setSuccess(
+        `TENNET a traite ${confirmResponse.routed_files.length} fichier(s), garde ${confirmResponse.manual_review_files.length} a verifier et ignore ${confirmResponse.ignored_files.length} doublon(s).`,
       );
     } catch (apiError) {
       setError(apiError);
@@ -92,7 +97,7 @@ export default function SmartImportPage() {
         <div className="heading-copy">
           <p className="eyebrow">Smart Import</p>
           <h1>Deposer sans renommer</h1>
-          <p>TENNET lit le contenu, propose la bonne destination, puis cree le workflow quand tu confirmes.</p>
+          <p>TENNET lit le contenu, classe les fichiers, applique les imports Uber surs et range les preuves.</p>
         </div>
       </div>
 
@@ -112,8 +117,8 @@ export default function SmartImportPage() {
         </article>
         <article className="smart-step">
           <span>3</span>
-          <strong>Tu confirmes</strong>
-          <p>TENNET cree l'import Uber ou l'import preuves, sans valider les lignes a ta place.</p>
+          <strong>TENNET traite</strong>
+          <p>Les rapports surs sont appliques. Les preuves sont rangees. Les doutes restent a verifier.</p>
         </article>
       </section>
 
@@ -144,14 +149,13 @@ export default function SmartImportPage() {
             <strong>Prochaine etape</strong>
             {hasDestination(confirmResult, "uber_reporting_batch") ? (
               <p>
-                Ouvre l'import Uber cree, verifie les lignes, puis confirme. C'est a ce moment-la seulement que TENNET
-                cree les commandes et transactions.
+                TENNET a cree les commandes/transactions possibles. Ouvre le detail seulement pour voir les lignes
+                bloquees ou les erreurs.
               </p>
             ) : null}
             {hasDestination(confirmResult, "evidence_import_batch") ? (
               <p>
-                Ouvre l'import preuves cree, lance l'analyse locale/fake si besoin, puis attache les preuves
-                manuellement aux dossiers proposes.
+                Les preuves sont rangees et analysees localement. Les rattachements douteux restent a verifier.
               </p>
             ) : null}
             {!hasDestination(confirmResult, "uber_reporting_batch") && !hasDestination(confirmResult, "evidence_import_batch") ? (
@@ -162,10 +166,45 @@ export default function SmartImportPage() {
             {confirmResult.routed_files.map((file) => (
               <article key={`${file.file_id}-${file.destination_type}`} className="premium-card">
                 <h3>{file.original_filename}</h3>
-                <p className="muted">{labelForDestination(file.destination_type)}</p>
+                <p className="muted">{labelForDestination(file)}</p>
+                <div className="detail-grid detail-grid--compact">
+                  {file.destination_type === "uber_reporting_batch" ? (
+                    <>
+                      <div className="detail-item">
+                        <span>Commandes</span>
+                        <strong>{file.created_snapshots_count ?? 0}</strong>
+                      </div>
+                      <div className="detail-item">
+                        <span>Transactions</span>
+                        <strong>{file.created_transactions_count ?? 0}</strong>
+                      </div>
+                      <div className="detail-item">
+                        <span>Bloquees</span>
+                        <strong>{file.skipped_rows ?? 0}</strong>
+                      </div>
+                    </>
+                  ) : null}
+                  {file.destination_type === "evidence_import_batch" ? (
+                    <>
+                      <div className="detail-item">
+                        <span>Analysees</span>
+                        <strong>{file.analyzed_files_count ?? 0}</strong>
+                      </div>
+                      <div className="detail-item">
+                        <span>Matches</span>
+                        <strong>{file.auto_matched_count ?? 0}</strong>
+                      </div>
+                      <div className="detail-item">
+                        <span>A verifier</span>
+                        <strong>{file.needs_review_count ?? 0}</strong>
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+                {file.processing_errors.length > 0 ? <p className="muted">A verifier : {file.processing_errors.join(", ")}</p> : null}
                 {file.destination_url ? (
                   <Link className="button" href={file.destination_url}>
-                    {file.destination_type === "uber_reporting_batch" ? "Ouvrir et confirmer" : "Ouvrir"}
+                    Ouvrir le detail
                   </Link>
                 ) : null}
               </article>
@@ -221,7 +260,7 @@ export default function SmartImportPage() {
         )}
         <div className="actions">
           <button type="button" className="button" onClick={handlePreview} disabled={loading || files.length === 0}>
-            {loading ? "Analyse" : "Analyser"}
+            {loading ? "TENNET travaille" : "Lancer TENNET"}
           </button>
           <button
             type="button"
@@ -239,15 +278,15 @@ export default function SmartImportPage() {
         </div>
       </section>
 
-      {preview ? (
+      {preview && !confirmResult ? (
         <section className="tool-panel">
           <div className="section-heading">
             <div>
               <h2>Ce que TENNET a compris</h2>
-              <p className="muted">Import temporaire #{preview.batch_preview_id}. Tu peux confirmer ou corriger.</p>
+              <p className="muted">Import #{preview.batch_preview_id}. TENNET a deja lance le traitement recommande.</p>
             </div>
             <button type="button" className="button" onClick={handleConfirm} disabled={confirming || preview.status === "confirmed"}>
-              {confirming ? "Creation" : "Confirmer et creer les imports"}
+              {confirming ? "Creation" : "Relancer avec corrections"}
             </button>
           </div>
           <div className="premium-card-grid">
@@ -313,11 +352,11 @@ export default function SmartImportPage() {
 
       <MobileActionBar>
         <button type="button" className="button" onClick={handlePreview} disabled={loading || files.length === 0}>
-          Analyser
+          Lancer
         </button>
-        {preview ? (
+        {preview && !confirmResult ? (
           <button type="button" className="secondary-button" onClick={handleConfirm} disabled={confirming || preview.status === "confirmed"}>
-            Creer imports
+            Corriger
           </button>
         ) : null}
       </MobileActionBar>
@@ -336,12 +375,14 @@ export default function SmartImportPage() {
   }
 }
 
-function labelForDestination(destinationType: string | null): string {
-  const labels: Record<string, string> = {
-    uber_reporting_batch: "Import Uber pret a verifier.",
-    evidence_import_batch: "Import de preuves pret a analyser.",
-  };
-  return destinationType ? (labels[destinationType] ?? destinationType) : "Workflow cree";
+function labelForDestination(file: SmartImportConfirmResponse["routed_files"][number]): string {
+  if (file.destination_type === "uber_reporting_batch") {
+    return `Rapport Uber applique (${file.processing_status ?? "traite"}).`;
+  }
+  if (file.destination_type === "evidence_import_batch") {
+    return `Preuves rangees et analysees (${file.processing_status ?? "stocke"}).`;
+  }
+  return "Workflow cree.";
 }
 
 function hasDestination(result: SmartImportConfirmResponse, destinationType: string): boolean {

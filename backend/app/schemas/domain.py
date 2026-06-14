@@ -1898,6 +1898,14 @@ class SmartImportRoutedFile(BaseModel):
     destination_type: str | None = None
     destination_id: int | None = None
     destination_url: str | None = None
+    processing_status: str | None = None
+    created_snapshots_count: int | None = None
+    created_transactions_count: int | None = None
+    analyzed_files_count: int | None = None
+    auto_matched_count: int | None = None
+    needs_review_count: int | None = None
+    skipped_rows: int | None = None
+    processing_errors: list[str] = Field(default_factory=list)
 
 
 class SmartImportConfirmError(BaseModel):
