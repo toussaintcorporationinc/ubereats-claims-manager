@@ -2169,7 +2169,8 @@ export const api = {
   getReportResponses: (filters: ReportFilters = {}) =>
     request<ReportResponsesResponse>(`/v1/reports/responses${buildQuery(filters)}`),
   downloadReport: (path: string, filters: ReportFilters = {}) => downloadBlob(`${path}${buildQuery(filters)}`),
-  getRestaurants: () => request<Restaurant[]>("/v1/restaurants"),
+  getRestaurants: (filters: { include_inactive?: boolean } = {}) =>
+    request<Restaurant[]>(`/v1/restaurants${buildQuery(filters)}`),
   getRestaurant: (id: number) => request<Restaurant>(`/v1/restaurants/${id}`),
   createRestaurant: (payload: RestaurantCreatePayload) =>
     postJson<Restaurant, RestaurantCreatePayload>("/v1/restaurants", payload),
@@ -2178,6 +2179,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+  archiveRestaurant: (id: number) =>
+    request<Restaurant>(`/v1/restaurants/${id}`, {
+      method: "DELETE",
+    }),
+  restoreRestaurant: (id: number) => postJson<Restaurant, Record<string, never>>(`/v1/restaurants/${id}/restore`, {}),
   getUsers: () => request<User[]>("/v1/users"),
   createUser: (payload: UserCreatePayload) => postJson<User, UserCreatePayload>("/v1/users", payload),
   getUser: (id: number) => request<User>(`/v1/users/${id}`),
