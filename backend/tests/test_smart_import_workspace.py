@@ -17,6 +17,7 @@ from app.models import (
     SmartImportPreviewBatch,
     UberReportingImportBatch,
     UberReportingImportRow,
+    UberStoreMapping,
     Restaurant,
     User,
 )
@@ -114,6 +115,18 @@ def test_smart_import_unknown_becomes_manual_review(client: TestClient) -> None:
 
 
 def test_smart_confirm_routes_uber_report_to_reporting_batch(client: TestClient, db_session: Session) -> None:
+    restaurant = Restaurant(name="Restaurant Route", sender_email="route@example.com")
+    db_session.add(restaurant)
+    db_session.flush()
+    db_session.add(
+        UberStoreMapping(
+            restaurant_id=restaurant.id,
+            uber_store_id="store-route",
+            uber_store_name="Restaurant Route",
+            active=True,
+        )
+    )
+    db_session.commit()
     csv_content = (
         "Descriptions longues Uber Eats Manager,,,,,,\n"
         "Id. du restaurant,Nom du restaurant,Id. de la commande,Date de la commande,Statut de la commande,Ventes (TVA incluse),Devise\n"
@@ -136,13 +149,56 @@ def test_smart_confirm_routes_uber_report_to_reporting_batch(client: TestClient,
     routed = response.json()["routed_files"][0]
     assert routed["destination_type"] == "uber_reporting_batch"
     assert routed["destination_url"] == f"/uber/reporting/{routed['destination_id']}"
+    assert routed["processing_status"] == "confirmed"
+    assert routed["created_snapshots_count"] == 1
+    assert routed["skipped_rows"] == 0
     batch = db_session.get(UberReportingImportBatch, routed["destination_id"])
     assert batch is not None
-    assert batch.status == "parsed"
+    assert batch.status == "confirmed"
     assert batch.report_type == "orders_report"
     rows = db_session.scalars(select(UberReportingImportRow).where(UberReportingImportRow.batch_id == batch.id)).all()
     assert rows
-    assert all(row.status != "created" for row in rows)
+    assert all(row.status == "created" for row in rows)
+
+
+def test_smart_confirm_forced_restaurant_applies_unmapped_uber_report(client: TestClient, db_session: Session) -> None:
+    restaurant = Restaurant(name="Restaurant Force Smart", sender_email="force@example.com")
+    db_session.add(restaurant)
+    db_session.commit()
+    db_session.refresh(restaurant)
+    csv_content = (
+        "Id. du restaurant,Nom du restaurant,Id. de la commande,Date de la commande,Statut de la commande,Ventes (TVA incluse),Devise\n"
+        "store-force-smart,Restaurant Force Smart,UBER-FORCE-001,01/05/2026,canceled,22.50,EUR\n"
+    )
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("force.csv", csv_content.encode("utf-8"), "text/csv"))],
+    ).json()
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [
+                {
+                    "file_id": preview["files"][0]["id"],
+                    "action": "import_uber_reporting",
+                    "report_type": "orders_report",
+                    "restaurant_id": restaurant.id,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    routed = response.json()["routed_files"][0]
+    assert routed["processing_status"] == "confirmed"
+    assert routed["created_snapshots_count"] == 1
+    batch = db_session.get(UberReportingImportBatch, routed["destination_id"])
+    assert batch is not None
+    rows = db_session.scalars(select(UberReportingImportRow).where(UberReportingImportRow.batch_id == batch.id)).all()
+    assert rows[0].normalized_data["restaurant_id"] == restaurant.id
+    assert rows[0].status == "created"
 
 
 def test_smart_import_preview_marks_exact_duplicate_by_checksum(client: TestClient, db_session: Session) -> None:
@@ -235,9 +291,11 @@ def test_smart_confirm_routes_evidence_file_to_evidence_import(client: TestClien
     routed = response.json()["routed_files"][0]
     assert routed["destination_type"] == "evidence_import_batch"
     assert routed["destination_url"] == f"/evidence-imports/{routed['destination_id']}"
+    assert routed["processing_status"] == "analyzed"
+    assert routed["analyzed_files_count"] == 1
     batch = db_session.get(EvidenceImportBatch, routed["destination_id"])
     assert batch is not None
-    assert batch.status == "stored"
+    assert batch.status == "analyzed"
     assert batch.stored_files_count == 1
 
 
@@ -297,6 +355,7 @@ def test_smart_confirm_routes_zip_to_evidence_import(client: TestClient, db_sess
     assert batch is not None
     assert batch.source_type == "zip_upload"
     assert batch.stored_files_count == 1
+    assert batch.status == "analyzed"
 
 
 def test_smart_confirm_manual_review_and_ignore_keep_audit_state(client: TestClient, db_session: Session) -> None:

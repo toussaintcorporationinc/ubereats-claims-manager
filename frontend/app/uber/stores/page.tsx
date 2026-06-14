@@ -5,22 +5,30 @@ import ApiError from "@/components/ApiError";
 import EmptyState from "@/components/EmptyState";
 import LoadingState from "@/components/LoadingState";
 import StatusBadge from "@/components/StatusBadge";
-import { api, type Restaurant, type UberStoreMapping } from "@/lib/api";
+import { api, type Restaurant, type UberStoreMapping, type UberUnmappedStore } from "@/lib/api";
 
 export default function UberStoresPage() {
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [mappings, setMappings] = useState<UberStoreMapping[]>([]);
-  const [restaurantId, setRestaurantId] = useState("");
-  const [uberStoreId, setUberStoreId] = useState("");
-  const [uberStoreName, setUberStoreName] = useState("");
+  const [unmappedStores, setUnmappedStores] = useState<UberUnmappedStore[]>([]);
+  const [detectedRestaurantId, setDetectedRestaurantId] = useState("");
+  const [selectedUberStoreId, setSelectedUberStoreId] = useState("");
+  const [manualRestaurantId, setManualRestaurantId] = useState("");
+  const [manualUberStoreId, setManualUberStoreId] = useState("");
+  const [manualUberStoreName, setManualUberStoreName] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
   async function loadData() {
-    const [restaurantData, mappingData] = await Promise.all([api.getRestaurants(), api.getUberStoreMappings()]);
+    const [restaurantData, mappingData, unmappedData] = await Promise.all([
+      api.getRestaurants(),
+      api.getUberStoreMappings(),
+      api.getUberUnmappedStores(),
+    ]);
     setRestaurants(restaurantData);
     setMappings(mappingData);
+    setUnmappedStores(unmappedData);
   }
 
   useEffect(() => {
@@ -29,19 +37,36 @@ export default function UberStoresPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleDetectedSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      await api.mapUberUnmappedStore(selectedUberStoreId, Number(detectedRestaurantId));
+      setSelectedUberStoreId("");
+      setDetectedRestaurantId("");
+      await loadData();
+    } catch (apiError) {
+      setError(apiError);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleManualSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
     setError(null);
     try {
       await api.createUberStoreMapping({
-        restaurant_id: Number(restaurantId),
-        uber_store_id: uberStoreId,
-        uber_store_name: uberStoreName,
+        restaurant_id: Number(manualRestaurantId),
+        uber_store_id: manualUberStoreId,
+        uber_store_name: manualUberStoreName,
         active: true,
       });
-      setUberStoreId("");
-      setUberStoreName("");
+      setManualRestaurantId("");
+      setManualUberStoreId("");
+      setManualUberStoreName("");
       await loadData();
     } catch (apiError) {
       setError(apiError);
@@ -59,61 +84,129 @@ export default function UberStoresPage() {
       <div className="page-heading">
         <div className="heading-copy">
           <p className="eyebrow">Uber Eats</p>
-          <h1>Mappings stores</h1>
+          <h1>Stores Uber</h1>
+          <p className="muted">Choisis le store detecte par TENNET, puis le restaurant correspondant. Pas besoin de recopier le Store ID.</p>
         </div>
       </div>
 
       <ApiError error={error} />
 
-      <form className="tool-panel form-grid" onSubmit={handleSubmit}>
-        <div className="field">
-          <label htmlFor="restaurant_id">Restaurant TENNET</label>
-          <select id="restaurant_id" value={restaurantId} onChange={(event) => setRestaurantId(event.target.value)} required>
-            <option value="">Selectionner</option>
-            {restaurants.map((restaurant) => (
-              <option key={restaurant.id} value={restaurant.id}>
-                {restaurant.name}
-              </option>
-            ))}
-          </select>
+      <section className="tool-panel">
+        <div className="section-heading">
+          <div>
+            <h2>Stores detectes a mapper</h2>
+            <p className="muted">TENNET les trouve dans les imports Uber. Tu relies seulement le bon restaurant.</p>
+          </div>
         </div>
-        <div className="field">
-          <label htmlFor="uber_store_id">Uber store id</label>
-          <input id="uber_store_id" value={uberStoreId} onChange={(event) => setUberStoreId(event.target.value)} required />
-        </div>
-        <div className="field">
-          <label htmlFor="uber_store_name">Nom store Uber</label>
-          <input id="uber_store_name" value={uberStoreName} onChange={(event) => setUberStoreName(event.target.value)} required />
-        </div>
-        <button type="submit" className="button" disabled={submitting}>
-          {submitting ? "Creation" : "Creer mapping"}
-        </button>
-      </form>
+
+        {unmappedStores.length > 0 ? (
+          <form className="form-grid" onSubmit={handleDetectedSubmit}>
+            <div className="field">
+              <label htmlFor="detected_uber_store">Store Uber detecte</label>
+              <select
+                id="detected_uber_store"
+                value={selectedUberStoreId}
+                onChange={(event) => {
+                  const storeId = event.target.value;
+                  const selectedStore = unmappedStores.find((store) => store.uber_store_id === storeId);
+                  setSelectedUberStoreId(storeId);
+                  setDetectedRestaurantId(selectedStore?.suggested_restaurant_matches[0]?.id.toString() ?? "");
+                }}
+                required
+              >
+                <option value="">Selectionner un store detecte</option>
+                {unmappedStores.map((store) => (
+                  <option key={store.uber_store_id} value={store.uber_store_id}>
+                    {store.uber_store_name ?? "Store Uber"} - {store.row_count} ligne(s)
+                  </option>
+                ))}
+              </select>
+              {selectedUberStoreId ? <small className="muted">ID technique conserve par TENNET : {selectedUberStoreId}</small> : null}
+            </div>
+
+            <div className="field">
+              <label htmlFor="detected_restaurant_id">Restaurant TENNET</label>
+              <select
+                id="detected_restaurant_id"
+                value={detectedRestaurantId}
+                onChange={(event) => setDetectedRestaurantId(event.target.value)}
+                required
+              >
+                <option value="">Choisir le restaurant</option>
+                {restaurants.map((restaurant) => (
+                  <option key={restaurant.id} value={restaurant.id}>
+                    {restaurant.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <button type="submit" className="button" disabled={submitting}>
+              {submitting ? "Mapping" : "Mapper ce store"}
+            </button>
+          </form>
+        ) : (
+          <EmptyState title="Aucun store Uber a mapper" description="Quand un import Uber contient un store inconnu, il apparaitra ici." />
+        )}
+      </section>
+
+      <details className="simple-details">
+        <summary>Mapping manuel avance</summary>
+        <form className="tool-panel form-grid" onSubmit={handleManualSubmit}>
+          <div className="field">
+            <label htmlFor="manual_restaurant_id">Restaurant TENNET</label>
+            <select
+              id="manual_restaurant_id"
+              value={manualRestaurantId}
+              onChange={(event) => setManualRestaurantId(event.target.value)}
+              required
+            >
+              <option value="">Selectionner</option>
+              {restaurants.map((restaurant) => (
+                <option key={restaurant.id} value={restaurant.id}>
+                  {restaurant.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="manual_uber_store_id">Uber store id</label>
+            <input
+              id="manual_uber_store_id"
+              value={manualUberStoreId}
+              onChange={(event) => setManualUberStoreId(event.target.value)}
+              required
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="manual_uber_store_name">Nom store Uber</label>
+            <input
+              id="manual_uber_store_name"
+              value={manualUberStoreName}
+              onChange={(event) => setManualUberStoreName(event.target.value)}
+              required
+            />
+          </div>
+          <button type="submit" className="secondary-button" disabled={submitting}>
+            {submitting ? "Creation" : "Creer mapping manuel"}
+          </button>
+        </form>
+      </details>
 
       {mappings.length > 0 ? (
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Restaurant</th>
-                <th>Uber store id</th>
-                <th>Nom Uber</th>
-                <th>Statut</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mappings.map((mapping) => (
-                <tr key={mapping.id}>
-                  <td>{restaurants.find((restaurant) => restaurant.id === mapping.restaurant_id)?.name ?? mapping.restaurant_id}</td>
-                  <td>{mapping.uber_store_id}</td>
-                  <td>{mapping.uber_store_name}</td>
-                  <td>
-                    <StatusBadge status={mapping.active ? "active" : "inactive"} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="premium-card-grid">
+          {mappings.map((mapping) => (
+            <article key={mapping.id} className="premium-card">
+              <div className="section-heading">
+                <div>
+                  <h3>{restaurants.find((restaurant) => restaurant.id === mapping.restaurant_id)?.name ?? mapping.restaurant_id}</h3>
+                  <p className="muted">{mapping.uber_store_name}</p>
+                </div>
+                <StatusBadge status={mapping.active ? "active" : "inactive"} />
+              </div>
+              <p className="muted">Store Uber : {mapping.uber_store_id}</p>
+            </article>
+          ))}
         </div>
       ) : (
         <EmptyState title="Aucun mapping Uber store" />

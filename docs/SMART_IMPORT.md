@@ -37,20 +37,19 @@ Doublons :
 - les copies exactes sont marquees `ignore`, auditees, et leur fichier temporaire est supprime ;
 - TENNET ne supprime pas un fichier seulement parce que son nom ressemble a un autre.
 
-Depuis Mission 31, la confirmation lance le vrai workflow TENNET :
-- un rapport Uber cree un `UberReportingImportBatch` en statut `parsed`, puis renvoie vers `/uber/reporting/{batch_id}` ;
-- une preuve, un PDF ou un ZIP cree un `EvidenceImportBatch`, puis renvoie vers `/evidence-imports/{batch_id}` ;
+Depuis Mission 31, Smart Import lance le vrai workflow TENNET :
+- un rapport Uber cree un `UberReportingImportBatch`, applique automatiquement les lignes valides et conserve les lignes bloquees pour revue ;
+- une preuve, un PDF ou un ZIP cree un `EvidenceImportBatch`, lance l'analyse locale/fake et renvoie vers `/evidence-imports/{batch_id}` ;
 - un fichier douteux reste en revue manuelle ;
 - un fichier ignore est audite.
 
 Exemple :
 1. L'utilisateur depose `download.csv`.
 2. TENNET detecte "Rapport Uber detecte".
-3. L'utilisateur confirme.
-4. TENNET cree l'import Uber.
-5. L'utilisateur ouvre le batch et confirme les lignes valides.
+3. TENNET cree l'import Uber et applique les lignes fiables.
+4. L'utilisateur ouvre le detail uniquement si des lignes sont bloquees ou si TENNET demande une verification.
 
-Smart Import ne confirme jamais automatiquement les lignes financieres Uber. Les preuves ne sont pas auto-attachees, sauf reglage explicite ulterieur et confiance suffisante. OpenAI reste desactive par defaut.
+Smart Import ne cree pas de dossier de contestation automatiquement et n'invente jamais de montant, preuve ou numero de commande. Les preuves ne sont pas auto-attachees, sauf reglage explicite ulterieur et confiance suffisante. OpenAI reste desactive par defaut.
 
 Les fichiers de preview sont conserves temporairement jusqu'a confirmation, avec expiration par defaut apres 24 heures (`SMART_IMPORT_PREVIEW_EXPIRY_HOURS=24`).
 

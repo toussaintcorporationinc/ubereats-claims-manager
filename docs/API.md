@@ -1928,7 +1928,7 @@ Reponse confirm :
 }
 ```
 
-Smart Import cree les batches operationnels mais ne confirme pas les lignes financieres Uber a la place de l'utilisateur.
+Smart Import cree les batches operationnels et applique automatiquement les lignes Uber valides. Les lignes invalides, non autorisees, dupliquees ou douteuses restent bloquees et visibles dans le detail du batch.
 
 Les exports Uber a deux lignes d'en-tete sont supportes : TENNET scanne les cinq premieres lignes, choisit le meilleur header et ignore le preambule.
 

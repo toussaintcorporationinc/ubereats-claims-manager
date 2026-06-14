@@ -1315,6 +1315,14 @@ export type SmartImportRoutedFile = {
   destination_type: string | null;
   destination_id: number | null;
   destination_url: string | null;
+  processing_status: string | null;
+  created_snapshots_count: number | null;
+  created_transactions_count: number | null;
+  analyzed_files_count: number | null;
+  auto_matched_count: number | null;
+  needs_review_count: number | null;
+  skipped_rows: number | null;
+  processing_errors: string[];
 };
 
 export type SmartImportPreviewResponse = {
