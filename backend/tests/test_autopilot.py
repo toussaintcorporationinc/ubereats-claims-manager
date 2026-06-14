@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from datetime import timedelta
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,10 +16,13 @@ from app.models import (
     AppealWorkflow,
     AuditLog,
     ClaimOrder,
+    ClaimResponseReview,
     EmailAccount,
     EmailDraft,
     EmailProviderDraft,
     FollowUpTask,
+    GmailResponseAnalysis,
+    InboundEmailMessage,
     User,
 )
 from app.models.domain import utc_now
@@ -315,6 +319,91 @@ def test_autopilot_does_not_send_final_status(
 
     assert response.status_code == 201
     assert response.json()["run"]["sent_count"] == 0
+
+
+def test_autopilot_does_not_send_when_gmail_detected_positive_payment_signal(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client)
+    ready = create_ready_order(client, restaurant["id"], "AUTO-GMAIL-PAID")
+    add_gmail_account(db_session)
+    account = db_session.scalar(select(EmailAccount).where(EmailAccount.email_address == "owner@example.com"))
+    assert account is not None
+    message = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=ready["order_id"],
+        provider="gmail",
+        provider_message_id="positive-payment-signal",
+        provider_thread_id="positive-payment-thread",
+        from_email="restaurantsfrance@uber.com",
+        subject="Paiement accorde",
+        body_text="Nous confirmons une regularisation du paiement pour cette commande.",
+        received_at=utc_now(),
+        match_status="linked",
+        match_reason="order_number_match",
+        review_status="reviewed",
+    )
+    db_session.add(message)
+    db_session.flush()
+    db_session.add(
+        GmailResponseAnalysis(
+            inbound_message_id=message.id,
+            order_id=ready["order_id"],
+            recommended_review_type="payment_to_verify",
+            status="analyzed",
+            confidence_score=Decimal("0.82"),
+            reason="payment_signal",
+        )
+    )
+    db_session.commit()
+
+    response = client.post("/v1/autopilot/run", json={"mode": "initial_claims", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["run"]["sent_count"] == 0
+    assert payload["actions"][0]["skipped_reason"] == "positive_gmail_payment_signal_detected"
+    assert db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent")) is None
+
+
+def test_autopilot_followup_skips_when_payment_review_exists(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client)
+    ready = create_ready_order(client, restaurant["id"], "AUTO-REVIEW-PAID")
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    assert order is not None
+    order.status = "sent"
+    order.first_email_sent_at = utc_now() - timedelta(days=5)
+    task = FollowUpTask(order_id=order.id, task_type="followup_1", status="pending", due_at=utc_now() - timedelta(hours=1))
+    db_session.add(task)
+    db_session.add(
+        ClaimResponseReview(
+            order_id=order.id,
+            reviewed_by_user_id=1,
+            review_type="payment_confirmed",
+            previous_order_status="sent",
+            new_order_status="payment_confirmed",
+            recovered_amount=order.order_amount,
+            notes="Paiement confirme par Uber.",
+        )
+    )
+    db_session.commit()
+    add_gmail_account(db_session)
+
+    response = client.post("/v1/autopilot/run", json={"mode": "followups", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["run"]["sent_count"] == 0
+    assert payload["actions"][0]["skipped_reason"] == "positive_payment_review_exists"
+    assert db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent")) is None
 
 
 def test_autopilot_followup_respects_cooldown(

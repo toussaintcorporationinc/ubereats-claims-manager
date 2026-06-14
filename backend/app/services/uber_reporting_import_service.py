@@ -72,6 +72,71 @@ COLUMN_ALIASES["transaction_type"] += (
     "personnalisations incorrectes",
 )
 COLUMN_ALIASES["currency"] += ("code de devise",)
+COLUMN_ALIASES["uber_store_id"] += (
+    "merchant_uuid",
+    "merchant_id",
+    "merchant store id",
+    "merchant store uuid",
+    "restaurant id",
+    "restaurant uuid",
+)
+COLUMN_ALIASES["uber_order_id"] += (
+    "workflow uuid",
+    "workflow id",
+    "order uuid",
+    "order id",
+    "order workflow id",
+    "order workflow uuid",
+    "uuid du workflow",
+    "id du workflow",
+)
+COLUMN_ALIASES["placed_at"] += (
+    "order date",
+    "refund date",
+    "refunded at",
+    "date du remboursement",
+    "date de remboursement",
+    "date remboursement",
+)
+COLUMN_ALIASES["transaction_date"] += (
+    "order date",
+    "refund date",
+    "refunded at",
+    "date du remboursement",
+    "date de remboursement",
+    "date remboursement",
+)
+COLUMN_ALIASES["transaction_type"] += (
+    "issue",
+    "problem",
+    "reason",
+    "refund reason",
+    "order issue",
+    "accuracy issue",
+    "defect category",
+    "motif",
+    "motif remboursement",
+    "motif du remboursement",
+    "categorie probleme",
+    "categorie du probleme",
+)
+COLUMN_ALIASES["amount"] += (
+    "refund amount",
+    "refunded amount",
+    "amount refunded",
+    "customer refund",
+    "customer refund amount",
+    "merchant refund amount",
+    "merchant charged amount",
+    "amount charged to merchant",
+    "deduction amount",
+    "montant remboursement",
+    "montant du remboursement",
+    "montant rembourse",
+    "montant facture au commercant",
+    "montant deduit",
+    "montant debit",
+)
 COLUMN_ALIASES["amount"] += (
     "ajustements lies a des erreurs de commande (tva incluse)",
     "ajustements liés à des erreurs de commande (tva incluse)",
@@ -95,6 +160,24 @@ CUSTOMER_REFUND_AMOUNT_ALIASES = (
     "remboursements du client",
     "client rembourse",
     "client remboursé",
+)
+
+CUSTOMER_REFUND_AMOUNT_ALIASES += (
+    "refund amount",
+    "refunded amount",
+    "amount refunded",
+    "customer refund",
+    "customer refund amount",
+    "merchant refund amount",
+    "merchant charged amount",
+    "amount charged to merchant",
+    "deduction amount",
+    "montant remboursement",
+    "montant du remboursement",
+    "montant rembourse",
+    "montant facture au commercant",
+    "montant deduit",
+    "montant debit",
 )
 
 ORDER_FIELDS = {
@@ -370,6 +453,7 @@ def infer_combined_report_transaction_type(row: dict[str, Any], normalized: dict
     existing_transaction_type = normalized.get("transaction_type")
     adjustment_amount = get_column_value_from_aliases(row, ORDER_ERROR_ADJUSTMENT_AMOUNT_ALIASES)
     refund_amount = get_column_value_from_aliases(row, CUSTOMER_REFUND_AMOUNT_ALIASES)
+    generic_amount = get_column_value(row, "amount")
     parsed_adjustment = parse_decimal(adjustment_amount)
     parsed_refund = parse_decimal(refund_amount)
     if parsed_adjustment is not None and parsed_adjustment != Decimal("0"):
@@ -380,19 +464,43 @@ def infer_combined_report_transaction_type(row: dict[str, Any], normalized: dict
         normalized["amount"] = refund_amount
         if not existing_transaction_type or row_looks_like_order_accuracy_export(row):
             normalized["transaction_type"] = "customer_refund"
+    elif row_looks_like_order_accuracy_export(row):
+        parsed_generic = parse_decimal(generic_amount)
+        if parsed_generic is not None and parsed_generic != Decimal("0"):
+            normalized["amount"] = generic_amount
+            if not existing_transaction_type:
+                normalized["transaction_type"] = infer_order_accuracy_transaction_type(row)
+
+
+def infer_order_accuracy_transaction_type(row: dict[str, Any]) -> str:
+    text = normalize_for_match(" ".join([*(str(key) for key in row), *(str(value) for value in row.values())]))
+    if any(marker in text for marker in ("adjustment", "ajustement", "order error", "erreur de commande")):
+        return "order_error_adjustment"
+    return "customer_refund"
 
 
 def row_looks_like_order_accuracy_export(row: dict[str, Any]) -> bool:
-    text = normalize_for_match(" ".join(str(key) for key in row))
+    text = normalize_for_match(" ".join([*(str(key) for key in row), *(str(value) for value in row.values())]))
     return any(
         marker in text
         for marker in (
+            "inaccurate orders",
+            "top inaccurate items",
+            "order accuracy",
+            "refund amount",
+            "customer refund amount",
+            "amount charged to merchant",
+            "deduction amount",
             "probleme avec la commande",
             "informations concernant le probleme lie a l article",
             "articles incorrects",
             "personnalisations incorrectes",
             "remboursement pris en charge par le commercant",
             "client rembourse",
+            "article manquant",
+            "missing item",
+            "wrong item",
+            "quality issue",
         )
     )
 
@@ -400,7 +508,7 @@ def row_looks_like_order_accuracy_export(row: dict[str, Any]) -> bool:
 def normalize_order_accuracy_identifiers(row: dict[str, Any], normalized: dict[str, Any]) -> None:
     if not row_looks_like_order_accuracy_export(row):
         return
-    process_uuid = get_column_value_from_aliases(row, ("uuid du processus", "process uuid"))
+    process_uuid = get_column_value_from_aliases(row, ("uuid du processus", "process uuid", "workflow uuid", "workflow id"))
     order_number = get_column_value_from_aliases(row, ("id. de la commande", "id de la commande"))
     if process_uuid not in {None, ""}:
         normalized["uber_order_id"] = process_uuid
@@ -438,6 +546,11 @@ def normalize_transaction_values(row: dict[str, Any], errors: list[str]) -> None
     if amount is None:
         errors.append("missing_or_invalid_amount")
     else:
+        if row_looks_like_order_accuracy_export(row) and row.get("transaction_type") in {
+            "customer_refund",
+            "order_error_adjustment",
+        } and amount > 0:
+            amount = -amount
         row["amount"] = str(amount)
     parsed_date = parse_date(row.get("transaction_date"))
     if parsed_date is None:

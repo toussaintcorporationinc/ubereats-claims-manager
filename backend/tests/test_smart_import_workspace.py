@@ -198,7 +198,7 @@ def test_smart_confirm_official_uber_accuracy_orders_creates_refund_transaction(
     assert str(dispute.customer_refund_amount) == "12.50"
 
 
-def test_smart_import_routes_top_inaccurate_items_as_official_uber_document(
+def test_smart_import_routes_top_inaccurate_items_as_uber_reporting_source(
     client: TestClient,
     db_session: Session,
 ) -> None:
@@ -212,30 +212,32 @@ def test_smart_import_routes_top_inaccurate_items_as_official_uber_document(
         files=[("files", ("top_inaccurate_items_v3_2026-01-01_2026-01-31.csv", csv_content.encode("utf-8"), "text/csv"))],
     ).json()
     file_preview = preview["files"][0]
-    assert file_preview["detected_category"] == "evidence"
-    assert file_preview["recommended_action"] == "import_evidence_bulk"
+    assert file_preview["detected_category"] == "uber_reporting"
+    assert file_preview["detected_report_type"] == "adjustments_report"
+    assert file_preview["recommended_action"] == "import_uber_reporting"
+    assert "missing_order_level_columns" in file_preview["warnings"]
 
     response = client.post(
         "/v1/smart-import/confirm",
         json={
             "batch_preview_id": preview["batch_preview_id"],
-            "files": [{"file_id": file_preview["id"], "action": "import_evidence_bulk"}],
+            "files": [{"file_id": file_preview["id"], "action": "import_uber_reporting", "report_type": "adjustments_report"}],
         },
     )
 
     assert response.status_code == 200
     routed = response.json()["routed_files"][0]
-    assert routed["destination_type"] == "evidence_import_batch"
-    assert routed["destination_url"] == f"/evidence-imports/{routed['destination_id']}"
-    batch = db_session.get(EvidenceImportBatch, routed["destination_id"])
+    assert routed["destination_type"] == "uber_reporting_batch"
+    assert routed["destination_url"] == f"/uber/reporting/{routed['destination_id']}"
+    assert routed["created_transactions_count"] == 0
+    assert routed["skipped_rows"] == 1
+    batch = db_session.get(UberReportingImportBatch, routed["destination_id"])
     assert batch is not None
-    assert batch.stored_files_count == 1
-    imported_file = db_session.scalar(select(EvidenceImportedFile).where(EvidenceImportedFile.batch_id == batch.id))
-    assert imported_file is not None
-    assert imported_file.original_filename == "top_inaccurate_items_v3_2026-01-01_2026-01-31.csv"
+    assert batch.report_type == "adjustments_report"
+    assert batch.invalid_rows == 1
 
 
-def test_smart_import_routes_order_accuracy_workbook_as_official_uber_document(
+def test_smart_import_routes_order_accuracy_workbook_as_uber_reporting_source(
     client: TestClient,
     db_session: Session,
 ) -> None:
@@ -261,24 +263,88 @@ def test_smart_import_routes_order_accuracy_workbook_as_official_uber_document(
         ],
     ).json()
     file_preview = preview["files"][0]
-    assert file_preview["detected_category"] == "evidence"
-    assert file_preview["recommended_action"] == "import_evidence_bulk"
+    assert file_preview["detected_category"] == "uber_reporting"
+    assert file_preview["detected_report_type"] == "adjustments_report"
+    assert file_preview["recommended_action"] == "import_uber_reporting"
 
     response = client.post(
         "/v1/smart-import/confirm",
         json={
             "batch_preview_id": preview["batch_preview_id"],
-            "files": [{"file_id": file_preview["id"], "action": "import_evidence_bulk"}],
+            "files": [{"file_id": file_preview["id"], "action": "import_uber_reporting", "report_type": "adjustments_report"}],
         },
     )
 
     assert response.status_code == 200
     routed = response.json()["routed_files"][0]
-    assert routed["destination_type"] == "evidence_import_batch"
-    imported_file = db_session.scalar(
-        select(EvidenceImportedFile).where(EvidenceImportedFile.original_filename == "order_accuracy_analytics_2026-01-01_2026-01-31.xlsx")
+    assert routed["destination_type"] == "uber_reporting_batch"
+    assert routed["destination_url"] == f"/uber/reporting/{routed['destination_id']}"
+    assert routed["created_transactions_count"] == 0
+    batch = db_session.get(UberReportingImportBatch, routed["destination_id"])
+    assert batch is not None
+    assert batch.report_type == "adjustments_report"
+
+
+def test_smart_confirm_order_accuracy_positive_refund_amount_becomes_negative_transaction(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = Restaurant(name="Krousty Bat", sender_email="tiramisumaisonfrance@example.com")
+    db_session.add(restaurant)
+    db_session.flush()
+    db_session.add(
+        UberStoreMapping(
+            restaurant_id=restaurant.id,
+            uber_store_id="store-accuracy-positive",
+            uber_store_name="Krousty Bat",
+            active=True,
+        )
     )
-    assert imported_file is not None
+    db_session.commit()
+    csv_content = (
+        "Store UUID,Store Name,Order UUID,Order Date,Issue,Refund Amount,Currency\n"
+        "store-accuracy-positive,Krousty Bat,ORDER-ACCURACY-POSITIVE-001,2026-01-08,Missing item,12.50,EUR\n"
+    )
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[
+            (
+                "files",
+                (
+                    "order_accuracy_analytics_2026-01-01_2026-01-31.csv",
+                    csv_content.encode("utf-8"),
+                    "text/csv",
+                ),
+            )
+        ],
+    ).json()
+    file_preview = preview["files"][0]
+    assert file_preview["detected_category"] == "uber_reporting"
+    assert file_preview["recommended_action"] == "import_uber_reporting"
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [
+                {
+                    "file_id": file_preview["id"],
+                    "action": "import_uber_reporting",
+                    "report_type": "adjustments_report",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    routed = response.json()["routed_files"][0]
+    assert routed["created_transactions_count"] == 1
+    transaction = db_session.scalar(
+        select(UberFinancialTransaction).where(UberFinancialTransaction.uber_order_id == "ORDER-ACCURACY-POSITIVE-001")
+    )
+    assert transaction is not None
+    assert transaction.transaction_type == "customer_refund"
+    assert transaction.amount == Decimal("-12.50")
 
 
 def test_smart_confirm_routes_uber_report_to_reporting_batch(client: TestClient, db_session: Session) -> None:
@@ -401,6 +467,39 @@ def test_smart_import_preview_marks_exact_duplicate_by_checksum(client: TestClie
         )
     )
     assert duplicate_audit is not None
+
+
+def test_smart_import_preview_ignores_file_already_seen_in_previous_batch(client: TestClient) -> None:
+    csv_content = (
+        "Id. du restaurant,Nom du restaurant,Id. de la commande,Date de la commande,Statut de la commande,Ventes (TVA incluse),Devise\n"
+        "store-dup-history,Restaurant Dup History,UBER-DUP-HISTORY-001,01/05/2026,canceled,31,EUR\n"
+    )
+    first_preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("download.csv", csv_content.encode("utf-8"), "text/csv"))],
+    ).json()
+    first_file = first_preview["files"][0]
+    confirm_response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": first_preview["batch_preview_id"],
+            "files": [{"file_id": first_file["id"], "action": "import_uber_reporting", "report_type": "orders_report"}],
+        },
+    )
+    assert confirm_response.status_code == 200
+
+    second_response = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("download-again.csv", csv_content.encode("utf-8"), "text/csv"))],
+    )
+
+    assert second_response.status_code == 201
+    duplicate = second_response.json()["files"][0]
+    assert duplicate["recommended_action"] == "ignore"
+    assert duplicate["status"] == "ignored"
+    assert duplicate["destination_type"] == "duplicate_ignored"
+    assert duplicate["destination_id"] == first_file["id"]
+    assert "exact_duplicate_ignored" in duplicate["warnings"]
 
 
 def test_smart_confirm_does_not_route_exact_duplicate_even_if_forced(client: TestClient, db_session: Session) -> None:

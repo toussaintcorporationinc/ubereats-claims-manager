@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
 from openpyxl import load_workbook
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -148,6 +149,72 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "currency": ("currency", "devise", "code de devise"),
 }
 
+COLUMN_ALIASES["uber_store_id"] += (
+    "merchant_uuid",
+    "merchant_id",
+    "merchant store id",
+    "merchant store uuid",
+    "restaurant id",
+    "restaurant uuid",
+)
+COLUMN_ALIASES["uber_order_id"] += (
+    "workflow uuid",
+    "workflow id",
+    "order uuid",
+    "order id",
+    "order workflow id",
+    "order workflow uuid",
+    "uuid du workflow",
+    "id du workflow",
+)
+COLUMN_ALIASES["placed_at"] += (
+    "order date",
+    "refund date",
+    "refunded at",
+    "date du remboursement",
+    "date de remboursement",
+    "date remboursement",
+)
+COLUMN_ALIASES["transaction_date"] += (
+    "order date",
+    "refund date",
+    "refunded at",
+    "date du remboursement",
+    "date de remboursement",
+    "date remboursement",
+)
+COLUMN_ALIASES["transaction_type"] += (
+    "issue",
+    "problem",
+    "reason",
+    "refund reason",
+    "order issue",
+    "accuracy issue",
+    "defect category",
+    "motif",
+    "motif remboursement",
+    "motif du remboursement",
+    "categorie probleme",
+    "categorie du probleme",
+)
+COLUMN_ALIASES["amount"] += (
+    "refund amount",
+    "refunded amount",
+    "amount refunded",
+    "customer refund",
+    "customer refund amount",
+    "merchant refund amount",
+    "merchant charged amount",
+    "amount charged to merchant",
+    "deduction amount",
+    "montant remboursement",
+    "montant du remboursement",
+    "montant rembourse",
+    "montant facture au commercant",
+    "montant deduit",
+    "montant debit",
+)
+
 ORDER_FIELDS = {"uber_order_id", "order_status", "placed_at", "order_total_amount", "canceled_at"}
 PAYMENT_FIELDS = {"transaction_date", "payout_reference", "amount", "currency"}
 ADJUSTMENT_MARKERS = {"adjustment", "ajustement", "chargeback", "refund", "remboursement", "deduction"}
@@ -256,6 +323,7 @@ async def create_smart_import_preview(
         preview_files.append(preview_file)
     db.flush()
     mark_exact_duplicate_preview_files(db, current_user, preview_files)
+    mark_historical_exact_duplicate_preview_files(db, current_user, preview_files)
 
     add_audit_log(
         db,
@@ -294,6 +362,37 @@ def mark_exact_duplicate_preview_files(
             mark_preview_file_as_exact_duplicate(db, current_user, duplicate, canonical)
 
 
+def mark_historical_exact_duplicate_preview_files(
+    db: Session,
+    current_user: User,
+    preview_files: list[SmartImportPreviewFile],
+) -> None:
+    for preview_file in preview_files:
+        if preview_file.status != "previewed" or not preview_file.checksum_sha256:
+            continue
+        historical_files = db.scalars(
+            select(SmartImportPreviewFile)
+            .join(SmartImportPreviewBatch)
+            .where(
+                SmartImportPreviewFile.id != preview_file.id,
+                SmartImportPreviewFile.batch_id != preview_file.batch_id,
+                SmartImportPreviewFile.checksum_sha256 == preview_file.checksum_sha256,
+                SmartImportPreviewFile.status.in_(("previewed", "confirmed", "routed", "manual_review")),
+                SmartImportPreviewBatch.status.notin_(("cancelled", "expired")),
+                or_(
+                    SmartImportPreviewFile.status.in_(("confirmed", "routed", "manual_review")),
+                    SmartImportPreviewBatch.expires_at.is_(None),
+                    SmartImportPreviewBatch.expires_at > utc_now(),
+                ),
+            )
+            .order_by(SmartImportPreviewFile.id)
+        ).all()
+        if not historical_files:
+            continue
+        canonical = choose_duplicate_canonical_file(historical_files)
+        mark_preview_file_as_exact_duplicate(db, current_user, preview_file, canonical, scope="historical")
+
+
 def choose_duplicate_canonical_file(preview_files: list[SmartImportPreviewFile]) -> SmartImportPreviewFile:
     action_rank = {"import_uber_reporting": 3, "import_evidence_bulk": 3, "manual_review": 1, "ignore": 0}
 
@@ -315,6 +414,8 @@ def mark_preview_file_as_exact_duplicate(
     current_user: User,
     duplicate: SmartImportPreviewFile,
     canonical: SmartImportPreviewFile,
+    *,
+    scope: str = "batch",
 ) -> None:
     if duplicate.error_message == f"exact_duplicate_of_file:{canonical.id}":
         return
@@ -330,6 +431,7 @@ def mark_preview_file_as_exact_duplicate(
     metadata.update(
         {
             "duplicate_match": "sha256",
+            "duplicate_scope": scope,
             "duplicate_of_file_id": canonical.id,
             "duplicate_of_filename": canonical.original_filename,
         }
@@ -346,6 +448,7 @@ def mark_preview_file_as_exact_duplicate(
             "canonical_file_id": canonical.id,
             "canonical_filename": canonical.original_filename,
             "match": "sha256",
+            "scope": scope,
         },
     )
 
@@ -488,13 +591,21 @@ def classify_spreadsheet(filename: str, suffix: str, content: bytes) -> FileClas
     warnings: list[str] = []
     if not rows:
         if looks_like_official_uber_accuracy_document(filename, []):
-            return official_uber_document_classification(filename, suffix, ["empty_official_uber_document"])
+            return official_uber_accuracy_report_classification(filename, suffix, ["empty_official_uber_document"])
         return base_file_classification(filename, suffix, "unknown", "manual_review", Decimal("0.10"), ["empty_file"])
 
     header_detection = detect_best_header_row(rows)
     if not header_detection.detected_fields:
         if looks_like_official_uber_accuracy_document(filename, rows):
-            return official_uber_document_classification(filename, suffix, ["official_uber_analytics_document"])
+            return official_uber_accuracy_report_classification(
+                filename,
+                suffix,
+                ["official_uber_analytics_document"],
+                headers=header_detection.headers,
+                header_index=header_detection.header_index,
+                detected_fields=header_detection.detected_fields,
+                rows_recognized=len([row for row in rows[header_detection.header_index + 1 :] if any(cell not in {None, ""} for cell in row)]),
+            )
         return base_file_classification(
             filename,
             suffix,
@@ -506,11 +617,13 @@ def classify_spreadsheet(filename: str, suffix: str, content: bytes) -> FileClas
 
     data_rows = rows[header_detection.header_index + 1 :]
     if is_aggregate_uber_accuracy_document(filename, header_detection):
-        return official_uber_document_classification(
+        return official_uber_accuracy_report_classification(
             filename,
             suffix,
             ["official_uber_aggregate_document"],
             headers=header_detection.headers,
+            header_index=header_detection.header_index,
+            detected_fields=header_detection.detected_fields,
             rows_recognized=len([row for row in data_rows if any(cell not in {None, ""} for cell in row)]),
         )
     report_type = detect_report_type(header_detection.detected_fields, data_rows, header_detection.headers)
@@ -521,6 +634,8 @@ def classify_spreadsheet(filename: str, suffix: str, content: bytes) -> FileClas
         warnings.append("preamble_rows_ignored")
     if report_type == "combined_report":
         warnings.append("combined_report_detected")
+    if looks_like_official_uber_accuracy_document(filename, [header_detection.headers, *data_rows[:3]]):
+        warnings.append("official_uber_accuracy_report")
 
     return FileClassification(
         original_filename=filename,
@@ -671,25 +786,45 @@ def is_aggregate_uber_accuracy_document(filename: str, header_detection: HeaderD
     return not ROW_LEVEL_ACCURACY_FIELDS.issubset(set(header_detection.detected_fields))
 
 
-def official_uber_document_classification(
+def official_uber_accuracy_report_classification(
     filename: str,
     suffix: str,
     warnings: list[str],
     *,
     headers: list[str] | None = None,
+    header_index: int | None = None,
+    detected_fields: list[str] | None = None,
     rows_recognized: int = 0,
 ) -> FileClassification:
-    return base_file_classification(
-        filename,
-        suffix,
-        "evidence",
-        "import_evidence_bulk",
-        Decimal("0.72"),
-        warnings,
-        evidence_type="uber_screenshot",
-        metadata={
+    fields = detected_fields or []
+    has_row_level_transactions = ROW_LEVEL_ACCURACY_FIELDS.issubset(set(fields))
+    effective_warnings = list(warnings)
+    if not has_row_level_transactions:
+        effective_warnings.append("missing_order_level_columns")
+    return FileClassification(
+        original_filename=filename,
+        file_type=suffix,
+        detected_category="uber_reporting",
+        detected_report_type="adjustments_report",
+        detected_evidence_type=None,
+        detected_restaurant_name=None,
+        detected_date_from=None,
+        detected_date_to=None,
+        header_row_number=(header_index + 1) if header_index is not None else None,
+        skipped_preamble_rows=header_index or 0,
+        confidence=Decimal("0.74") if has_row_level_transactions else Decimal("0.56"),
+        recommended_action="import_uber_reporting",
+        warnings=effective_warnings,
+        detected_columns=headers or [],
+        metadata_json={
             "official_uber_document": True,
-            "report_label": "Document officiel Uber a exploiter",
+            "row_level_transactions_available": has_row_level_transactions,
+            "report_label": "Rapport officiel Uber a exploiter",
+            "next_action": (
+                "transactions_deductibles"
+                if has_row_level_transactions
+                else "completer_avec_export_detaille_commandes_et_montants"
+            ),
             "rows_recognized": rows_recognized,
             "detected_columns": headers or [],
         },
