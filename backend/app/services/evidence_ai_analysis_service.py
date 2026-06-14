@@ -183,6 +183,18 @@ def build_local_text(imported_file: EvidenceImportedFile) -> str:
 def classify_evidence_type(text: str, filename: str) -> tuple[str, list[str], Decimal]:
     lower = f"{filename} {text}".lower()
     rules = [
+        (
+            "uber_screenshot",
+            (
+                "order accuracy",
+                "inaccurate orders",
+                "top inaccurate items",
+                "articles incorrects",
+                "commandes incorrectes",
+                "client rembourse",
+                "remboursement pris en charge",
+            ),
+        ),
         ("cancellation_proof", ("annulation", "cancel", "canceled", "cancelled")),
         ("preparation_proof", ("preparation", "preparee", "préparée", "prepared", "ready")),
         ("waste_photo", ("waste", "gaspillage", "jetee", "jetée")),

@@ -64,7 +64,7 @@ export default function SmartImportPage() {
       setConfirmResult(confirmResponse);
       setPreview((current) => (current ? { ...current, status: confirmResponse.status } : current));
       setSuccess(
-        `TENNET a traite ${confirmResponse.routed_files.length} fichier(s), garde ${confirmResponse.manual_review_files.length} a verifier et ignore ${confirmResponse.ignored_files.length} doublon(s).`,
+        `TENNET a traite ${confirmResponse.routed_files.length} fichier(s), conserve ${confirmResponse.manual_review_files.length} a exploiter et ignore ${confirmResponse.ignored_files.length} doublon(s).`,
       );
     } catch (apiError) {
       setError(apiError);
@@ -288,7 +288,7 @@ function SmartImportResultPanel({ result }: { result: SmartImportConfirmResponse
         <div>
           <p className="eyebrow">Traitement termine</p>
           <h2>Ce que TENNET a fait</h2>
-          <p className="muted">Aucun fichier n'a disparu : chaque fichier est range, bloque, ignore comme doublon ou signale.</p>
+          <p className="muted">Aucun fichier n'a disparu : chaque fichier est range, exploite, ignore comme doublon ou signale.</p>
         </div>
         <div className="actions">
           {summary.uberBatches > 0 ? (
@@ -307,7 +307,7 @@ function SmartImportResultPanel({ result }: { result: SmartImportConfirmResponse
       <div className="smart-import-status-grid">
         <StatusTile label="Fichiers recus" value={summary.totalFiles} tone="neutral" />
         <StatusTile label="Traites" value={summary.processedFiles} tone="success" />
-        <StatusTile label="Bloques" value={summary.blockedFiles} tone={summary.blockedFiles > 0 ? "warning" : "neutral"} />
+        <StatusTile label="A exploiter" value={summary.blockedFiles} tone={summary.blockedFiles > 0 ? "warning" : "neutral"} />
         <StatusTile label="Doublons ignores" value={summary.ignoredFiles} tone="neutral" />
       </div>
 
@@ -318,7 +318,7 @@ function SmartImportResultPanel({ result }: { result: SmartImportConfirmResponse
         <TimelineStep
           state={summary.blockedFiles > 0 ? "attention" : "done"}
           title="4. Action suivante"
-          description={summary.blockedFiles > 0 ? "Certains fichiers demandent une verification." : "Rien de critique bloque."}
+          description={summary.blockedFiles > 0 ? "Certains fichiers sont conserves pour exploitation." : "Rien de critique ne demande ton attention."}
         />
       </div>
 
@@ -341,15 +341,15 @@ function SmartImportResultPanel({ result }: { result: SmartImportConfirmResponse
         <section id="smart-import-blocked" className="smart-import-group smart-import-group--attention">
           <div className="section-heading">
             <div>
-              <h3>Bloques ou a verifier</h3>
-              <p className="muted">TENNET n'invente rien quand il doute. Ces fichiers restent conserves et visibles.</p>
+              <h3>A exploiter / a verifier</h3>
+              <p className="muted">TENNET conserve ces fichiers officiels et les garde visibles quand il ne peut pas encore creer une transaction fiable.</p>
             </div>
           </div>
           <div className="premium-card-grid">
             {result.manual_review_files.map((file) => (
               <article key={`manual-${file.file_id}`} className="premium-card premium-card--warning">
                 <h3>{file.original_filename}</h3>
-                <p className="muted">A verifier manuellement avant traitement.</p>
+                <p className="muted">Conserve pour exploitation. TENNET n'efface pas ce fichier.</p>
               </article>
             ))}
             {result.errors.map((item) => (
@@ -435,7 +435,7 @@ function SmartImportFileCounters({ file }: { file: SmartImportConfirmResponse["r
           <strong>{file.created_transactions_count ?? 0}</strong>
         </div>
         <div className="detail-item">
-          <span>Bloquees</span>
+          <span>A completer</span>
           <strong>{file.skipped_rows ?? 0}</strong>
         </div>
       </div>
@@ -519,7 +519,7 @@ function buildSmartImportNextActions(result: SmartImportConfirmResponse): Array<
     actions.push({ label: "Voir preuves importees", href: "/evidence-imports", primary: actions.length === 0 });
   }
   if (result.manual_review_files.length > 0 || result.errors.length > 0) {
-    actions.push({ label: "Verifier fichiers bloques", href: "#smart-import-blocked", primary: actions.length === 0 });
+    actions.push({ label: "Voir fichiers a exploiter", href: "#smart-import-blocked", primary: actions.length === 0 });
   }
   if (actions.length === 0) {
     actions.push({ label: "Deposer d'autres fichiers", href: "/smart-import", primary: true });

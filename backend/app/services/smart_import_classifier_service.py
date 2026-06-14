@@ -42,6 +42,9 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
         "store uuid",
         "id. du restaurant",
         "id du restaurant",
+        "id. externe du restaurant",
+        "id externe du restaurant",
+        "external restaurant id",
     ),
     "uber_store_name": (
         "store_name",
@@ -64,6 +67,8 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
         "id de la commande",
         "id. du flux",
         "id du flux",
+        "uuid du processus",
+        "process uuid",
     ),
     "display_id": ("display_id", "visible_id", "short_order_id", "order_display_id"),
     "order_status": ("order_status", "status", "current_state", "state", "statut", "statut de la commande"),
@@ -75,6 +80,8 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
         "created_at",
         "date de la commande",
         "heure d'acceptation de la commande",
+        "heure de la commande",
+        "heure d'acceptation par le marchand",
     ),
     "canceled_at": ("canceled_at", "cancellation_date", "cancellation_time", "heure_annulation", "annulation"),
     "order_total_amount": (
@@ -96,6 +103,12 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
         "remboursements",
         "ajustements lies a des erreurs de commande (tva incluse)",
         "ajustements liés à des erreurs de commande (tva incluse)",
+        "probleme avec la commande",
+        "problème avec la commande",
+        "informations concernant le probleme lie a l'article",
+        "informations concernant le problème lié à l'article",
+        "articles incorrects",
+        "personnalisations incorrectes",
     ),
     "transaction_date": (
         "transaction_date",
@@ -104,6 +117,8 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
         "date_transaction",
         "date_paiement",
         "date de la commande",
+        "heure du remboursement",
+        "heure de la commande",
     ),
     "payout_reference": (
         "payout_reference",
@@ -125,13 +140,29 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
         "remboursements",
         "ajustements lies a des erreurs de commande (tva incluse)",
         "ajustements liés à des erreurs de commande (tva incluse)",
+        "remboursement pris en charge par le commercant",
+        "remboursement pris en charge par le commerçant",
+        "client rembourse",
+        "client remboursé",
     ),
-    "currency": ("currency", "devise"),
+    "currency": ("currency", "devise", "code de devise"),
 }
 
 ORDER_FIELDS = {"uber_order_id", "order_status", "placed_at", "order_total_amount", "canceled_at"}
 PAYMENT_FIELDS = {"transaction_date", "payout_reference", "amount", "currency"}
 ADJUSTMENT_MARKERS = {"adjustment", "ajustement", "chargeback", "refund", "remboursement", "deduction"}
+OFFICIAL_UBER_ACCURACY_MARKERS = {
+    "inaccurate orders",
+    "inaccurate orders v3",
+    "top inaccurate items",
+    "order accuracy",
+    "order accuracy analytics",
+    "commandes incorrectes",
+    "commande incorrecte",
+    "articles incorrects",
+    "article incorrect",
+}
+ROW_LEVEL_ACCURACY_FIELDS = {"uber_store_id", "uber_order_id", "transaction_date", "amount"}
 GENERIC_SINGLE_COLUMN_FIELDS = {"amount", "order_total_amount", "placed_at", "order_status", "transaction_type"}
 EVIDENCE_HINTS = {
     "receipt": ("ticket", "receipt", "recu", "reçu", "facture"),
@@ -456,10 +487,14 @@ def classify_spreadsheet(filename: str, suffix: str, content: bytes) -> FileClas
     rows = read_tabular_rows(content, suffix)
     warnings: list[str] = []
     if not rows:
+        if looks_like_official_uber_accuracy_document(filename, []):
+            return official_uber_document_classification(filename, suffix, ["empty_official_uber_document"])
         return base_file_classification(filename, suffix, "unknown", "manual_review", Decimal("0.10"), ["empty_file"])
 
     header_detection = detect_best_header_row(rows)
     if not header_detection.detected_fields:
+        if looks_like_official_uber_accuracy_document(filename, rows):
+            return official_uber_document_classification(filename, suffix, ["official_uber_analytics_document"])
         return base_file_classification(
             filename,
             suffix,
@@ -470,6 +505,14 @@ def classify_spreadsheet(filename: str, suffix: str, content: bytes) -> FileClas
         )
 
     data_rows = rows[header_detection.header_index + 1 :]
+    if is_aggregate_uber_accuracy_document(filename, header_detection):
+        return official_uber_document_classification(
+            filename,
+            suffix,
+            ["official_uber_aggregate_document"],
+            headers=header_detection.headers,
+            rows_recognized=len([row for row in data_rows if any(cell not in {None, ""} for cell in row)]),
+        )
     report_type = detect_report_type(header_detection.detected_fields, data_rows, header_detection.headers)
     restaurant = detect_restaurant_name(header_detection.headers, data_rows)
     date_from, date_to = detect_period(header_detection.headers, data_rows)
@@ -552,6 +595,8 @@ def detect_report_type(fields: list[str], data_rows: list[list[Any]], headers: l
     header_text = " ".join(headers)
     sample_text = " ".join(str(cell or "") for row in data_rows[:10] for cell in row)
     normalized_text = normalize_for_match(f"{header_text} {sample_text}")
+    if looks_like_official_uber_accuracy_text(normalized_text) and ROW_LEVEL_ACCURACY_FIELDS.issubset(field_set):
+        return "adjustments_report"
     has_order = bool(field_set & ORDER_FIELDS)
     has_payment = bool(field_set & PAYMENT_FIELDS)
     has_adjustment_marker = any(marker in normalized_text for marker in ADJUSTMENT_MARKERS)
@@ -609,6 +654,46 @@ def detect_evidence_type_from_name(filename: str) -> tuple[str, Decimal]:
         if any(normalize_for_match(hint) in normalized for hint in hints):
             return evidence_type, Decimal("0.72")
     return "other", Decimal("0.45")
+
+
+def looks_like_official_uber_accuracy_document(filename: str, rows: list[list[Any]]) -> bool:
+    sample_text = " ".join([filename, *(" ".join(str(cell or "") for cell in row) for row in rows[:8])])
+    return looks_like_official_uber_accuracy_text(normalize_for_match(sample_text))
+
+
+def looks_like_official_uber_accuracy_text(normalized_text: str) -> bool:
+    return any(normalize_for_match(marker) in normalized_text for marker in OFFICIAL_UBER_ACCURACY_MARKERS)
+
+
+def is_aggregate_uber_accuracy_document(filename: str, header_detection: HeaderDetection) -> bool:
+    if not looks_like_official_uber_accuracy_document(filename, [header_detection.headers]):
+        return False
+    return not ROW_LEVEL_ACCURACY_FIELDS.issubset(set(header_detection.detected_fields))
+
+
+def official_uber_document_classification(
+    filename: str,
+    suffix: str,
+    warnings: list[str],
+    *,
+    headers: list[str] | None = None,
+    rows_recognized: int = 0,
+) -> FileClassification:
+    return base_file_classification(
+        filename,
+        suffix,
+        "evidence",
+        "import_evidence_bulk",
+        Decimal("0.72"),
+        warnings,
+        evidence_type="uber_screenshot",
+        metadata={
+            "official_uber_document": True,
+            "report_label": "Document officiel Uber a exploiter",
+            "rows_recognized": rows_recognized,
+            "detected_columns": headers or [],
+        },
+    )
 
 
 def parse_date_value(value: object) -> date | None:

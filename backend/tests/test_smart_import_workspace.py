@@ -15,6 +15,8 @@ from app.models import (
     EvidenceImportedFile,
     EvidenceRequestTask,
     SmartImportPreviewBatch,
+    UberCustomerRefundDispute,
+    UberFinancialTransaction,
     UberReportingImportBatch,
     UberReportingImportRow,
     UberStoreMapping,
@@ -112,6 +114,171 @@ def test_smart_import_unknown_becomes_manual_review(client: TestClient) -> None:
     file_preview = response.json()["files"][0]
     assert file_preview["detected_category"] == "unknown"
     assert file_preview["recommended_action"] == "manual_review"
+
+
+def test_smart_import_detects_official_uber_accuracy_orders_as_adjustments(client: TestClient) -> None:
+    csv_content = official_inaccurate_orders_csv()
+
+    response = client.post(
+        "/v1/smart-import/preview",
+        files=[
+            (
+                "files",
+                (
+                    "download.csv",
+                    csv_content.encode("utf-8"),
+                    "text/csv",
+                ),
+            )
+        ],
+    )
+
+    assert response.status_code == 201
+    file_preview = response.json()["files"][0]
+    assert file_preview["detected_category"] == "uber_reporting"
+    assert file_preview["detected_report_type"] == "adjustments_report"
+    assert file_preview["recommended_action"] == "import_uber_reporting"
+    assert "Remboursement pris en charge par le commerçant" in file_preview["detected_columns"]
+
+
+def test_smart_confirm_official_uber_accuracy_orders_creates_refund_transaction(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = Restaurant(name="Krousty Bat", sender_email="tiramisumaisonfrance@example.com")
+    db_session.add(restaurant)
+    db_session.flush()
+    db_session.add(
+        UberStoreMapping(
+            restaurant_id=restaurant.id,
+            uber_store_id="store-accuracy",
+            uber_store_name="Krousty Bat",
+            active=True,
+        )
+    )
+    db_session.commit()
+    csv_content = official_inaccurate_orders_csv()
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("inaccurate_orders_v3_2026-01-01_2026-01-31.csv", csv_content.encode("utf-8"), "text/csv"))],
+    ).json()
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [
+                {
+                    "file_id": preview["files"][0]["id"],
+                    "action": "import_uber_reporting",
+                    "report_type": "adjustments_report",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    routed = response.json()["routed_files"][0]
+    assert routed["destination_type"] == "uber_reporting_batch"
+    assert routed["created_transactions_count"] == 1
+    assert routed["skipped_rows"] == 0
+    transaction = db_session.scalar(select(UberFinancialTransaction))
+    assert transaction is not None
+    assert transaction.restaurant_id == restaurant.id
+    assert transaction.uber_order_id == "PROCESS-ACCURACY-001"
+    assert transaction.transaction_type == "customer_refund"
+    assert str(transaction.amount) == "-12.50"
+    assert transaction.raw_payload_json["raw_data"]["probleme avec la commande"] == "Article manquant"
+
+    detect_response = client.post("/v1/customer-refunds/detect", json={"restaurant_id": restaurant.id})
+    assert detect_response.status_code == 200
+    dispute = db_session.scalar(select(UberCustomerRefundDispute))
+    assert dispute is not None
+    assert dispute.dispute_type == "missing_item"
+    assert str(dispute.customer_refund_amount) == "12.50"
+
+
+def test_smart_import_routes_top_inaccurate_items_as_official_uber_document(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    csv_content = (
+        "Restaurant,Id. externe du restaurant,Pays,Code pays,Ville,Articles incorrects,Personnalisations incorrectes,"
+        "Id. externe de l'article,Données externes,Problème avec la commande,Problème avec le plat,Nombre\n"
+        "Krousty Bat,store-accuracy,France,FR,Paris,Burger Test,,item-1,sku-1,Article manquant,,4\n"
+    )
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("top_inaccurate_items_v3_2026-01-01_2026-01-31.csv", csv_content.encode("utf-8"), "text/csv"))],
+    ).json()
+    file_preview = preview["files"][0]
+    assert file_preview["detected_category"] == "evidence"
+    assert file_preview["recommended_action"] == "import_evidence_bulk"
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [{"file_id": file_preview["id"], "action": "import_evidence_bulk"}],
+        },
+    )
+
+    assert response.status_code == 200
+    routed = response.json()["routed_files"][0]
+    assert routed["destination_type"] == "evidence_import_batch"
+    assert routed["destination_url"] == f"/evidence-imports/{routed['destination_id']}"
+    batch = db_session.get(EvidenceImportBatch, routed["destination_id"])
+    assert batch is not None
+    assert batch.stored_files_count == 1
+    imported_file = db_session.scalar(select(EvidenceImportedFile).where(EvidenceImportedFile.batch_id == batch.id))
+    assert imported_file is not None
+    assert imported_file.original_filename == "top_inaccurate_items_v3_2026-01-01_2026-01-31.csv"
+
+
+def test_smart_import_routes_order_accuracy_workbook_as_official_uber_document(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Summary"
+    sheet.append(["Période d'évaluation"])
+    sheet.append(["2026-01-01 - 2026-01-31"])
+    sheet.append(["Commandes incorrectes", 3])
+    buffer = BytesIO()
+    workbook.save(buffer)
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[
+            (
+                "files",
+                (
+                    "order_accuracy_analytics_2026-01-01_2026-01-31.xlsx",
+                    buffer.getvalue(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+            )
+        ],
+    ).json()
+    file_preview = preview["files"][0]
+    assert file_preview["detected_category"] == "evidence"
+    assert file_preview["recommended_action"] == "import_evidence_bulk"
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [{"file_id": file_preview["id"], "action": "import_evidence_bulk"}],
+        },
+    )
+
+    assert response.status_code == 200
+    routed = response.json()["routed_files"][0]
+    assert routed["destination_type"] == "evidence_import_batch"
+    imported_file = db_session.scalar(
+        select(EvidenceImportedFile).where(EvidenceImportedFile.original_filename == "order_accuracy_analytics_2026-01-01_2026-01-31.xlsx")
+    )
+    assert imported_file is not None
 
 
 def test_smart_confirm_routes_uber_report_to_reporting_batch(client: TestClient, db_session: Session) -> None:
@@ -482,3 +649,18 @@ def create_restaurant_order_and_task(db: Session) -> tuple[Restaurant, ClaimOrde
     db.refresh(restaurant)
     db.refresh(order)
     return restaurant, order
+
+
+def official_inaccurate_orders_csv() -> str:
+    return (
+        "Restaurant,Id. externe du restaurant,Pays,Code pays,Ville,Id. de la commande,UUID du processus,"
+        "Heure de la commande,Heure d'acceptation par le marchand,Heure du remboursement,"
+        "Problème avec la commande,Informations concernant le problème lié à l'article,Articles incorrects,"
+        "Personnalisations incorrectes,Commentaires du client,Code de devise,Montant moyen des commandes,"
+        "Client remboursé,Remboursement pris en charge par le commerçant,Remboursement non pris en charge par le commerçant,"
+        "Type de commande honorée,Canal de commande,Marque Eats\n"
+        "Krousty Bat,store-accuracy,France,FR,Paris,ORDER-ACCURACY-001,PROCESS-ACCURACY-001,"
+        "2026-01-05 12:00,2026-01-05 12:02,2026-01-06 09:30,"
+        "Article manquant,Burger Test,Burger Test,,Client Test,EUR,30.00,12.50,-12.50,0.00,"
+        "Livraison,Uber Eats,Uber Eats\n"
+    )
