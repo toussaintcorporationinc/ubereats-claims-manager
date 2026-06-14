@@ -111,6 +111,7 @@ def test_bootstrap_first_owner_via_register_ok(unauthenticated_client: TestClien
 
     assert data["token_type"] == "bearer"
     assert data["access_token"]
+    assert data["refresh_token"]
     assert data["user"]["role"] == "owner"
     assert data["user"]["email"] == "owner@example.com"
 
@@ -132,7 +133,32 @@ def test_owner_login_ok(unauthenticated_client: TestClient) -> None:
     data = login(unauthenticated_client, "owner@example.com", "owner-password")
 
     assert data["access_token"]
+    assert data["refresh_token"]
     assert data["user"]["role"] == "owner"
+
+
+def test_refresh_token_keeps_owner_session_alive(unauthenticated_client: TestClient) -> None:
+    register_owner(unauthenticated_client)
+    login_data = login(unauthenticated_client, "owner@example.com", "owner-password")
+
+    response = unauthenticated_client.post(
+        "/v1/auth/refresh",
+        json={"refresh_token": login_data["refresh_token"]},
+    )
+
+    assert response.status_code == 200
+    refreshed = response.json()
+    assert refreshed["access_token"]
+    assert refreshed["refresh_token"]
+    assert refreshed["user"]["email"] == "owner@example.com"
+
+
+def test_invalid_refresh_token_is_refused(unauthenticated_client: TestClient) -> None:
+    register_owner(unauthenticated_client)
+
+    response = unauthenticated_client.post("/v1/auth/refresh", json={"refresh_token": "not-a-valid-token"})
+
+    assert response.status_code == 401
 
 
 def test_login_wrong_password_is_refused(unauthenticated_client: TestClient) -> None:

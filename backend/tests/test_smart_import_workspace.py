@@ -855,6 +855,71 @@ def test_workspace_machine_runs_refund_pipeline_for_owner(client: TestClient, db
     assert db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "UBER-MACHINE-001")) is not None
 
 
+def test_workspace_machine_repairs_historical_restaurant_misclassification(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    krousty = Restaurant(name="Krousty Bat", sender_email="krousty@example.com")
+    asian = Restaurant(name="Asian Passion", sender_email="asian@example.com")
+    db_session.add_all([krousty, asian])
+    db_session.flush()
+    db_session.add(
+        UberStoreMapping(
+            restaurant_id=asian.id,
+            uber_store_id="store-asian-machine",
+            uber_store_name="Asian Passion",
+            active=True,
+        )
+    )
+    snapshot = UberOrderSnapshot(
+        restaurant_id=krousty.id,
+        uber_store_id="store-asian-machine",
+        uber_order_id="UBER-MACHINE-ASIAN-001",
+        display_id="ASIAN-001",
+        current_state="canceled",
+        order_total_amount=Decimal("31.50"),
+        currency="EUR",
+        raw_payload_json={"uber_store_name": "Asian Passion", "uber_store_id": "store-asian-machine"},
+        imported_from="manager_export",
+    )
+    transaction = UberFinancialTransaction(
+        restaurant_id=krousty.id,
+        uber_store_id="store-asian-machine",
+        uber_order_id="UBER-MACHINE-ASIAN-001",
+        transaction_type="customer_refund",
+        amount=Decimal("-7.00"),
+        currency="EUR",
+        transaction_date=datetime(2026, 6, 1).date(),
+        payout_reference="PAY-MACHINE-ASIAN-001",
+        raw_payload_json={"uber_store_name": "Asian Passion", "uber_store_id": "store-asian-machine"},
+        imported_from="manager_export",
+    )
+    order = ClaimOrder(
+        restaurant_id=krousty.id,
+        uber_order_number="UBER-MACHINE-ASIAN-001",
+        order_amount=Decimal("31.50"),
+        currency="EUR",
+        status="missing_evidence",
+    )
+    db_session.add_all([snapshot, transaction, order])
+    db_session.commit()
+
+    response = client.post(
+        "/v1/workspace/machine/run",
+        json={"trigger": "manual", "sync_gmail": False, "run_autopilot": False},
+    )
+
+    assert response.status_code == 200
+    stages = {stage["name"]: stage for stage in response.json()["stages"]}
+    assert stages["historical_reclassification"]["created_count"] == 2
+    db_session.refresh(snapshot)
+    db_session.refresh(transaction)
+    db_session.refresh(order)
+    assert snapshot.restaurant_id == asian.id
+    assert transaction.restaurant_id == asian.id
+    assert order.restaurant_id == asian.id
+
+
 def test_workspace_machine_reports_autopilot_disabled_without_failure(client: TestClient) -> None:
     response = client.post("/v1/workspace/machine/run", json={"sync_gmail": False, "run_autopilot": True})
 

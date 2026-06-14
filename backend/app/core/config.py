@@ -98,6 +98,7 @@ class Settings(BaseSettings):
     api_base_url: str | None = None
     secret_key: str | None = None
     access_token_expire_minutes: int = 60
+    refresh_token_expire_days: int = 30
     rate_limit_enabled: bool = False
     rate_limit_requests_per_minute: int = 120
     login_rate_limit_per_minute: int = 10
