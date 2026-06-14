@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import decode_access_token
-from app.models import ClaimOrder, User, UserRestaurantAccess
+from app.models import ClaimOrder, Restaurant, User, UserRestaurantAccess
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/v1/auth/login")
 
@@ -46,23 +46,30 @@ require_owner = require_roles("owner")
 require_owner_or_manager = require_roles("owner", "manager")
 
 
-def get_accessible_restaurant_ids(db: Session, user: User) -> set[int] | None:
-    if user.role == "owner":
+def get_accessible_restaurant_ids(db: Session, user: User, *, include_inactive: bool = False) -> set[int] | None:
+    if user.role == "owner" and include_inactive:
         return None
-    return set(
-        db.scalars(
-            select(UserRestaurantAccess.restaurant_id).where(UserRestaurantAccess.user_id == user.id)
-        ).all()
-    )
+
+    if user.role == "owner":
+        statement = select(Restaurant.id)
+    else:
+        statement = select(UserRestaurantAccess.restaurant_id).where(UserRestaurantAccess.user_id == user.id)
+        if not include_inactive:
+            statement = statement.join(Restaurant, Restaurant.id == UserRestaurantAccess.restaurant_id)
+
+    if not include_inactive:
+        statement = statement.where(Restaurant.active.is_(True))
+
+    return set(db.scalars(statement).all())
 
 
-def can_access_restaurant(db: Session, user: User, restaurant_id: int) -> bool:
-    accessible_ids = get_accessible_restaurant_ids(db, user)
+def can_access_restaurant(db: Session, user: User, restaurant_id: int, *, include_inactive: bool = False) -> bool:
+    accessible_ids = get_accessible_restaurant_ids(db, user, include_inactive=include_inactive)
     return accessible_ids is None or restaurant_id in accessible_ids
 
 
-def ensure_can_access_restaurant(db: Session, user: User, restaurant_id: int) -> None:
-    if not can_access_restaurant(db, user, restaurant_id):
+def ensure_can_access_restaurant(db: Session, user: User, restaurant_id: int, *, include_inactive: bool = False) -> None:
+    if not can_access_restaurant(db, user, restaurant_id, include_inactive=include_inactive):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Restaurant access denied")
 
 

@@ -48,7 +48,7 @@ def list_restaurants(
     statement = select(Restaurant).order_by(Restaurant.id)
     if not include_inactive:
         statement = statement.where(Restaurant.active.is_(True))
-    accessible_ids = get_accessible_restaurant_ids(db, current_user)
+    accessible_ids = get_accessible_restaurant_ids(db, current_user, include_inactive=include_inactive)
     if accessible_ids is not None:
         if not accessible_ids:
             return []
@@ -162,7 +162,7 @@ def get_restaurant(
     restaurant = db.get(Restaurant, restaurant_id)
     if restaurant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Restaurant not found")
-    ensure_can_access_restaurant(db, current_user, restaurant.id)
+    ensure_can_access_restaurant(db, current_user, restaurant.id, include_inactive=True)
     return restaurant
 
 
