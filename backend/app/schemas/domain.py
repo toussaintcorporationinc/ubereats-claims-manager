@@ -1319,6 +1319,62 @@ class UberHistoricalReclassificationResponse(BaseModel):
     run_by_user_id: int
 
 
+class UberHistoricalImportRepairRequest(BaseModel):
+    batch_id: int | None = None
+    restaurant_id: int | None = None
+    include_duplicates: bool = True
+    min_confidence: Decimal = Field(default=Decimal("0.85"), ge=Decimal("0.85"), le=Decimal("1.00"))
+    limit: int = Field(default=1000, ge=1, le=10000)
+
+
+class UberHistoricalImportRepairApplyRequest(UberHistoricalImportRepairRequest):
+    confirm: bool = False
+
+
+class UberHistoricalImportRepairCandidate(BaseModel):
+    key: str
+    row_id: int
+    batch_id: int
+    row_number: int
+    original_filename: str
+    report_type: UberReportingReportType
+    old_status: UberReportingRowStatus
+    old_errors: list[str] = Field(default_factory=list)
+    old_warnings: list[str] = Field(default_factory=list)
+    new_errors: list[str] = Field(default_factory=list)
+    new_warnings: list[str] = Field(default_factory=list)
+    row_kind: str | None = None
+    uber_store_id: str | None = None
+    uber_store_name: str | None = None
+    uber_order_id: str | None = None
+    display_id: str | None = None
+    target_restaurant_id: int | None = None
+    target_restaurant_name: str | None = None
+    reason: str
+    confidence: Decimal
+    status: str
+    blockers: list[str] = Field(default_factory=list)
+    created_snapshot_id: int | None = None
+    created_transaction_id: int | None = None
+    created_new_record: bool = False
+
+
+class UberHistoricalImportRepairResponse(BaseModel):
+    status: str
+    scanned_count: int
+    total_candidates: int
+    eligible_count: int
+    blocked_count: int
+    repaired_count: int
+    skipped_count: int
+    created_snapshots_count: int
+    created_transactions_count: int
+    candidates: list[UberHistoricalImportRepairCandidate]
+    repaired: list[UberHistoricalImportRepairCandidate] = Field(default_factory=list)
+    skipped: list[UberHistoricalImportRepairCandidate] = Field(default_factory=list)
+    run_by_user_id: int
+
+
 class UberReconciliationRunRequest(BaseModel):
     restaurant_id: int | None = None
     date_from: date | None = None

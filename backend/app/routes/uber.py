@@ -20,6 +20,9 @@ from app.models import (
 )
 from app.schemas.domain import (
     ClaimOrderRead,
+    UberHistoricalImportRepairApplyRequest,
+    UberHistoricalImportRepairRequest,
+    UberHistoricalImportRepairResponse,
     UberReconciliationBulkCreateRequest,
     UberReconciliationBulkCreateResponse,
     UberHistoricalReclassificationApplyRequest,
@@ -46,6 +49,7 @@ from app.schemas.domain import (
     UberUnmappedStoreRead,
 )
 from app.services.audit import add_audit_log
+from app.services.historical_uber_reporting_repair_service import HistoricalUberReportingRepairService
 from app.services.historical_restaurant_reclassification_service import HistoricalRestaurantReclassificationService
 from app.services.uber_connector_service import UberConnectorService
 from app.services.uber_reconciliation_service import UberReconciliationService
@@ -309,6 +313,56 @@ def apply_historical_reclassification(
         db,
         current_user,
         restaurant_id=payload.restaurant_id,
+        min_confidence=payload.min_confidence,
+        limit=payload.limit,
+    )
+
+
+@router.post(
+    "/historical-import-repair/preview",
+    response_model=UberHistoricalImportRepairResponse,
+)
+def preview_historical_import_repair(
+    payload: UberHistoricalImportRepairRequest | None = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner),
+) -> dict[str, object]:
+    payload = payload or UberHistoricalImportRepairRequest()
+    if payload.restaurant_id is not None:
+        ensure_can_access_restaurant(db, current_user, payload.restaurant_id, include_inactive=True)
+    return HistoricalUberReportingRepairService().preview(
+        db,
+        current_user,
+        batch_id=payload.batch_id,
+        restaurant_id=payload.restaurant_id,
+        include_duplicates=payload.include_duplicates,
+        min_confidence=payload.min_confidence,
+        limit=payload.limit,
+    )
+
+
+@router.post(
+    "/historical-import-repair/apply",
+    response_model=UberHistoricalImportRepairResponse,
+)
+def apply_historical_import_repair(
+    payload: UberHistoricalImportRepairApplyRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner),
+) -> dict[str, object]:
+    if not payload.confirm:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Set confirm=true after reviewing the historical import repair preview.",
+        )
+    if payload.restaurant_id is not None:
+        ensure_can_access_restaurant(db, current_user, payload.restaurant_id, include_inactive=True)
+    return HistoricalUberReportingRepairService().apply(
+        db,
+        current_user,
+        batch_id=payload.batch_id,
+        restaurant_id=payload.restaurant_id,
+        include_duplicates=payload.include_duplicates,
         min_confidence=payload.min_confidence,
         limit=payload.limit,
     )

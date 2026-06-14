@@ -156,16 +156,33 @@ export default function DashboardPage() {
               {pilotRunning ? "TENNET travaille" : "Passage complet"}
             </button>
           ) : null}
-          {canSeeBusinessMetrics ? (
-            <Link href="/smart-import" className="secondary-button">
-              Detail imports
-            </Link>
-          ) : null}
-          <Link href="/evidence-tasks" className="secondary-button">
-            Preuves
-          </Link>
         </div>
       </div>
+
+      {canSeeBusinessMetrics ? (
+        <section className="home-flow-panel" aria-label="Parcours principaux TENNET">
+          <Link href="/remboursements" className="home-flow-card home-flow-card--refunds">
+            <span>Remboursements</span>
+            <strong>Demandes client, articles manquants, qualite, ajustements</strong>
+            <small>Preuves, mails Uber, relances et paiements rattaches au bon restaurant.</small>
+          </Link>
+          <Link href="/annulations" className="home-flow-card home-flow-card--cancellations">
+            <span>Annulations</span>
+            <strong>Commandes annulees, non compensees ou partiellement payees</strong>
+            <small>Tickets, preparation, gaspillage, reconciliation et contestation.</small>
+          </Link>
+          <Link href="/evidence-tasks" className="home-flow-card home-flow-card--proofs">
+            <span>Preuves</span>
+            <strong>Ce qu'il faut photographier ou importer maintenant</strong>
+            <small>Chaque preuve indique si elle concerne un remboursement ou une annulation.</small>
+          </Link>
+          <Link href="/smart-import" className="home-flow-card home-flow-card--imports">
+            <span>Imports</span>
+            <strong>Voir ce que TENNET a classe et traite</strong>
+            <small>Fichiers traites, bloques, doublons conserves et actions suivantes.</small>
+          </Link>
+        </section>
+      ) : null}
 
       <ApiError error={error} />
       <ApiError error={pilotError} />
