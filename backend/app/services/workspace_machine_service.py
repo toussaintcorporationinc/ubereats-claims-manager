@@ -18,6 +18,8 @@ from app.services.audit import add_audit_log
 from app.services.autopilot_service import AutopilotError, run_autopilot
 from app.services.customer_refund_detection_service import detect_customer_refund_disputes
 from app.services.customer_refund_dispute_service import create_claim_orders_bulk, create_drafts_bulk
+from app.services.evidence_ai_analysis_service import EvidenceAIAnalysisService
+from app.services.evidence_request_service import recalculate_evidence_tasks
 from app.services.email_provider import EmailProvider, EmailProviderError
 from app.services.followup_policy_service import FOLLOWUP_ELIGIBLE_STATUSES, FollowUpPolicyService
 from app.services.gmail_inbound_sync_service import GmailInboundSyncService
@@ -51,6 +53,7 @@ class WorkspaceMachineService:
             self.stage("historical_import_repair", lambda: self.repair_historical_import_rows(payload.restaurant_id)),
             self.stage("deductions", lambda: self.detect_customer_refunds(payload.restaurant_id)),
             self.stage("claim_orders", lambda: self.create_customer_refund_claim_orders(payload.restaurant_id)),
+            self.stage("evidence", lambda: self.process_evidence_queue(payload.restaurant_id)),
             self.stage("drafts", lambda: self.create_customer_refund_drafts(payload.restaurant_id)),
             self.stage("followups", lambda: self.recalculate_followups(payload.restaurant_id)),
             self.stage("appeals", lambda: self.recalculate_appeals(payload.restaurant_id)),
@@ -189,6 +192,37 @@ class WorkspaceMachineService:
             created_count=int(result.get("created_count", 0)),
             skipped_count=int(result.get("skipped_count", 0)),
             warnings=errors,
+        )
+
+    def process_evidence_queue(self, restaurant_id: int | None) -> WorkspaceMachineStage:
+        recalc = recalculate_evidence_tasks(
+            self.db,
+            self.current_user,
+            restaurant_id=restaurant_id,
+            dry_run=False,
+        )
+        self.db.flush()
+        evidence_result = EvidenceAIAnalysisService().analyze_pending_batches(
+            self.db,
+            self.current_user,
+            restaurant_id=restaurant_id,
+            limit=500,
+        )
+        warnings = [*recalc.get("errors", []), *evidence_result.get("errors", [])]
+        processed_count = (
+            int(recalc.get("created_tasks", 0))
+            + int(recalc.get("existing_tasks", 0))
+            + int(recalc.get("completed_tasks", 0))
+            + int(evidence_result.get("analyzed_files_count", 0))
+        )
+        return WorkspaceMachineStage(
+            name="evidence",
+            status="warning" if warnings else "completed",
+            processed_count=processed_count,
+            created_count=int(recalc.get("created_tasks", 0)) + int(evidence_result.get("auto_matched_count", 0)),
+            skipped_count=int(recalc.get("skipped_orders", 0)) + int(evidence_result.get("needs_review_count", 0)),
+            failed_count=int(evidence_result.get("failed_files_count", 0)),
+            warnings=warnings,
         )
 
     def recalculate_followups(self, restaurant_id: int | None) -> WorkspaceMachineStage:

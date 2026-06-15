@@ -295,19 +295,16 @@ def test_attach_completes_evidence_task_and_runs_validation(configured_client: T
         data={"restaurant_id": str(restaurant["id"])},
     )
     batch_id = response.json()["id"]
-    assert configured_client.post(f"/v1/evidence-imports/{batch_id}/analyze", json={"provider": "fake", "limit": 10}).status_code == 200
+    analyze_response = configured_client.post(f"/v1/evidence-imports/{batch_id}/analyze", json={"provider": "fake", "limit": 10})
+    assert analyze_response.status_code == 200
+    assert analyze_response.json()["auto_matched_count"] == 1
     file_id = configured_client.get(f"/v1/evidence-imports/{batch_id}/files").json()["files"][0]["id"]
+    detail = configured_client.get(f"/v1/evidence-imported-files/{file_id}").json()
 
-    attach_response = configured_client.post(
-        f"/v1/evidence-imported-files/{file_id}/attach",
-        json={"candidate_type": "evidence_task", "candidate_id": task.id, "evidence_type": "receipt"},
-    )
-
-    assert attach_response.status_code == 200
-    assert attach_response.json()["validation"]["order_id"] == order_data["id"]
     db_session.refresh(task)
     assert task.status == "completed"
     assert db_session.scalar(select(EvidenceFile).where(EvidenceFile.order_id == order_data["id"])) is not None
+    assert any(candidate["status"] == "auto_attached" for candidate in detail["candidates"])
 
 
 def test_refused_claim_response_review_creates_appeal_workflow(configured_client: TestClient, db_session: Session) -> None:
