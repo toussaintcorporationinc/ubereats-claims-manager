@@ -291,8 +291,8 @@ def test_evidence_requirements_by_type(configured_client: TestClient, db_session
     by_dispute = {}
     for requirement in requirements:
         by_dispute.setdefault(requirement.dispute.dispute_type, set()).add(requirement.required_evidence_type)
-    assert "delivery_proof" in by_dispute["order_not_received"]
-    assert "preparation_proof" in by_dispute["missing_item"]
+    assert by_dispute["order_not_received"] == {"receipt"}
+    assert by_dispute["missing_item"] == {"receipt"}
 
 
 def test_create_claim_order_from_dispute(configured_client: TestClient, db_session: Session) -> None:
@@ -323,18 +323,17 @@ def test_create_draft_requires_complete_evidence(configured_client: TestClient, 
     blocked = configured_client.post(f"/v1/customer-refunds/{dispute.id}/create-draft")
     assert blocked.status_code == 409
 
-    for evidence_type in ("receipt", "preparation_proof"):
-        response = configured_client.post(
-            f"/v1/orders/{order['id']}/evidence",
-            json={
-                "evidence_type": evidence_type,
-                "original_filename": f"{evidence_type}.png",
-                "storage_path": f"storage/{evidence_type}.png",
-                "mime_type": "image/png",
-                "file_size": 100,
-            },
-        )
-        assert response.status_code == 201
+    response = configured_client.post(
+        f"/v1/orders/{order['id']}/evidence",
+        json={
+            "evidence_type": "receipt",
+            "original_filename": "ticket-agrafe-commande.png",
+            "storage_path": "storage/ticket-agrafe-commande.png",
+            "mime_type": "image/png",
+            "file_size": 100,
+        },
+    )
+    assert response.status_code == 201
     configured_client.post(f"/v1/customer-refunds/{dispute.id}/recalculate-evidence")
 
     draft = configured_client.post(f"/v1/customer-refunds/{dispute.id}/create-draft")
@@ -390,7 +389,7 @@ def test_evidence_tasks_generated_for_existing_claim_order(configured_client: Te
     detect(configured_client)
 
     tasks = db_session.scalars(select(EvidenceRequestTask)).all()
-    assert {task.required_evidence_type for task in tasks} == {"receipt", "preparation_proof"}
+    assert {task.required_evidence_type for task in tasks} == {"receipt"}
 
 
 def test_upload_via_evidence_task_completes_requirement(configured_client: TestClient, db_session: Session) -> None:

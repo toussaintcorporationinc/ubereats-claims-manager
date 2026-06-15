@@ -26,6 +26,7 @@ from app.services.gmail_inbound_sync_service import GmailInboundSyncService
 from app.services.historical_restaurant_reclassification_service import HistoricalRestaurantReclassificationService
 from app.services.historical_uber_reporting_repair_service import HistoricalUberReportingRepairService
 from app.services.workspace_action_service import WorkspaceActionService
+from app.services.workspace_unclassified_service import WorkspaceUnclassifiedService
 
 
 class WorkspaceMachineError(Exception):
@@ -54,6 +55,7 @@ class WorkspaceMachineService:
             self.stage("deductions", lambda: self.detect_customer_refunds(payload.restaurant_id)),
             self.stage("claim_orders", lambda: self.create_customer_refund_claim_orders(payload.restaurant_id)),
             self.stage("evidence", lambda: self.process_evidence_queue(payload.restaurant_id)),
+            self.stage("unclassified", self.inspect_unclassified),
             self.stage("drafts", lambda: self.create_customer_refund_drafts(payload.restaurant_id)),
             self.stage("followups", lambda: self.recalculate_followups(payload.restaurant_id)),
             self.stage("appeals", lambda: self.recalculate_appeals(payload.restaurant_id)),
@@ -223,6 +225,16 @@ class WorkspaceMachineService:
             skipped_count=int(recalc.get("skipped_orders", 0)) + int(evidence_result.get("needs_review_count", 0)),
             failed_count=int(evidence_result.get("failed_files_count", 0)),
             warnings=warnings,
+        )
+
+    def inspect_unclassified(self) -> WorkspaceMachineStage:
+        result = WorkspaceUnclassifiedService(self.db, self.current_user).list_items(limit=200)
+        return WorkspaceMachineStage(
+            name="unclassified",
+            status="warning" if result.total_count else "completed",
+            processed_count=result.total_count,
+            skipped_count=result.total_count,
+            warnings=[f"{result.total_count}_source(s)_non_classee(s)_need_context"] if result.total_count else [],
         )
 
     def recalculate_followups(self, restaurant_id: int | None) -> WorkspaceMachineStage:

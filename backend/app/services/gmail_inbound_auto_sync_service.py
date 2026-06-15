@@ -37,6 +37,9 @@ class GmailInboundAutoSyncResult:
     autopilot_sent_count: int = 0
     autopilot_skipped_count: int = 0
     autopilot_failed_count: int = 0
+    workspace_machine_runs: int = 0
+    workspace_machine_warnings: int = 0
+    workspace_machine_failures: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -60,6 +63,7 @@ class GmailInboundAutoSyncService:
         result = GmailInboundAutoSyncResult(status="success")
         now = utc_now()
         accounts = list(db.scalars(self.active_accounts_statement()).all())
+        users_needing_workspace_machine: dict[int, User] = {}
         for account in accounts:
             user = db.get(User, account.user_id)
             if user is None or not user.active or user.role == "staff":
@@ -89,11 +93,16 @@ class GmailInboundAutoSyncService:
                     sync_service.run_autopilot_for_negative_responses(db, user, account_result)
                 self.add_account_result(result, account_result)
                 result.accounts_synced += 1
+                users_needing_workspace_machine[user.id] = user
             except EmailProviderError as exc:
                 result.errors.append(f"email_account:{account.id}:{exc.message}")
             except Exception as exc:  # noqa: BLE001 - background sync must not kill the scheduler loop.
                 logger.exception("Gmail auto-sync failed for account %s", account.id)
                 result.errors.append(f"email_account:{account.id}:{exc}")
+
+        if self.settings.gmail_inbound_auto_sync_run_workspace_machine:
+            for user in users_needing_workspace_machine.values():
+                self.run_workspace_machine(db, user, result)
 
         if result.accounts_checked or result.errors:
             add_audit_log(
@@ -112,6 +121,9 @@ class GmailInboundAutoSyncService:
                     "autopilot_sent_count": result.autopilot_sent_count,
                     "autopilot_skipped_count": result.autopilot_skipped_count,
                     "autopilot_failed_count": result.autopilot_failed_count,
+                    "workspace_machine_runs": result.workspace_machine_runs,
+                    "workspace_machine_warnings": result.workspace_machine_warnings,
+                    "workspace_machine_failures": result.workspace_machine_failures,
                     "errors": result.errors,
                 },
             )
@@ -152,6 +164,34 @@ class GmailInboundAutoSyncService:
         result.autopilot_skipped_count += account_result.autopilot_skipped_count
         result.autopilot_failed_count += account_result.autopilot_failed_count
         result.errors.extend(account_result.errors)
+
+    def run_workspace_machine(self, db: Session, user: User, result: GmailInboundAutoSyncResult) -> None:
+        from app.schemas.domain import WorkspaceMachineRunRequest
+        from app.services.workspace_machine_service import WorkspaceMachineService
+
+        try:
+            machine_result = WorkspaceMachineService(db, user, self.provider).run(
+                WorkspaceMachineRunRequest(
+                    trigger="manual",
+                    sync_gmail=False,
+                    run_autopilot=self.settings.gmail_inbound_auto_sync_run_autopilot,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - background recovery must not stop Gmail sync cycles.
+            logger.exception("Workspace machine auto-run failed for user %s", user.id)
+            result.workspace_machine_failures += 1
+            result.errors.append(f"workspace_machine:user:{user.id}:{exc}")
+            return
+        result.workspace_machine_runs += 1
+        autopilot_stage = next((stage for stage in machine_result.stages if stage.name == "autopilot"), None)
+        if autopilot_stage is not None:
+            result.autopilot_sent_count += autopilot_stage.sent_count
+            result.autopilot_skipped_count += autopilot_stage.skipped_count
+            result.autopilot_failed_count += autopilot_stage.failed_count
+        if machine_result.status == "warning":
+            result.workspace_machine_warnings += 1
+        elif machine_result.status == "failed":
+            result.workspace_machine_failures += 1
 
 
 class GmailInboundAutoSyncScheduler:

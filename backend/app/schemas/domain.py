@@ -615,6 +615,7 @@ MissingClaimItem = Literal[
     "uber_order_number",
     "order_amount",
     "currency",
+    "receipt",
     "cancellation_proof",
     "preparation_or_waste_proof",
 ]
@@ -624,6 +625,7 @@ ClaimValidationBlockingReason = Literal[
     "missing_uber_order_number",
     "missing_order_amount",
     "missing_currency",
+    "missing_unified_order_proof",
     "missing_cancellation_proof",
     "missing_preparation_or_waste_proof",
     "final_status_cannot_be_validated",
@@ -1962,6 +1964,24 @@ class WorkspaceNextActionsResponse(BaseModel):
     this_week: list[WorkspaceAction] = Field(default_factory=list)
     blocked: list[WorkspaceAction] = Field(default_factory=list)
     high_value: list[WorkspaceAction] = Field(default_factory=list)
+
+
+class WorkspaceUnclassifiedItem(BaseModel):
+    source_type: str
+    source_id: int
+    original_filename: str
+    title: str
+    description: str
+    restaurant: str | None = None
+    reason: str
+    missing_fields: list[str] = Field(default_factory=list)
+    action_url: str
+    created_at: datetime
+
+
+class WorkspaceUnclassifiedResponse(BaseModel):
+    items: list[WorkspaceUnclassifiedItem] = Field(default_factory=list)
+    total_count: int = 0
 
 
 WorkspaceMachineTrigger = Literal["manual", "smart_import", "refunds", "cancellations"]

@@ -10,10 +10,12 @@ from app.schemas.domain import (
     WorkspaceMachineRunRequest,
     WorkspaceMachineRunResponse,
     WorkspaceNextActionsResponse,
+    WorkspaceUnclassifiedResponse,
 )
 from app.services.email_provider import EmailProvider
 from app.services.workspace_action_service import WorkspaceActionService
 from app.services.workspace_machine_service import WorkspaceMachineError, WorkspaceMachineService
+from app.services.workspace_unclassified_service import WorkspaceUnclassifiedService
 from app.services.recovery_machine_service import RecoveryMachineService
 
 router = APIRouter(prefix="/v1/workspace", tags=["workspace"])
@@ -25,6 +27,14 @@ def workspace_next_actions(
     current_user: User = Depends(get_current_user),
 ) -> WorkspaceNextActionsResponse:
     return WorkspaceActionService(db, current_user).next_actions()
+
+
+@router.get("/unclassified", response_model=WorkspaceUnclassifiedResponse)
+def workspace_unclassified(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> WorkspaceUnclassifiedResponse:
+    return WorkspaceUnclassifiedService(db, current_user).list_items()
 
 
 @router.get("/recovery-machine", response_model=RecoveryMachineResponse)

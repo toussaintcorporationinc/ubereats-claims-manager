@@ -292,7 +292,16 @@ def classify_evidence_type(text: str, filename: str) -> tuple[str, list[str], De
         matched = [keyword for keyword in keywords if keyword in lower]
         if matched:
             return evidence_type, matched, Decimal("0.85")
+    if looks_like_unified_order_proof(lower):
+        return "receipt", ["ticket_commande_unique"], Decimal("0.80")
     return "unknown", [], Decimal("0.25")
+
+
+def looks_like_unified_order_proof(normalized: str) -> bool:
+    has_order_context = any(token in normalized for token in ("commande", "cmd", "order", "uber", "client"))
+    has_preparation_context = any(token in normalized for token in ("prepare", "prepar", "emballe", "bag", "sac", "menu"))
+    has_amount = AMOUNT_PATTERN.search(normalized) is not None
+    return has_order_context and (has_preparation_context or has_amount)
 
 
 def extract_order_number(text: str) -> str | None:
