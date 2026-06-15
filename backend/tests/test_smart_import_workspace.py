@@ -1009,6 +1009,70 @@ def test_workspace_machine_creates_refund_case_from_ocr_image_text(
     assert dispute.dispute_type == "order_not_received"
 
 
+def test_workspace_machine_resolves_proof_restaurant_from_existing_order_snapshot(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = Restaurant(name="Asian Passion", sender_email="asian@example.com")
+    db_session.add(restaurant)
+    db_session.flush()
+    snapshot = UberOrderSnapshot(
+        restaurant_id=restaurant.id,
+        uber_store_id="store-asian",
+        uber_order_id="SNAP123",
+        display_id="SNAP123",
+        customer_name="Client Snapshot",
+        current_state="completed",
+        placed_at=utc_now(),
+        order_total_amount=Decimal("21.40"),
+        currency="EUR",
+        raw_payload_json={"source": "test"},
+        imported_from="manager_export",
+    )
+    db_session.add(snapshot)
+    db_session.commit()
+
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[
+            (
+                "files",
+                (
+                    "preuve-remboursement.jpg",
+                    b"Commande: SNAP123\nRemboursement client\nTicket agrafe",
+                    "image/jpeg",
+                ),
+            )
+        ],
+    ).json()
+    confirm_response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [{"file_id": preview["files"][0]["id"], "action": "import_evidence_bulk"}],
+        },
+    )
+    assert confirm_response.status_code == 200
+
+    response = client.post(
+        "/v1/workspace/machine/run",
+        json={
+            "trigger": "manual",
+            "smart_import_batch_id": preview["batch_preview_id"],
+            "sync_gmail": False,
+            "run_autopilot": False,
+        },
+    )
+
+    assert response.status_code == 200
+    order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "SNAP123"))
+    assert order is not None
+    assert order.restaurant_id == restaurant.id
+    assert order.customer_name == "Client Snapshot"
+    assert str(order.order_amount) == "21.40"
+    assert order.order_date == snapshot.placed_at.date()
+
+
 def test_workspace_machine_creates_cancellation_case_from_single_stapled_ticket_proof(
     client: TestClient,
     db_session: Session,
