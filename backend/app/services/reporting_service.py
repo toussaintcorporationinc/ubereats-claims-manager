@@ -136,7 +136,7 @@ class ReportingService:
     def customer_refund_rows(self) -> list[UberCustomerRefundDispute]:
         statement = select(UberCustomerRefundDispute)
         statement = self.apply_customer_refund_filters(statement)
-        return list(self.db.scalars(statement).all())
+        return dedupe_customer_refund_rows(list(self.db.scalars(statement).all()))
 
     def order_rows(self, *, limit: int | None, offset: int = 0) -> list[ReportOrderRow]:
         evidence_counts = (
@@ -334,6 +334,53 @@ def recovered_amount_for_customer_refund(row: UberCustomerRefundDispute) -> Deci
     if row.status == "payment_confirmed":
         return row.customer_refund_amount
     return None
+
+
+def dedupe_customer_refund_rows(rows: list[UberCustomerRefundDispute]) -> list[UberCustomerRefundDispute]:
+    unique: dict[tuple[object, ...], UberCustomerRefundDispute] = {}
+    passthrough: list[UberCustomerRefundDispute] = []
+    for row in rows:
+        key = customer_refund_identity(row)
+        if key is None:
+            passthrough.append(row)
+            continue
+        existing = unique.get(key)
+        if existing is None or customer_refund_rank(row) > customer_refund_rank(existing):
+            unique[key] = row
+    return [*unique.values(), *passthrough]
+
+
+def customer_refund_identity(row: UberCustomerRefundDispute) -> tuple[object, ...] | None:
+    order_number = normalize_report_key(row.display_id or row.uber_order_id)
+    if not order_number:
+        return None
+    return (
+        row.restaurant_id,
+        row.dispute_type,
+        order_number,
+        quantize_decimal(Decimal(str(row.customer_refund_amount))),
+    )
+
+
+def customer_refund_rank(row: UberCustomerRefundDispute) -> tuple[int, int]:
+    status_rank = {
+        "payment_confirmed": 8,
+        "payment_to_verify": 7,
+        "accepted": 6,
+        "sent": 5,
+        "gmail_draft_created": 4,
+        "draft_created": 3,
+        "evidence_ready": 2,
+        "needs_evidence": 1,
+    }.get(row.status, 0)
+    return (status_rank, row.id)
+
+
+def normalize_report_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = "".join(character for character in str(value).strip().lower() if character.isalnum())
+    return normalized or None
 
 
 def breakdown_orders(orders: list[ReportOrderRow], key_func: Any) -> list[ReportBreakdownItem]:

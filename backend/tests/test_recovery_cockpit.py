@@ -85,11 +85,13 @@ def add_reconciliation_result(
     *,
     status: str = "not_compensated",
     amount: str = "18.00",
+    claim_order_id: int | None = None,
 ) -> UberReconciliationResult:
     result = UberReconciliationResult(
         restaurant_id=restaurant_id,
         uber_order_id=order_id,
         display_id=order_id,
+        claim_order_id=claim_order_id,
         status=status,
         reason="canceled_no_payment_found",
         order_amount=amount,
@@ -112,12 +114,16 @@ def add_customer_refund(
     status: str = "needs_evidence",
     amount: str = "12.00",
     recovered_amount: str | None = None,
+    claim_order_id: int | None = None,
+    order_id: str | None = None,
 ) -> UberCustomerRefundDispute:
+    uber_order_id = order_id or f"UBER-RECOVERY-{status}"
     dispute = UberCustomerRefundDispute(
         restaurant_id=restaurant_id,
         uber_store_id="store-recovery",
-        uber_order_id=f"UBER-RECOVERY-{status}",
-        display_id=f"UBER-RECOVERY-{status}",
+        uber_order_id=uber_order_id,
+        display_id=uber_order_id,
+        claim_order_id=claim_order_id,
         dispute_type="customer_refund",
         reason="refund_without_sufficient_proof",
         status=status,
@@ -297,6 +303,97 @@ def test_recovery_case_filters(client: TestClient, db_session: Session) -> None:
     assert cases
     assert {case["case_type"] for case in cases} == {"customer_refund_dispute"}
     assert all(case["evidence_status"] in {"missing", "partial"} or case["recovery_stage"] == "needs_evidence" for case in cases)
+
+
+def test_recovery_summary_does_not_double_count_customer_refund_claim_order(client: TestClient, db_session: Session) -> None:
+    restaurant = create_restaurant(client)
+    order = create_order(
+        client,
+        restaurant["id"],
+        "UBER-REFUND-LINKED",
+        "43.00",
+        status="missing_evidence",
+    )
+    add_customer_refund(
+        db_session,
+        restaurant["id"],
+        status="needs_evidence",
+        amount="43.00",
+        claim_order_id=order["id"],
+    )
+
+    response = client.get("/v1/recovery/summary")
+
+    assert response.status_code == 200
+    totals = response.json()["totals"]
+    assert totals["detected_amount"] == "43.00"
+    assert totals["claimable_amount"] == "43.00"
+
+    cases_response = client.get("/v1/recovery/cases")
+    assert cases_response.status_code == 200
+    case_types = [case["case_type"] for case in cases_response.json()["cases"]]
+    assert case_types == ["customer_refund_dispute"]
+
+
+def test_recovery_summary_does_not_double_count_reconciliation_after_claim_order(client: TestClient, db_session: Session) -> None:
+    restaurant = create_restaurant(client)
+    order = create_order(
+        client,
+        restaurant["id"],
+        "UBER-CANCEL-LINKED",
+        "31.50",
+        status="missing_evidence",
+    )
+    add_reconciliation_result(
+        db_session,
+        restaurant["id"],
+        "UBER-CANCEL-LINKED",
+        amount="31.50",
+        claim_order_id=order["id"],
+    )
+
+    response = client.get("/v1/recovery/summary")
+
+    assert response.status_code == 200
+    totals = response.json()["totals"]
+    assert totals["detected_amount"] == "31.50"
+    assert totals["claimable_amount"] == "31.50"
+
+    cases_response = client.get("/v1/recovery/cases")
+    assert cases_response.status_code == 200
+    case_types = [case["case_type"] for case in cases_response.json()["cases"]]
+    assert case_types == ["claim_order"]
+
+
+def test_recovery_summary_dedupes_historical_customer_refund_duplicates(client: TestClient, db_session: Session) -> None:
+    restaurant = create_restaurant(client)
+    add_customer_refund(
+        db_session,
+        restaurant["id"],
+        status="needs_evidence",
+        amount="29.99",
+        order_id="UBER-DUP-REFUND",
+    )
+    add_customer_refund(
+        db_session,
+        restaurant["id"],
+        status="needs_evidence",
+        amount="29.99",
+        order_id="UBER-DUP-REFUND",
+    )
+
+    response = client.get("/v1/recovery/summary")
+
+    assert response.status_code == 200
+    totals = response.json()["totals"]
+    assert totals["detected_amount"] == "29.99"
+    assert totals["detected_count"] == 1
+
+    cases_response = client.get("/v1/recovery/cases")
+    assert cases_response.status_code == 200
+    cases = cases_response.json()["cases"]
+    assert len(cases) == 1
+    assert cases[0]["uber_order_number"] == "UBER-DUP-REFUND"
 
 
 def test_recovery_actions_staff_only_gets_allowed_evidence_actions(client: TestClient, db_session: Session) -> None:

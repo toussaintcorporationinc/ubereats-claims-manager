@@ -4,7 +4,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.auth import can_access_restaurant, get_accessible_restaurant_ids
 from app.models import (
@@ -95,6 +95,7 @@ class RecoveryCockpitService:
             *self.customer_refund_cases(),
         ]
         filtered = [case for case in raw_cases if self.case_matches_filters(case)]
+        filtered = dedupe_financial_cases(filtered)
         filtered.sort(key=lambda item: (item.claimable_amount, item.detected_amount, item.created_at), reverse=True)
         if limit is None:
             return filtered
@@ -118,11 +119,17 @@ class RecoveryCockpitService:
             raise RecoveryExportLimitError(f"Export row limit exceeded: {len(rows)} rows > {max_rows}")
 
     def claim_order_cases(self) -> list[RecoveryCase]:
-        statement = select(ClaimOrder).order_by(ClaimOrder.created_at.desc(), ClaimOrder.id.desc())
+        statement = (
+            select(ClaimOrder)
+            .options(selectinload(ClaimOrder.customer_refund_disputes))
+            .order_by(ClaimOrder.created_at.desc(), ClaimOrder.id.desc())
+        )
         statement = self.apply_restaurant_filter(statement, ClaimOrder)
         orders = self.db.scalars(statement).all()
         cases = []
         for order in orders:
+            if order.customer_refund_disputes:
+                continue
             amount = money(order.order_amount)
             stage = claim_order_stage(order.status)
             appeal = active_appeal_for_case(self.db, "claim_order", order.id)
@@ -169,6 +176,8 @@ class RecoveryCockpitService:
         results = self.db.scalars(statement).all()
         cases = []
         for result in results:
+            if result.claim_order_id is not None:
+                continue
             amount = money(result.missing_amount if result.missing_amount is not None else result.order_amount)
             stage = reconciliation_stage(result.status, result.evidence_required)
             appeal = active_appeal_for_case(self.db, "reconciliation_result", result.id)
@@ -417,6 +426,58 @@ def build_totals(cases: list[RecoveryCase]) -> RecoveryTotals:
         recovery_rate=ratio(recovered, sent_amount),
         review_coverage_rate=ratio(Decimal(reviewed_count), Decimal(len(cases))),
     )
+
+
+def dedupe_financial_cases(cases: list[RecoveryCase]) -> list[RecoveryCase]:
+    unique: dict[tuple[object, ...], RecoveryCase] = {}
+    passthrough: list[RecoveryCase] = []
+    for case in cases:
+        key = financial_case_key(case)
+        if key is None:
+            passthrough.append(case)
+            continue
+        existing = unique.get(key)
+        if existing is None or financial_case_rank(case) > financial_case_rank(existing):
+            unique[key] = case
+    return [*unique.values(), *passthrough]
+
+
+def financial_case_key(case: RecoveryCase) -> tuple[object, ...] | None:
+    order_number = normalize_financial_key(case.uber_order_number)
+    if not order_number:
+        return None
+    return (
+        case.restaurant_id,
+        case.loss_category,
+        order_number,
+        quantize_decimal(case.detected_amount),
+    )
+
+
+def financial_case_rank(case: RecoveryCase) -> tuple[int, int, int]:
+    case_type_rank = {
+        "claim_order": 3,
+        "customer_refund_dispute": 2,
+        "reconciliation_result": 1,
+    }.get(case.case_type, 0)
+    stage_rank = {
+        "payment_confirmed": 8,
+        "payment_to_verify": 7,
+        "accepted": 6,
+        "under_appeal": 5,
+        "sent": 4,
+        "gmail_draft_created": 3,
+        "draft_created": 2,
+        "evidence_ready": 1,
+    }.get(case.recovery_stage, 0)
+    return (case_type_rank, stage_rank, case.case_id)
+
+
+def normalize_financial_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = "".join(character for character in str(value).strip().lower() if character.isalnum())
+    return normalized or None
 
 
 def restaurant_breakdown(cases: list[RecoveryCase]) -> list[RecoveryRestaurantBreakdownItem]:
