@@ -454,7 +454,7 @@ def valid_order_number(value: str) -> bool:
         return False
     if any(token in INVALID_ORDER_TOKENS for token in tokens[1:]):
         return False
-    return any(any(char.isdigit() for char in token) for token in tokens)
+    return True
 
 
 def extract_display_id(text: str, order_number: str | None) -> str | None:
