@@ -1129,6 +1129,18 @@ def test_workspace_machine_extracts_excel_proof_cells(
     assert str(order.order_amount) == "17.90"
 
 
+def test_evidence_analysis_ignores_uber_report_definition_as_order_or_amount() -> None:
+    text = (
+        "Votre guide concernant les commandes incorrectes sur Uber Eats. "
+        "Ce rapport a pour objectif de vous fournir des informations. "
+        "Taux de commandes correctes total 100.00%."
+    )
+
+    assert evidence_analysis_service.extract_order_number(text) is None
+    assert evidence_analysis_service.extract_amount(text) is None
+    assert evidence_analysis_service.extract_amount("Montant total: 24,90 EUR") == Decimal("24.90")
+
+
 def test_workspace_machine_creates_cancellation_case_from_single_stapled_ticket_proof(
     client: TestClient,
     db_session: Session,
