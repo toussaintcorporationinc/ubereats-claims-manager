@@ -5,10 +5,10 @@ export default function RemboursementsPage() {
     <section className="page-section page-section--simple">
       <MachineImportHero
         eyebrow="Remboursements Uber"
-        title="Remboursements"
-        description="Demandes client, commande non recue, article manquant, mauvaise commande ou ajustement negatif : depose les fichiers et preuves en masse, TENNET rattache chaque commande au bon restaurant."
+        title="Tickets agrafes, remboursements lances"
+        description="Releve la commande en demande de remboursement dans Uber Eats, imprime le ticket, agrafe-le a la commande ou a la preuve terrain, prends la photo et importe tout en masse. GO lance le classement, les preuves, les emails et le suivi."
         instruction="IMPORTEZ LES PREUVES DE DEMANDES DE REMBOURSEMENTS"
-        fileButtonLabel="Deposer fichiers / preuves"
+        fileButtonLabel="Deposer tickets agrafes"
         trigger="refunds"
       />
 
@@ -21,24 +21,24 @@ export default function RemboursementsPage() {
         </div>
         <div className="machine-stage-list machine-stage-list--large">
           <article className="machine-stage machine-stage--completed">
-            <strong>1. Deposer en masse</strong>
-            <span>Exports, photos, PDF ou ZIP</span>
-            <small>TENNET lit le contenu, detecte les doublons et garde un seul fichier canonique.</small>
+            <strong>1. Relever dans Uber Eats</strong>
+            <span>Demande de remboursement</span>
+            <small>Tu identifies la commande concernee dans Uber Eats Manager, puis tu imprimes le vrai ticket du restaurant.</small>
           </article>
           <article className="machine-stage machine-stage--completed">
-            <strong>2. Identifier les pertes</strong>
-            <span>Motif, commande, client, montant</span>
-            <small>Les remboursements vagues restent sources a completer; TENNET n'invente pas une ligne absente.</small>
+            <strong>2. Agrafer et photographier</strong>
+            <span>Ticket + commande + preuve terrain</span>
+            <small>Une photo claire suffit quand elle montre le ticket rattache a la commande ou a la preuve preparee.</small>
           </article>
           <article className="machine-stage machine-stage--warning">
-            <strong>3. Construire les preuves</strong>
-            <span>Ticket, commande, gaspillage</span>
-            <small>Objectif terrain : trois preuves propres par dossier quand le cas l'exige.</small>
+            <strong>3. Importer en masse</strong>
+            <span>Photos, PDF, ZIP ou exports</span>
+            <small>TENNET lit en profondeur, cherche nom client, numero de commande, date, restaurant et montant dans chaque source.</small>
           </article>
           <article className="machine-stage machine-stage--completed">
-            <strong>4. Envoyer et relancer</strong>
-            <span>Email Uber, reponses, appel</span>
-            <small>Si Gmail voit deja un paiement positif, TENNET bloque la relance pour eviter les doublons.</small>
+            <strong>4. GO</strong>
+            <span>Classement, emails, relances</span>
+            <small>TENNET lance le parcours remboursements, evite les doublons et bloque les cas deja payes.</small>
           </article>
           <article className="machine-stage machine-stage--completed">
             <strong>5. Compter le recupere</strong>
