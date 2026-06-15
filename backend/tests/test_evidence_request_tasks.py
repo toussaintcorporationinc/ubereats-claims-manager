@@ -224,6 +224,20 @@ def test_list_tasks_returns_field_ready_search_context(configured_client: TestCl
     assert "imprime le vrai ticket Uber" in task["field_photo_instruction"]
 
 
+def test_list_tasks_uses_clear_missing_field_labels(configured_client: TestClient) -> None:
+    restaurant = create_restaurant(configured_client, "Frit Dodo")
+    create_order(configured_client, restaurant["id"], "UBER-MISSING-FIELD-LABEL", amount="21.81")
+    recalculate(configured_client)
+
+    response = configured_client.get("/v1/evidence-tasks")
+
+    assert response.status_code == 200
+    task = response.json()["tasks"][0]
+    assert task["field_customer_label"] == "Nom client non trouve dans les imports/preuves"
+    assert task["field_date_label"] == "Date non trouvee dans les imports/preuves"
+    assert task["field_missing_info"] == ["nom_client", "date_commande"]
+
+
 def test_list_tasks_resolves_field_context_from_matched_evidence_analysis(
     configured_client: TestClient,
     db_session: Session,

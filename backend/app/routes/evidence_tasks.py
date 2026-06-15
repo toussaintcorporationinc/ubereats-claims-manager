@@ -672,7 +672,7 @@ def build_field_photo_instruction(task: EvidenceRequestTask) -> str:
 
 def format_field_date(order_date, order_time) -> str:
     if not order_date:
-        return "Date non trouvee dans l'import"
+        return "Date non trouvee dans les imports/preuves"
     value = order_date.strftime("%d/%m/%Y")
     if order_time:
         value = f"{value} a {order_time.strftime('%H:%M')}"
