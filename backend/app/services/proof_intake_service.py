@@ -17,6 +17,9 @@ from app.models import (
     Restaurant,
     SmartImportPreviewBatch,
     UberCustomerRefundDispute,
+    UberFinancialTransaction,
+    UberOrderSnapshot,
+    UberReconciliationResult,
     User,
 )
 from app.models.domain import utc_now
@@ -219,22 +222,139 @@ class ProofIntakeService:
             )
             if value
         )
-        restaurant_id = imported_file.batch.restaurant_id or self.resolve_restaurant_id(db, analysis.detected_restaurant_name, text)
         order_number = analysis.detected_uber_order_number or analysis.detected_display_id
-        customer_name = str(raw.get("customer_name")).strip() if raw.get("customer_name") else None
+        order_context = self.resolve_order_context(db, order_number) if order_number else {}
+        restaurant_id = (
+            imported_file.batch.restaurant_id
+            or self.resolve_restaurant_id(db, analysis.detected_restaurant_name, text)
+            or order_context.get("restaurant_id")
+        )
+        customer_name = (str(raw.get("customer_name")).strip() if raw.get("customer_name") else None) or order_context.get(
+            "customer_name"
+        )
         evidence_type = analysis.detected_evidence_type if analysis.detected_evidence_type != "unknown" else "receipt"
         case_type = self.case_type_for_trigger(trigger, text, evidence_type)
         return ProofIdentity(
             restaurant_id=restaurant_id,
             order_number=order_number,
             customer_name=customer_name,
-            order_amount=analysis.detected_order_amount,
-            currency=analysis.detected_currency or "EUR",
-            order_date=analysis.detected_order_date,
+            order_amount=analysis.detected_order_amount or order_context.get("order_amount"),
+            currency=analysis.detected_currency or order_context.get("currency") or "EUR",
+            order_date=analysis.detected_order_date or order_context.get("order_date"),
             evidence_type=evidence_type,
             text=text,
             case_type=case_type,
         )
+
+    def resolve_order_context(self, db: Session, order_number: str) -> dict[str, object]:
+        contexts: list[dict[str, object]] = []
+
+        order = db.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == order_number).order_by(ClaimOrder.id.desc()))
+        if order is not None:
+            contexts.append(
+                {
+                    "restaurant_id": order.restaurant_id,
+                    "customer_name": order.customer_name,
+                    "order_amount": order.order_amount,
+                    "currency": order.currency,
+                    "order_date": order.order_date,
+                }
+            )
+
+        snapshot = db.scalar(
+            select(UberOrderSnapshot)
+            .where((UberOrderSnapshot.uber_order_id == order_number) | (UberOrderSnapshot.display_id == order_number))
+            .order_by(UberOrderSnapshot.id.desc())
+        )
+        if snapshot is not None:
+            contexts.append(
+                {
+                    "restaurant_id": snapshot.restaurant_id,
+                    "customer_name": snapshot.customer_name,
+                    "order_amount": snapshot.order_total_amount,
+                    "currency": snapshot.currency,
+                    "order_date": snapshot.placed_at.date() if snapshot.placed_at else None,
+                }
+            )
+
+        dispute = db.scalar(
+            select(UberCustomerRefundDispute)
+            .where(
+                (UberCustomerRefundDispute.uber_order_id == order_number)
+                | (UberCustomerRefundDispute.display_id == order_number)
+            )
+            .order_by(UberCustomerRefundDispute.id.desc())
+        )
+        if dispute is not None:
+            contexts.append(
+                {
+                    "restaurant_id": dispute.restaurant_id,
+                    "customer_name": None,
+                    "order_amount": dispute.order_amount or dispute.customer_refund_amount,
+                    "currency": dispute.currency,
+                    "order_date": dispute.order_date,
+                }
+            )
+
+        reconciliation_result = db.scalar(
+            select(UberReconciliationResult)
+            .where(
+                (UberReconciliationResult.uber_order_id == order_number)
+                | (UberReconciliationResult.display_id == order_number)
+            )
+            .order_by(UberReconciliationResult.id.desc())
+        )
+        if reconciliation_result is not None:
+            contexts.append(
+                {
+                    "restaurant_id": reconciliation_result.restaurant_id,
+                    "customer_name": None,
+                    "order_amount": reconciliation_result.order_amount or reconciliation_result.missing_amount,
+                    "currency": reconciliation_result.currency,
+                    "order_date": None,
+                }
+            )
+
+        transaction = db.scalar(
+            select(UberFinancialTransaction)
+            .where(UberFinancialTransaction.uber_order_id == order_number)
+            .order_by(UberFinancialTransaction.id.desc())
+        )
+        if transaction is not None:
+            contexts.append(
+                {
+                    "restaurant_id": transaction.restaurant_id,
+                    "customer_name": self.first_text_value(
+                        transaction.raw_payload_json,
+                        ("customer_name", "client", "eater_name", "nom_client"),
+                    ),
+                    "order_amount": abs(transaction.amount),
+                    "currency": transaction.currency,
+                    "order_date": transaction.transaction_date,
+                }
+            )
+
+        restaurant_ids = {context.get("restaurant_id") for context in contexts if context.get("restaurant_id") is not None}
+        if len(restaurant_ids) != 1:
+            return {}
+
+        merged: dict[str, object] = {"restaurant_id": restaurant_ids.pop()}
+        for key in ("customer_name", "order_amount", "currency", "order_date"):
+            for context in contexts:
+                value = context.get(key)
+                if value:
+                    merged[key] = value
+                    break
+        return merged
+
+    def first_text_value(self, payload: object, keys: tuple[str, ...]) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        for key in keys:
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
 
     def resolve_restaurant_id(self, db: Session, detected_restaurant_name: str | None, text: str) -> int | None:
         candidates = [detected_restaurant_name]
