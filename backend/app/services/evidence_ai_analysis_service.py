@@ -5,6 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from io import BytesIO
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -15,6 +16,9 @@ from app.models import ClaimOrder, EvidenceAnalysisResult, EvidenceImportBatch, 
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.bulk_evidence_import_service import BulkEvidenceImportError, resolve_imported_file_path
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp"}
+PDF_EXTENSION = ".pdf"
 
 ORDER_PATTERN = re.compile(r"\b(UBER(?:[-_\s]?[A-Z0-9]+){1,5})\b", re.IGNORECASE)
 CONTEXTUAL_DISPLAY_PATTERN = re.compile(
@@ -271,11 +275,54 @@ def build_local_text(imported_file: EvidenceImportedFile) -> str:
         batch_context = imported_file.batch.restaurant.name
     try:
         path = resolve_imported_file_path(imported_file)
-        content = path.read_bytes()[:8192]
-        decoded = content.decode("utf-8", errors="ignore")
+        content = path.read_bytes()
+        decoded = extract_document_text(path.suffix.lower(), content)
     except (BulkEvidenceImportError, UnicodeDecodeError):
         decoded = ""
     return f"{filename_text}\n{batch_context}\n{decoded}".strip()
+
+
+def extract_document_text(suffix: str, content: bytes) -> str:
+    pieces = [decode_text_payload(content)]
+    if suffix == PDF_EXTENSION:
+        pieces.append(extract_pdf_text(content))
+    elif suffix in IMAGE_EXTENSIONS:
+        pieces.append(extract_image_ocr_text(content))
+    return "\n".join(piece for piece in pieces if piece).strip()
+
+
+def decode_text_payload(content: bytes) -> str:
+    decoded = content[:32768].decode("utf-8", errors="ignore")
+    readable = "".join(char if char.isprintable() or char in "\n\r\t" else " " for char in decoded)
+    return readable.strip()
+
+
+def extract_pdf_text(content: bytes) -> str:
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(BytesIO(content))
+        texts = [(page.extract_text() or "") for page in reader.pages[:5]]
+        return "\n".join(texts).strip()
+    except Exception:
+        return ""
+
+
+def extract_image_ocr_text(content: bytes) -> str:
+    try:
+        from PIL import Image, ImageOps
+        import pytesseract
+
+        with Image.open(BytesIO(content)) as image:
+            normalized = ImageOps.exif_transpose(image)
+            if normalized.mode not in {"L", "RGB"}:
+                normalized = normalized.convert("RGB")
+            try:
+                return pytesseract.image_to_string(normalized, lang="fra+eng").strip()
+            except pytesseract.TesseractError:
+                return pytesseract.image_to_string(normalized).strip()
+    except Exception:
+        return ""
 
 
 def classify_evidence_type(text: str, filename: str) -> tuple[str, list[str], Decimal]:

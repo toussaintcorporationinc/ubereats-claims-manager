@@ -8,6 +8,9 @@ PyJWT
 python-multipart
 openpyxl
 qrcode
+pillow
+pytesseract
+pypdf
 pytest
 httpx
 

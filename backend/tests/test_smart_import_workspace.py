@@ -26,6 +26,7 @@ from app.models import (
     User,
 )
 from app.models.domain import utc_now
+import app.services.evidence_ai_analysis_service as evidence_analysis_service
 
 
 def test_health_public_works(unauthenticated_client: TestClient) -> None:
@@ -953,6 +954,59 @@ def test_workspace_machine_creates_refund_case_from_single_stapled_ticket_proof(
     evidence = db_session.scalar(select(EvidenceFile).where(EvidenceFile.order_id == order.id))
     assert evidence is not None
     assert evidence.evidence_type == "receipt"
+
+
+def test_workspace_machine_creates_refund_case_from_ocr_image_text(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    restaurant = Restaurant(name="Krousty Bat", sender_email="tiramisumaisonfrance@example.com")
+    db_session.add(restaurant)
+    db_session.commit()
+    monkeypatch.setattr(
+        evidence_analysis_service,
+        "extract_image_ocr_text",
+        lambda _content: (
+            "Restaurant: Krousty Bat\n"
+            "Client: OCR Client\n"
+            "Commande: OCR789\n"
+            "Date: 15/06/2026\n"
+            "Montant total: 18,70 EUR\n"
+            "Remboursement client - commande non recue\n"
+        ),
+    )
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("photo-ticket.jpg", b"\xff\xd8\xff\xe0binary-image", "image/jpeg"))],
+    ).json()
+    confirm_response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [{"file_id": preview["files"][0]["id"], "action": "import_evidence_bulk"}],
+        },
+    )
+    assert confirm_response.status_code == 200
+
+    response = client.post(
+        "/v1/workspace/machine/run",
+        json={
+            "trigger": "refunds",
+            "smart_import_batch_id": preview["batch_preview_id"],
+            "sync_gmail": False,
+            "run_autopilot": False,
+        },
+    )
+
+    assert response.status_code == 200
+    order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "OCR789"))
+    assert order is not None
+    assert order.customer_name == "OCR Client"
+    assert str(order.order_amount) == "18.70"
+    dispute = db_session.scalar(select(UberCustomerRefundDispute).where(UberCustomerRefundDispute.claim_order_id == order.id))
+    assert dispute is not None
+    assert dispute.dispute_type == "order_not_received"
 
 
 def test_workspace_machine_creates_cancellation_case_from_single_stapled_ticket_proof(
