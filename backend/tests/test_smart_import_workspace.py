@@ -668,6 +668,47 @@ def test_smart_confirm_routes_evidence_file_to_evidence_import(client: TestClien
     assert batch.stored_files_count == 1
 
 
+def test_smart_confirm_auto_attaches_exact_evidence_task(client: TestClient, db_session: Session) -> None:
+    restaurant, order = create_restaurant_order_and_task(db_session)
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[
+            (
+                "files",
+                (
+                    "ticket-krousty-UBER-NEXT-001.pdf",
+                    b"receipt UBER-NEXT-001 Client Test 125.00",
+                    "application/pdf",
+                ),
+            )
+        ],
+    ).json()
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [
+                {
+                    "file_id": preview["files"][0]["id"],
+                    "action": "import_evidence_bulk",
+                    "restaurant_id": restaurant.id,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    routed = response.json()["routed_files"][0]
+    assert routed["destination_type"] == "evidence_import_batch"
+    assert routed["auto_matched_count"] == 1
+    task = db_session.scalar(select(EvidenceRequestTask).where(EvidenceRequestTask.order_id == order.id))
+    assert task is not None
+    db_session.refresh(task)
+    assert task.status == "completed"
+    assert db_session.scalar(select(EvidenceImportBatch).where(EvidenceImportBatch.id == routed["destination_id"])) is not None
+
+
 def test_smart_confirm_duplicate_evidence_creates_visible_ignored_file(client: TestClient, db_session: Session) -> None:
     first = client.post(
         "/v1/evidence-imports",

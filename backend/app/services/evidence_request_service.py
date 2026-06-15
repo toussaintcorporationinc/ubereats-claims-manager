@@ -96,7 +96,8 @@ def recalculate_evidence_tasks(
                 continue
 
             missing_items, _ = get_claim_validation_gaps(db, order)
-            task_specs = build_task_specs(order, missing_items, reconciliation_by_order.get(order.id))
+            reconciliation_result = reconciliation_by_order.get(order.id)
+            task_specs = build_task_specs(order, missing_items, reconciliation_result)
             if not task_specs:
                 completed_tasks += complete_satisfied_tasks(db, order, current_user, dry_run=dry_run)
                 skipped_orders += 1
@@ -118,8 +119,8 @@ def recalculate_evidence_tasks(
                     required_evidence_type=task_spec.evidence_type,
                     status="pending",
                     priority=task_spec.priority,
-                    title=task_spec.title,
-                    description=task_spec.description,
+                    title=evidence_task_title(order, task_spec.evidence_type, task_spec.title, reconciliation_result),
+                    description=evidence_task_description(order, task_spec.description, reconciliation_result),
                     due_at=order.next_action_at,
                     reason=task_spec.reason,
                     created_by_user_id=current_user.id,
@@ -431,6 +432,54 @@ def build_task_specs(
             )
         )
     return specs
+
+
+def evidence_task_title(
+    order: ClaimOrder,
+    evidence_type: str,
+    fallback_title: str,
+    reconciliation_result: UberReconciliationResult | None,
+) -> str:
+    case_label = "Annulation" if reconciliation_result is not None else "Dossier"
+    if order.loss_type == "customer_refund_dispute":
+        case_label = "Remboursement"
+    customer = f" - {order.customer_name}" if order.customer_name else ""
+    return f"{case_label} - {evidence_label(evidence_type)} - commande {order.uber_order_number}{customer}"[:255] or fallback_title
+
+
+def evidence_task_description(
+    order: ClaimOrder,
+    fallback_description: str,
+    reconciliation_result: UberReconciliationResult | None,
+) -> str:
+    case_label = "contestation d'annulation" if reconciliation_result is not None else "dossier"
+    if order.loss_type == "customer_refund_dispute":
+        case_label = "contestation de remboursement"
+    amount = f"{order.order_amount} {order.currency}" if order.order_amount is not None else "montant a verifier"
+    customer = order.customer_name or "client non renseigne"
+    return (
+        f"{fallback_description} Cas: {case_label}. Restaurant: {order.restaurant.name if order.restaurant else order.restaurant_id}. "
+        f"Commande: {order.uber_order_number}. Client: {customer}. Montant: {amount}. "
+        "Imprime ou recupere la preuve correspondante, puis importe toutes les photos en masse dans Smart Import."
+    )
+
+
+def evidence_label(evidence_type: str) -> str:
+    return {
+        "receipt": "ticket de caisse",
+        "cancellation_proof": "preuve d'annulation",
+        "preparation_proof": "preuve de preparation",
+        "waste_photo": "photo gaspillage",
+        "uber_screenshot": "capture Uber",
+        "delivery_proof": "preuve livraison",
+        "packaging_photo": "photo emballage",
+        "sealed_bag_photo": "photo sac ferme",
+        "courier_statement": "preuve livreur",
+        "gps_or_route_proof": "preuve trajet",
+        "customer_contact_proof": "preuve contact client",
+        "order_details_screenshot": "details commande",
+        "other": "preuve",
+    }.get(evidence_type, evidence_type)
 
 
 def choose_preparation_or_waste_type(order: ClaimOrder) -> str:

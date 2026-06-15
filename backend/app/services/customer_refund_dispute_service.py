@@ -357,8 +357,8 @@ def create_evidence_task_for_requirement(
         required_evidence_type=requirement.required_evidence_type,
         status="pending",
         priority="high" if dispute.customer_refund_amount >= 50 else "normal",
-        title=title_for_evidence(requirement.required_evidence_type),
-        description="Preuve requise pour contester une deduction Uber Eats.",
+        title=customer_refund_task_title(dispute, requirement.required_evidence_type),
+        description=customer_refund_task_description(dispute, requirement.required_evidence_type),
         reason=f"customer_refund_{dispute.reason}",
         created_by_user_id=current_user.id,
     )
@@ -376,6 +376,21 @@ def create_evidence_task_for_requirement(
         },
     )
     return task
+
+
+def customer_refund_task_title(dispute: UberCustomerRefundDispute, evidence_type: str) -> str:
+    order_label = dispute.display_id or dispute.uber_order_id or dispute.customer_refund_reference or f"deduction #{dispute.id}"
+    return f"Remboursement - {title_for_evidence(evidence_type)} - commande {order_label}"[:255]
+
+
+def customer_refund_task_description(dispute: UberCustomerRefundDispute, evidence_type: str) -> str:
+    order_label = dispute.display_id or dispute.uber_order_id or dispute.customer_refund_reference or "commande a verifier"
+    return (
+        f"Preuve requise pour contester une deduction Uber Eats. Type: {dispute.dispute_type}. "
+        f"Commande: {order_label}. Montant deduit: {dispute.customer_refund_amount} {dispute.currency}. "
+        f"Preuve attendue: {title_for_evidence(evidence_type)}. "
+        "Imprime ou recupere la preuve, prends les photos, puis importe tout en masse dans Smart Import."
+    )
 
 
 def sync_requirement_from_evidence_task(

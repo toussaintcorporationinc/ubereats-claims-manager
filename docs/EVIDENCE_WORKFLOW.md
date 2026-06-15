@@ -21,6 +21,8 @@ TENNET cree une tache par preuve bloquante manquante :
 - `preparation_proof` si aucune preuve de preparation ou photo de gaspillage n'existe ;
 - `waste_photo` si le type de perte indique clairement du gaspillage.
 
+Chaque tache doit indiquer le contexte metier lisible : remboursement ou annulation, restaurant, numero de commande, client quand il est connu, montant et preuve attendue. L'objectif terrain est que l'utilisateur sache exactement quel ticket imprimer ou quelle photo prendre avant de renvoyer les preuves en masse a TENNET.
+
 Les resultats Uber reconciliation avec `evidence_required=true` peuvent alimenter la priorite quand un dossier TENNET existe deja.
 
 Les deductions Uber detectees depuis transactions financieres creent aussi des exigences de preuves :
@@ -116,7 +118,8 @@ TENNET :
 - refuse les fichiers trop lourds, extensions interdites ou ZIP dangereux ;
 - analyse les fichiers avec un fournisseur controle ;
 - propose des candidats vers `ClaimOrder`, `EvidenceRequestTask`, `UberCustomerRefundDispute` ou `UberReconciliationResult` ;
-- cree une preuve rattachee uniquement apres acceptation manuelle ou seuil haut explicitement valide ;
+- cree une preuve rattachee automatiquement uniquement si une seule tache de preuve compatible ressort avec un signal deterministe fort ;
+- garde le fichier en revue si le numero de commande, le restaurant, le client, le montant ou le type de preuve ne sont pas assez fiables ;
 - relance la validation du dossier apres rattachement ;
 - complete la tache preuve si le type correspond.
 

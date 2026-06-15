@@ -496,11 +496,11 @@ function SmartImportFileCounters({ file }: { file: SmartImportConfirmResponse["r
           <strong>{file.analyzed_files_count ?? 0}</strong>
         </div>
         <div className="detail-item">
-          <span>Matches</span>
+          <span>Rattachees</span>
           <strong>{file.auto_matched_count ?? 0}</strong>
         </div>
         <div className="detail-item">
-          <span>A verifier</span>
+          <span>Blocages reels</span>
           <strong>{file.needs_review_count ?? 0}</strong>
         </div>
       </div>
@@ -579,6 +579,14 @@ function labelForDestination(file: SmartImportConfirmResponse["routed_files"][nu
     return `Rapport Uber applique (${file.processing_status ?? "traite"}).`;
   }
   if (file.destination_type === "evidence_import_batch") {
+    const matched = file.auto_matched_count ?? 0;
+    const blocked = file.needs_review_count ?? 0;
+    if (matched > 0 && blocked === 0) {
+      return `Preuves rangees, lues et rattachees automatiquement (${matched}).`;
+    }
+    if (blocked > 0) {
+      return `Preuves conservees. ${blocked} fichier(s) attendent un numero de commande, client, restaurant ou type fiable.`;
+    }
     return `Preuves rangees et analysees (${file.processing_status ?? "stocke"}).`;
   }
   return "Workflow cree.";
@@ -601,6 +609,7 @@ function stageLabel(name: string): string {
     drafts: "Brouillons",
     followups: "Relances",
     appeals: "Appels",
+    evidence: "Preuves",
     gmail_sync: "Gmail",
     autopilot: "AutoPilot",
   };

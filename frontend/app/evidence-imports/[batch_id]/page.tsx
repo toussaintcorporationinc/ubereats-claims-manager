@@ -90,7 +90,7 @@ export default function EvidenceImportBatchPage({ params }: PageProps) {
             <StatCard label="Fichiers" value={batch.total_files} />
             <StatCard label="Stockes" value={batch.stored_files_count} />
             <StatCard label="Analyses" value={batch.analyzed_files_count} />
-            <StatCard label="A revoir" value={batch.needs_review_count} />
+            <StatCard label="Blocages reels" value={batch.needs_review_count} />
             <StatCard label="Doublons supprimes" value={batch.duplicate_files_count} />
             <StatCard label="Echecs" value={batch.failed_files_count} />
           </div>
@@ -128,7 +128,8 @@ export default function EvidenceImportBatchPage({ params }: PageProps) {
             </div>
             {result ? (
               <div className="success-box">
-                Analyse terminee : {result.analyzed_files_count} fichier(s), {result.needs_review_count} a revoir.
+                Analyse terminee : {result.analyzed_files_count} fichier(s), {result.auto_matched_count} rattachee(s),{" "}
+                {result.needs_review_count} blocage(s) reel(s).
               </div>
             ) : null}
           </section>
@@ -166,7 +167,7 @@ export default function EvidenceImportBatchPage({ params }: PageProps) {
                   <th>Fichier</th>
                   <th>Type</th>
                   <th>Taille</th>
-                  <th>Statut</th>
+                  <th>Etat TENNET</th>
                   <th>Date</th>
                   <th />
                 </tr>
@@ -176,7 +177,8 @@ export default function EvidenceImportBatchPage({ params }: PageProps) {
                   <tr key={file.id}>
                     <td>
                       {file.original_filename}
-                      {file.status === "ignored" ? <div className="muted">Doublon exact conserve ailleurs</div> : null}
+                        {file.status === "ignored" ? <div className="muted">Doublon exact conserve ailleurs</div> : null}
+                        {file.status === "analyzed" ? <div className="muted">Lu par TENNET; rattache si une seule cible fiable existe.</div> : null}
                     </td>
                     <td>{file.status === "ignored" ? "Doublon verifie" : file.mime_type ?? "-"}</td>
                     <td>{formatBytes(file.file_size)}</td>

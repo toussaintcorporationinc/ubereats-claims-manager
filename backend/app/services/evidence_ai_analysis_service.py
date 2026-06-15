@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -10,13 +11,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.models import EvidenceAnalysisResult, EvidenceImportBatch, EvidenceImportedFile, User
+from app.models import ClaimOrder, EvidenceAnalysisResult, EvidenceImportBatch, EvidenceImportedFile, Restaurant, User
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.bulk_evidence_import_service import BulkEvidenceImportError, resolve_imported_file_path
 
 ORDER_PATTERN = re.compile(r"\b(UBER(?:[-_\s]?[A-Z0-9]+){1,5})\b", re.IGNORECASE)
-DISPLAY_PATTERN = re.compile(r"\b([A-Z0-9]{4,8})\b")
+CONTEXTUAL_DISPLAY_PATTERN = re.compile(
+    r"(?:commande|cmd|order|ticket|recu|recu|receipt|client|uber|id)[\s:_#-]{0,8}([A-Z0-9][A-Z0-9-]{3,14})",
+    re.IGNORECASE,
+)
+DISPLAY_PATTERN = re.compile(r"\b([A-Z0-9]{5,10})\b")
 AMOUNT_PATTERN = re.compile(r"(?<!\d)(\d{1,4}(?:[.,]\d{2}))(?!\d)")
 DATE_PATTERN = re.compile(r"\b(\d{4}-\d{2}-\d{2}|\d{2}[/-]\d{2}[/-]\d{4})\b")
 
@@ -30,6 +35,7 @@ class EvidenceAnalysisPayload:
     order_date: date | None
     order_amount: Decimal | None
     currency: str | None
+    customer_name: str | None
     keywords: list[str]
     classification_confidence: Decimal
     extraction_confidence: Decimal
@@ -39,6 +45,69 @@ class EvidenceAnalysisPayload:
 
 
 class EvidenceAIAnalysisService:
+    def analyze_pending_batches(
+        self,
+        db: Session,
+        current_user: User,
+        *,
+        restaurant_id: int | None,
+        limit: int,
+    ) -> dict[str, object]:
+        from app.services.evidence_matching_service import EvidenceMatchingService
+
+        batches_statement = select(EvidenceImportBatch).order_by(EvidenceImportBatch.id.desc()).limit(50)
+        if restaurant_id is not None:
+            batches_statement = batches_statement.where(EvidenceImportBatch.restaurant_id == restaurant_id)
+        batches = db.scalars(batches_statement).all()
+        analyzed_files_count = 0
+        auto_matched_count = 0
+        needs_review_count = 0
+        failed_files_count = 0
+        errors: list[str] = []
+        remaining_limit = limit
+        for batch in batches:
+            if remaining_limit <= 0:
+                break
+            pending_files = [
+                imported_file
+                for imported_file in batch.files
+                if imported_file.status in {"analysis_pending", "stored", "failed"}
+            ]
+            if pending_files:
+                result = self.analyze_batch(db, current_user, batch, provider="fake", limit=remaining_limit)
+                analyzed_files_count += int(result.get("analyzed_files_count", 0))
+                auto_matched_count += int(result.get("auto_matched_count", 0))
+                needs_review_count += int(result.get("needs_review_count", 0))
+                failed_files_count += int(result.get("failed_files_count", 0))
+                errors.extend(str(error) for error in result.get("errors", []))
+                remaining_limit -= len(pending_files)
+
+            matching_service = EvidenceMatchingService()
+            for imported_file in batch.files:
+                if remaining_limit <= 0:
+                    break
+                if imported_file.status != "analyzed" or has_attached_decision(imported_file):
+                    continue
+                latest = latest_analysis_result(imported_file)
+                if latest is None:
+                    continue
+                before_auto = len([candidate for candidate in imported_file.match_candidates if candidate.status == "auto_attached"])
+                matching_service.create_candidates(db, current_user, imported_file, latest)
+                after_auto = len([candidate for candidate in imported_file.match_candidates if candidate.status == "auto_attached"])
+                auto_matched_count += max(after_auto - before_auto, 0)
+                analyzed_files_count += 1
+                remaining_limit -= 1
+
+        for batch in batches:
+            refresh_batch_analysis_counts(batch)
+        return {
+            "analyzed_files_count": analyzed_files_count,
+            "auto_matched_count": auto_matched_count,
+            "needs_review_count": needs_review_count,
+            "failed_files_count": failed_files_count,
+            "errors": errors,
+        }
+
     def analyze_batch(
         self,
         db: Session,
@@ -70,7 +139,7 @@ class EvidenceAIAnalysisService:
         matching_service = EvidenceMatchingService()
         for imported_file in files:
             try:
-                payload = self.analyze_file(imported_file, provider)
+                payload = self.analyze_file(db, imported_file, provider)
                 result = EvidenceAnalysisResult(
                     imported_file_id=imported_file.id,
                     provider=provider,
@@ -96,6 +165,7 @@ class EvidenceAIAnalysisService:
                         "order_date": payload.order_date.isoformat() if payload.order_date else None,
                         "order_amount": str(payload.order_amount) if payload.order_amount is not None else None,
                         "currency": payload.currency,
+                        "customer_name": payload.customer_name,
                         "keywords": payload.keywords,
                         "classification_confidence": str(payload.classification_confidence),
                         "extraction_confidence": str(payload.extraction_confidence),
@@ -140,7 +210,7 @@ class EvidenceAIAnalysisService:
             "errors": errors,
         }
 
-    def analyze_file(self, imported_file: EvidenceImportedFile, provider: str) -> EvidenceAnalysisPayload:
+    def analyze_file(self, db: Session, imported_file: EvidenceImportedFile, provider: str) -> EvidenceAnalysisPayload:
         if provider == "openai_vision":
             settings = get_settings()
             if not settings.ai_evidence_analysis_enabled or not settings.openai_api_key:
@@ -148,36 +218,46 @@ class EvidenceAIAnalysisService:
         text = build_local_text(imported_file)
         evidence_type, keywords, classification_confidence = classify_evidence_type(text, imported_file.original_filename)
         order_number = extract_order_number(text)
+        display_id = extract_display_id(text, order_number)
         amount = extract_amount(text)
         detected_date = extract_date(text)
-        extraction_confidence = Decimal("0.80") if order_number else Decimal("0.45")
-        needs_manual_review = evidence_type == "unknown" or not order_number
+        restaurant_name = detect_restaurant_name(db, text, imported_file.batch.restaurant_id)
+        customer_name = detect_customer_name(db, text, imported_file.batch.restaurant_id, restaurant_name)
+        identity_score = sum(1 for value in (order_number, display_id, restaurant_name, customer_name, amount, detected_date) if value)
+        extraction_confidence = Decimal("0.88") if order_number else Decimal("0.72") if display_id else Decimal("0.55")
+        if restaurant_name and (order_number or display_id or customer_name):
+            extraction_confidence = max(extraction_confidence, Decimal("0.82"))
+        needs_manual_review = evidence_type == "unknown" or identity_score < 2
         return EvidenceAnalysisPayload(
             detected_evidence_type=evidence_type,
-            restaurant_name=None,
+            restaurant_name=restaurant_name,
             uber_order_number=order_number,
-            display_id=extract_display_id(text, order_number),
+            display_id=display_id,
             order_date=detected_date,
             order_amount=amount,
             currency="EUR" if amount is not None else None,
+            customer_name=customer_name,
             keywords=keywords,
             classification_confidence=classification_confidence,
             extraction_confidence=extraction_confidence,
             needs_manual_review=needs_manual_review,
-            notes="Analyse deterministe V1.1, sans appel OpenAI reel.",
+            notes=analysis_notes(evidence_type, order_number, display_id, restaurant_name, customer_name, amount),
             extracted_text=text,
         )
 
 
 def build_local_text(imported_file: EvidenceImportedFile) -> str:
     filename_text = imported_file.original_filename.replace("_", " ").replace("-", " ")
+    batch_context = ""
+    if imported_file.batch.restaurant is not None:
+        batch_context = imported_file.batch.restaurant.name
     try:
         path = resolve_imported_file_path(imported_file)
         content = path.read_bytes()[:8192]
         decoded = content.decode("utf-8", errors="ignore")
     except (BulkEvidenceImportError, UnicodeDecodeError):
         decoded = ""
-    return f"{filename_text}\n{decoded}".strip()
+    return f"{filename_text}\n{batch_context}\n{decoded}".strip()
 
 
 def classify_evidence_type(text: str, filename: str) -> tuple[str, list[str], Decimal]:
@@ -225,8 +305,15 @@ def extract_order_number(text: str) -> str | None:
 def extract_display_id(text: str, order_number: str | None) -> str | None:
     if order_number:
         return None
-    match = DISPLAY_PATTERN.search(text)
-    return match.group(1).upper() if match else None
+    normalized_text = normalize_identifier_text(text)
+    match = CONTEXTUAL_DISPLAY_PATTERN.search(normalized_text)
+    if match:
+        return clean_display_id(match.group(1))
+    if any(token in normalized_text.lower() for token in ("commande", "cmd", "order", "ticket", "receipt", "uber")):
+        fallback = DISPLAY_PATTERN.search(normalized_text)
+        if fallback:
+            return clean_display_id(fallback.group(1))
+    return None
 
 
 def extract_amount(text: str) -> Decimal | None:
@@ -251,6 +338,86 @@ def extract_date(text: str) -> date | None:
         return date(int(year), int(month), int(day))
     except (ValueError, IndexError):
         return None
+
+
+def detect_restaurant_name(db: Session, text: str, batch_restaurant_id: int | None) -> str | None:
+    if batch_restaurant_id is not None:
+        restaurant = db.get(Restaurant, batch_restaurant_id)
+        if restaurant is not None:
+            return restaurant.name
+    normalized_text = normalize_for_match(text)
+    restaurants = db.scalars(select(Restaurant).where(Restaurant.active.is_(True)).order_by(Restaurant.id)).all()
+    matches: list[tuple[int, str]] = []
+    for restaurant in restaurants:
+        name = normalize_for_match(restaurant.name)
+        if len(name) >= 4 and name in normalized_text:
+            matches.append((len(name), restaurant.name))
+    if not matches:
+        return None
+    matches.sort(reverse=True)
+    return matches[0][1]
+
+
+def detect_customer_name(db: Session, text: str, batch_restaurant_id: int | None, restaurant_name: str | None) -> str | None:
+    normalized_text = normalize_for_match(text)
+    statement = select(ClaimOrder).where(ClaimOrder.customer_name.is_not(None)).order_by(ClaimOrder.id.desc()).limit(500)
+    if batch_restaurant_id is not None:
+        statement = statement.where(ClaimOrder.restaurant_id == batch_restaurant_id)
+    elif restaurant_name:
+        restaurant = db.scalar(select(Restaurant).where(Restaurant.name == restaurant_name))
+        if restaurant is not None:
+            statement = statement.where(ClaimOrder.restaurant_id == restaurant.id)
+    candidates = []
+    for order in db.scalars(statement).all():
+        customer_name = (order.customer_name or "").strip()
+        normalized_name = normalize_for_match(customer_name)
+        if len(normalized_name) >= 4 and normalized_name in normalized_text:
+            candidates.append((len(normalized_name), customer_name))
+    if not candidates:
+        return None
+    candidates.sort(reverse=True)
+    return candidates[0][1]
+
+
+def normalize_for_match(value: str) -> str:
+    without_accents = "".join(
+        char for char in unicodedata.normalize("NFKD", value.lower()) if not unicodedata.combining(char)
+    )
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", without_accents)).strip()
+
+
+def normalize_identifier_text(value: str) -> str:
+    without_accents = "".join(char for char in unicodedata.normalize("NFKD", value) if not unicodedata.combining(char))
+    return without_accents.replace("_", " ").replace("-", " ")
+
+
+def clean_display_id(value: str) -> str:
+    cleaned = re.sub(r"[^A-Z0-9-]", "", value.upper()).strip("-")
+    return cleaned[:20] if cleaned else ""
+
+
+def analysis_notes(
+    evidence_type: str,
+    order_number: str | None,
+    display_id: str | None,
+    restaurant_name: str | None,
+    customer_name: str | None,
+    amount: Decimal | None,
+) -> str:
+    missing = []
+    if evidence_type == "unknown":
+        missing.append("type de preuve")
+    if not (order_number or display_id):
+        missing.append("numero de commande")
+    if not restaurant_name:
+        missing.append("restaurant")
+    if not customer_name:
+        missing.append("client")
+    if amount is None:
+        missing.append("montant")
+    if missing:
+        return "Analyse deterministe sans OpenAI. Donnees encore manquantes: " + ", ".join(missing) + "."
+    return "Analyse deterministe complete sans appel OpenAI reel."
 
 
 def refresh_batch_analysis_counts(batch: EvidenceImportBatch) -> None:
@@ -283,3 +450,13 @@ def refresh_batch_analysis_counts(batch: EvidenceImportBatch) -> None:
         batch.status = "analyzed"
         batch.completed_at = utc_now()
     batch.updated_at = utc_now()
+
+
+def latest_analysis_result(imported_file: EvidenceImportedFile) -> EvidenceAnalysisResult | None:
+    if not imported_file.analysis_results:
+        return None
+    return sorted(imported_file.analysis_results, key=lambda item: item.id)[-1]
+
+
+def has_attached_decision(imported_file: EvidenceImportedFile) -> bool:
+    return any(decision.decision == "attached" for decision in imported_file.attachment_decisions)
