@@ -103,9 +103,14 @@ export default function EvidenceTasksPage() {
           <p className="eyebrow">Preuves</p>
           <h1>Preuves a fournir</h1>
         </div>
-        <button type="button" className="button" onClick={handleRecalculate} disabled={recalculating}>
-          {recalculating ? "Recalcul" : "Recalculer les preuves"}
-        </button>
+        <div className="actions">
+          <button type="button" className="secondary-button" onClick={() => printFieldList(tasks)} disabled={tasks.length === 0}>
+            Imprimer liste terrain
+          </button>
+          <button type="button" className="button" onClick={handleRecalculate} disabled={recalculating}>
+            {recalculating ? "Recalcul" : "Recalculer les preuves"}
+          </button>
+        </div>
       </div>
 
       <ApiError error={error} />
@@ -191,12 +196,14 @@ export default function EvidenceTasksPage() {
               <thead>
                 <tr>
                   <th>Restaurant</th>
-                  <th>Commande</th>
+                  <th>Client</th>
+                  <th>Commande Uber</th>
+                  <th>Date</th>
                   <th>Preuve</th>
                   <th>Priorite</th>
                   <th>Statut</th>
                   <th>Montant</th>
-                  <th>Contexte</th>
+                  <th>A chercher</th>
                   <th>Echeance</th>
                   <th>Action</th>
                 </tr>
@@ -204,17 +211,21 @@ export default function EvidenceTasksPage() {
               <tbody>
                 {tasks.map((task) => (
                   <tr key={task.id}>
-                    <td>{task.restaurant_name}</td>
+                    <td>{task.field_restaurant_label}</td>
                     <td>
-                      <Link href={`/orders/${task.order_id}`} className="secondary-button">
-                        {task.uber_order_number}
-                        {task.customer_name ? <span className="muted">{task.customer_name}</span> : null}
-                      </Link>
+                      <strong>{task.field_customer_label}</strong>
+                      {task.field_missing_info.includes("nom_client") ? <span className="muted">A completer</span> : null}
                     </td>
                     <td>
+                      <Link href={`/orders/${task.order_id}`} className="secondary-button">
+                        {task.field_order_label}
+                      </Link>
+                    </td>
+                    <td>{task.field_date_label}</td>
+                    <td>
                       <div className="stack-sm">
-                        <strong>{task.title}</strong>
-                        <span className="muted">{task.required_evidence_type}</span>
+                        <strong>{task.field_context_label}</strong>
+                        <span className="muted">{task.title}</span>
                       </div>
                     </td>
                     <td>
@@ -223,17 +234,9 @@ export default function EvidenceTasksPage() {
                     <td>
                       <StatusBadge status={task.status} />
                     </td>
-                    <td>{formatCurrency(task.order_amount, task.currency)}</td>
+                    <td>{task.field_amount_label || formatCurrency(task.order_amount, task.currency)}</td>
                     <td>
-                      {task.customer_refund_dispute_id ? (
-                        <Link href={`/customer-refunds/${task.customer_refund_dispute_id}`} className="secondary-button">
-                          Deduction
-                        </Link>
-                      ) : task.reconciliation_result_id ? (
-                        <span className="muted">Reconciliation</span>
-                      ) : (
-                        <span className="muted">Dossier</span>
-                      )}
+                      <span className="muted">{task.field_search_hint}</span>
                     </td>
                     <td>{formatDate(task.due_at)}</td>
                     <td>
@@ -250,4 +253,76 @@ export default function EvidenceTasksPage() {
       />
     </section>
   );
+}
+
+function printFieldList(tasks: EvidenceRequestTaskSummary[]) {
+  const printWindow = window.open("", "_blank", "width=900,height=720");
+  if (!printWindow) {
+    return;
+  }
+  const rows = tasks
+    .map(
+      (task) => `
+        <tr>
+          <td>${escapeHtml(task.field_restaurant_label)}</td>
+          <td>${escapeHtml(task.field_customer_label)}</td>
+          <td>${escapeHtml(task.field_order_label)}</td>
+          <td>${escapeHtml(task.field_date_label)}</td>
+          <td>${escapeHtml(task.field_amount_label)}</td>
+          <td>${escapeHtml(task.field_context_label)}</td>
+          <td>${escapeHtml(task.field_photo_instruction)}</td>
+        </tr>`,
+    )
+    .join("");
+  printWindow.document.open();
+  printWindow.document.write(`<!doctype html>
+    <html lang="fr">
+      <head>
+        <meta charset="utf-8" />
+        <title>Liste terrain preuves</title>
+        <style>
+          body { font-family: Arial, sans-serif; color: #111; }
+          h1 { font-size: 22px; margin-bottom: 4px; }
+          p { color: #555; margin-top: 0; }
+          table { border-collapse: collapse; width: 100%; font-size: 12px; }
+          th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; text-align: left; }
+          th { background: #f4f7fb; }
+          @page { margin: 12mm; }
+        </style>
+      </head>
+      <body>
+        <h1>Liste terrain preuves</h1>
+        <p>Retrouver chaque commande dans Uber, imprimer le vrai ticket Uber, agrafer, photographier et importer.</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Restaurant</th>
+              <th>Client</th>
+              <th>Commande Uber</th>
+              <th>Date</th>
+              <th>Montant</th>
+              <th>Dossier</th>
+              <th>Action terrain</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </body>
+    </html>`);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (char) => {
+    const replacements: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return replacements[char] ?? char;
+  });
 }

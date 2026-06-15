@@ -79,18 +79,28 @@ def create_order(
     *,
     amount: str = "24.90",
     loss_type: str | None = "gaspillage alimentaire",
+    customer_name: str | None = None,
+    order_date: str | None = None,
+    order_time: str | None = None,
 ) -> dict:
+    payload = {
+        "restaurant_id": restaurant_id,
+        "uber_order_number": order_number,
+        "order_amount": amount,
+        "currency": "EUR",
+        "accepted_by_restaurant": True,
+        "prepared_before_cancellation": True,
+        "loss_type": loss_type,
+    }
+    if customer_name is not None:
+        payload["customer_name"] = customer_name
+    if order_date is not None:
+        payload["order_date"] = order_date
+    if order_time is not None:
+        payload["order_time"] = order_time
     response = client.post(
         "/v1/orders",
-        json={
-            "restaurant_id": restaurant_id,
-            "uber_order_number": order_number,
-            "order_amount": amount,
-            "currency": "EUR",
-            "accepted_by_restaurant": True,
-            "prepared_before_cancellation": True,
-            "loss_type": loss_type,
-        },
+        json=payload,
     )
     assert response.status_code == 201
     return response.json()
@@ -170,6 +180,37 @@ def test_manager_assigned_can_list_tasks(configured_client: TestClient) -> None:
 
     assert response.status_code == 200
     assert len(response.json()["tasks"]) == 1
+
+
+def test_list_tasks_returns_field_ready_search_context(configured_client: TestClient) -> None:
+    restaurant = create_restaurant(configured_client, "Krousty Bat")
+    create_order(
+        configured_client,
+        restaurant["id"],
+        "UBER-SEARCH-123",
+        customer_name="Client Test",
+        order_date="2026-06-14",
+        order_time="19:45",
+        amount="29.99",
+    )
+    recalculate(configured_client)
+
+    response = configured_client.get("/v1/evidence-tasks")
+
+    assert response.status_code == 200
+    task = response.json()["tasks"][0]
+    assert task["restaurant_name"] == "Krousty Bat"
+    assert task["customer_name"] == "Client Test"
+    assert task["order_date"] == "2026-06-14"
+    assert task["order_time"].startswith("19:45")
+    assert task["field_restaurant_label"] == "Krousty Bat"
+    assert task["field_customer_label"] == "Client Test"
+    assert task["field_order_label"] == "UBER-SEARCH-123"
+    assert task["field_date_label"] == "14/06/2026 a 19:45"
+    assert task["field_amount_label"] == "29.99 EUR"
+    assert task["field_search_hint"] == "Krousty Bat - UBER-SEARCH-123 - Client Test - 14/06/2026 19:45"
+    assert task["field_missing_info"] == []
+    assert "imprime le vrai ticket Uber" in task["field_photo_instruction"]
 
 
 def test_manager_non_assigned_cannot_list_other_tasks(configured_client: TestClient) -> None:
@@ -281,7 +322,8 @@ def test_print_ticket_creates_single_use_upload_link_with_qr(configured_client: 
     assert "<svg" in data["qr_svg"]
     assert data["upload_url"] not in data["print_html"]
     assert "TENNET" not in data["print_html"]
-    assert "COMMANDE UBER - PREUVE RESTAURANT" in data["print_html"]
+    assert "COMMANDE UBER - FICHE TERRAIN" in data["print_html"]
+    assert "Imprimez le vrai ticket Uber" in data["print_html"]
     assert restaurant["name"] in data["print_html"]
     upload_link = db_session.get(EvidenceUploadLink, data["upload_link"]["id"])
     assert upload_link is not None

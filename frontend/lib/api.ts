@@ -883,6 +883,8 @@ export type EvidenceRequestTaskSummary = {
   restaurant_name: string;
   uber_order_number: string;
   customer_name: string | null;
+  order_date: string | null;
+  order_time: string | null;
   order_amount: MoneyValue;
   currency: string;
   claim_status: ClaimOrderStatus;
@@ -897,6 +899,15 @@ export type EvidenceRequestTaskSummary = {
   reconciliation_result_id: number | null;
   customer_refund_dispute_id: number | null;
   last_upload_evidence_id: number | null;
+  field_context_label: string;
+  field_restaurant_label: string;
+  field_customer_label: string;
+  field_order_label: string;
+  field_date_label: string;
+  field_amount_label: string;
+  field_search_hint: string;
+  field_photo_instruction: string;
+  field_missing_info: string[];
   created_at: string;
   updated_at: string;
 };

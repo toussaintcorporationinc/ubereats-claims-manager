@@ -1551,6 +1551,8 @@ class EvidenceRequestTaskSummary(BaseModel):
     restaurant_name: str
     uber_order_number: str
     customer_name: str | None
+    order_date: date | None
+    order_time: time | None
     order_amount: Decimal | None
     currency: str
     claim_status: ClaimOrderStatus
@@ -1565,6 +1567,15 @@ class EvidenceRequestTaskSummary(BaseModel):
     reconciliation_result_id: int | None
     customer_refund_dispute_id: int | None
     last_upload_evidence_id: int | None
+    field_context_label: str
+    field_restaurant_label: str
+    field_customer_label: str
+    field_order_label: str
+    field_date_label: str
+    field_amount_label: str
+    field_search_hint: str
+    field_photo_instruction: str
+    field_missing_info: list[str]
     created_at: datetime
     updated_at: datetime
 

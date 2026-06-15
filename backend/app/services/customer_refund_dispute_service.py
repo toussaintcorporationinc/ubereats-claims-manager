@@ -13,6 +13,7 @@ from app.models import (
     EvidenceFile,
     EvidenceRequestTask,
     UberCustomerRefundDispute,
+    UberOrderSnapshot,
     User,
 )
 from app.models.domain import utc_now
@@ -149,11 +150,13 @@ def create_claim_order_from_dispute(
     if dispute.evidence_status in {"complete", "not_required"}:
         initial_status = "ready_to_send"
 
+    snapshot = find_snapshot_for_dispute(db, dispute, order_number)
     order = ClaimOrder(
         restaurant_id=dispute.restaurant_id,
         internal_reference=f"CUST-REFUND-{dispute.id}",
         uber_order_number=order_number,
-        order_date=dispute.order_date,
+        customer_name=snapshot.customer_name if snapshot else None,
+        order_date=dispute.order_date or (snapshot.placed_at.date() if snapshot and snapshot.placed_at else None),
         order_amount=dispute.customer_refund_amount,
         currency=dispute.currency,
         loss_type="customer_refund_dispute",
@@ -175,6 +178,33 @@ def create_claim_order_from_dispute(
     db.commit()
     db.refresh(order)
     return order
+
+
+def find_snapshot_for_dispute(
+    db: Session,
+    dispute: UberCustomerRefundDispute,
+    order_number: str,
+) -> UberOrderSnapshot | None:
+    candidate_numbers = {order_number}
+    candidate_numbers.update(value for value in (dispute.uber_order_id, dispute.display_id) if value)
+    statement = select(UberOrderSnapshot).where(
+        UberOrderSnapshot.restaurant_id == dispute.restaurant_id,
+        UberOrderSnapshot.uber_order_id.in_(candidate_numbers),
+    )
+    if dispute.uber_store_id:
+        statement = statement.where(UberOrderSnapshot.uber_store_id == dispute.uber_store_id)
+    snapshot = db.scalar(statement.order_by(UberOrderSnapshot.id.desc()).limit(1))
+    if snapshot is not None:
+        return snapshot
+    return db.scalar(
+        select(UberOrderSnapshot)
+        .where(
+            UberOrderSnapshot.restaurant_id == dispute.restaurant_id,
+            UberOrderSnapshot.display_id.in_(candidate_numbers),
+        )
+        .order_by(UberOrderSnapshot.id.desc())
+        .limit(1)
+    )
 
 
 def create_customer_refund_draft(

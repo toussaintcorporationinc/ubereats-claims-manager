@@ -213,6 +213,7 @@ export default function EvidenceTaskDetailPage() {
           <DetailItem label="Restaurant" value={restaurant?.name ?? `#${order.restaurant_id}`} />
           <DetailItem label="Commande Uber" value={order.uber_order_number} />
           <DetailItem label="Client" value={order.customer_name ?? "-"} />
+          <DetailItem label="Date commande" value={formatOrderDate(order.order_date, order.order_time)} />
           <DetailItem label="Statut dossier" value={order.status} />
           <DetailItem label="Montant" value={formatCurrency(order.order_amount, order.currency)} />
           <DetailItem label="Type preuve" value={task.required_evidence_type} />
@@ -222,6 +223,13 @@ export default function EvidenceTaskDetailPage() {
           <DetailItem label="Creee le" value={formatDate(task.created_at)} />
         </div>
         {task.description ? <p className="muted">{task.description}</p> : null}
+        <div className="field-search-hint">
+          <span>A chercher dans Uber</span>
+          <strong>{buildSearchHint(restaurant?.name ?? `#${order.restaurant_id}`, order)}</strong>
+        </div>
+        <p className="muted">
+          Retrouve cette commande dans Uber, imprime le vrai ticket Uber, agrafe-le sur la commande, prends une photo nette puis importe-la ici.
+        </p>
       </section>
 
       {uploadResult ? (
@@ -261,11 +269,11 @@ export default function EvidenceTaskDetailPage() {
 
         <section className="tool-panel">
           <div className="section-heading">
-            <h2>Ticket preuve</h2>
-            <span className="muted">Imprimez un ticket preuve restaurant avec QR code pour guider la photo terrain.</span>
+            <h2>Fiche terrain</h2>
+            <span className="muted">Imprimez une fiche de recherche avec QR code pour retrouver la bonne commande et envoyer la photo.</span>
           </div>
           <button type="button" className="button" onClick={handleCreatePrintTicket} disabled={!isActive || creatingTicket}>
-            {creatingTicket ? "Creation" : "Imprimer ticket preuve"}
+            {creatingTicket ? "Creation" : "Imprimer fiche terrain"}
           </button>
           {ticketResult ? (
             <div className="success-box">
@@ -344,4 +352,17 @@ function DetailItem({ label, value }: { label: string; value: string }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function formatOrderDate(orderDate: string | null, orderTime: string | null): string {
+  if (!orderDate) {
+    return "Date non trouvee dans l'import";
+  }
+  return orderTime ? `${orderDate} ${orderTime.slice(0, 5)}` : orderDate;
+}
+
+function buildSearchHint(restaurantName: string, order: ClaimOrder): string {
+  return [restaurantName, order.uber_order_number, order.customer_name, formatOrderDate(order.order_date, order.order_time)]
+    .filter(Boolean)
+    .join(" - ");
 }
