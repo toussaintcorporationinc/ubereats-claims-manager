@@ -139,67 +139,76 @@ export default function DashboardPage() {
 
   return (
     <section className="page-section page-section--simple">
-      <div className="machine-hero">
-        <div className="heading-copy">
-          <p className="eyebrow">TENNET</p>
-          <h1>{user?.role === "staff" ? "Mes preuves a faire" : "Machine de recuperation"}</h1>
-          <p>
-            Depose tes exports Uber, preuves ou ZIP. TENNET classe, traite, detecte, prepare les dossiers et lance les
-            actions autorisees par tes regles.
-          </p>
-        </div>
-        {canSeeBusinessMetrics ? (
-          <div className={`machine-command ${pilotRunning || importRunning ? "machine-command--running" : ""}`}>
-            <div className="machine-ring" aria-hidden="true">
-              <span />
-            </div>
-            <div className="machine-command__content">
-              <strong>{pilotRunning || importRunning ? "TENNET travaille" : "Machine active"}</strong>
-              <span>
-                {homeFiles.length > 0
-                  ? `${homeFiles.length} fichier(s) prets`
-                  : recoveryMachine
-                    ? `${recoveryMachine.global_progress_percent}% du parcours`
-                    : "Import massif ou passage complet"}
-              </span>
-            </div>
+      <div className="machine-hero machine-hero--focus">
+        <div className="machine-hero__main">
+          <div className="heading-copy">
+            <p className="eyebrow">TENNET</p>
+            <h1>{user?.role === "staff" ? "Mes preuves a faire" : "Machine de recuperation"}</h1>
+            <p>
+              Depose les exports Uber, photos ou ZIP. TENNET classe, rattache, repare, prepare les dossiers, suit les
+              emails et garde les blocages visibles avec une raison claire.
+            </p>
           </div>
-        ) : null}
-        <div className="simple-hero__actions machine-hero__actions">
           {canSeeBusinessMetrics ? (
-            <label className="secondary-button machine-file-button" htmlFor="dashboard-smart-files">
-              Deposer fichiers
-            </label>
+            <div className={`machine-command ${pilotRunning || importRunning ? "machine-command--running" : ""}`}>
+              <div className="machine-ring" aria-hidden="true">
+                <span />
+              </div>
+              <div className="machine-command__content">
+                <strong>{pilotRunning || importRunning ? "TENNET travaille" : "Machine active"}</strong>
+                <span>
+                  {homeFiles.length > 0
+                    ? `${homeFiles.length} fichier(s) prets`
+                    : recoveryMachine
+                      ? `${recoveryMachine.global_progress_percent}% du parcours`
+                      : "Surveillance continue"}
+                </span>
+              </div>
+            </div>
           ) : null}
-          {canSeeBusinessMetrics ? (
-            <input
-              id="dashboard-smart-files"
-              className="machine-file-input"
-              type="file"
-              multiple
-              accept={acceptedTypes}
-              onChange={(event) => setHomeFiles(Array.from(event.target.files ?? []))}
-            />
-          ) : null}
-          {canSeeBusinessMetrics && homeFiles.length > 0 ? (
-            <button
-              type="button"
-              className="button button--hero"
-              disabled={pilotRunning || importRunning}
-              onClick={() => void runSmartImportFromDashboard()}
-            >
-              {importRunning ? "Traitement" : "Importer et lancer"}
-            </button>
-          ) : null}
-          {canSeeBusinessMetrics ? (
-            <button type="button" className="button button--hero" disabled={pilotRunning || importRunning} onClick={() => void runTennetPilot()}>
-              {pilotRunning ? "Passage complet auto" : "Relancer maintenant"}
-            </button>
-          ) : null}
+          <div className="machine-hero__actions">
+            {canSeeBusinessMetrics ? (
+              <>
+                <label className="button button--hero machine-file-button" htmlFor="dashboard-smart-files">
+                  Deposer fichiers
+                </label>
+                <input
+                  id="dashboard-smart-files"
+                  className="machine-file-input"
+                  type="file"
+                  multiple
+                  accept={acceptedTypes}
+                  onChange={(event) => setHomeFiles(Array.from(event.target.files ?? []))}
+                />
+                {homeFiles.length > 0 ? (
+                  <button
+                    type="button"
+                    className="button button--hero"
+                    disabled={pilotRunning || importRunning}
+                    onClick={() => void runSmartImportFromDashboard()}
+                  >
+                    {importRunning ? "TENNET traite" : "Lancer avec fichiers"}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="secondary-button machine-pass-button"
+                  disabled={pilotRunning || importRunning}
+                  onClick={() => void runTennetPilot()}
+                >
+                  {pilotRunning ? "Passage en cours" : "Passage complet"}
+                </button>
+                <p className="machine-action-note">Le passage complet tourne aussi automatiquement en arriere-plan.</p>
+              </>
+            ) : (
+              <Link href="/evidence-tasks" className="button button--hero">
+                Voir mes preuves
+              </Link>
+            )}
+          </div>
         </div>
+        {canSeeBusinessMetrics && recoveryMachine ? <RecoveryMachineFocusPanel machine={recoveryMachine} /> : null}
       </div>
-
-      {canSeeBusinessMetrics && recoveryMachine ? <RecoveryMachineRailsPanel machine={recoveryMachine} /> : null}
 
       <ApiError error={error} />
       <ApiError error={pilotError} />
@@ -385,46 +394,50 @@ export default function DashboardPage() {
   );
 }
 
-function RecoveryMachineRailsPanel({ machine }: { machine: RecoveryMachineResponse }) {
+function RecoveryMachineFocusPanel({ machine }: { machine: RecoveryMachineResponse }) {
+  const refunds = machine.rails.find((rail) => rail.key === "refunds");
+  const cancellations = machine.rails.find((rail) => rail.key === "cancellations");
+  const rails = [refunds, cancellations].filter(Boolean) as RecoveryMachineRail[];
+
   return (
-    <section className="recovery-machine-panel" aria-label="Parcours de recuperation TENNET">
-      <div className="recovery-machine-panel__summary">
-        <div>
-          <p className="eyebrow">Parcours automatique</p>
-          <h2>Remboursements et annulations</h2>
-          <p className="muted">{machine.subtitle}</p>
-        </div>
-        <div className="recovery-machine-panel__numbers">
-          <div>
-            <span>Detecte</span>
-            <strong>{formatCurrency(machine.total_detected_amount)}</strong>
-          </div>
-          <div>
-            <span>Recupere</span>
-            <strong>{formatCurrency(machine.total_recovered_amount)}</strong>
-          </div>
-          <div>
-            <span>Actions</span>
-            <strong>{machine.total_actions_count}</strong>
-          </div>
-        </div>
+    <section className="recovery-machine-focus" aria-label="Parcours de recuperation TENNET">
+      <div className="machine-snapshot">
+        <MachineSnapshotItem label="Detecte" value={formatCurrency(machine.total_detected_amount)} />
+        <MachineSnapshotItem label="Paiements confirmes" value={formatCurrency(machine.total_recovered_amount)} />
+        <MachineSnapshotItem label="Actions ouvertes" value={machine.total_actions_count} />
       </div>
-      <div className="recovery-rail-grid">
-        {machine.rails.map((rail) => (
-          <RecoveryMachineRailCard key={rail.key} rail={rail} />
+      <div className="machine-lane-grid">
+        {rails.map((rail) => (
+          <RecoveryMachineLane key={rail.key} rail={rail} />
         ))}
       </div>
     </section>
   );
 }
 
-function RecoveryMachineRailCard({ rail }: { rail: RecoveryMachineRail }) {
+function MachineSnapshotItem({ label, value }: { label: string; value: string | number }) {
   return (
-    <article className={`recovery-rail recovery-rail--${rail.health}`}>
-      <div className="recovery-rail__header">
+    <div>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function RecoveryMachineLane({ rail }: { rail: RecoveryMachineRail }) {
+  const evidenceNeeded = stageByKey(rail, "evidence_needed");
+  const evidenceReceived = stageByKey(rail, "evidence_received");
+  const uberEmails = stageByKey(rail, "uber_emails");
+  const followups = stageByKey(rail, "followups");
+  const payments = stageByKey(rail, "payments");
+  const blockersCount = (evidenceNeeded?.count ?? 0) + (followups?.count ?? 0);
+
+  return (
+    <article className={`machine-lane machine-lane--${rail.health}`}>
+      <div className="machine-lane__top">
         <div>
           <span className="rail-kicker">{rail.short_title}</span>
-          <h3>{rail.title}</h3>
+          <h2>{rail.title}</h2>
           <p>{rail.description}</p>
         </div>
         <div
@@ -435,35 +448,56 @@ function RecoveryMachineRailCard({ rail }: { rail: RecoveryMachineRail }) {
           <span>{rail.progress_percent}%</span>
         </div>
       </div>
-      <div className="rail-metrics">
-        <div>
-          <span>Detecte</span>
-          <strong>{formatCurrency(rail.detected_amount)}</strong>
-        </div>
-        <div>
-          <span>Contestable</span>
-          <strong>{formatCurrency(rail.claimable_amount)}</strong>
-        </div>
-        <div>
-          <span>Recupere</span>
-          <strong>{formatCurrency(rail.recovered_amount)}</strong>
-        </div>
+      <div className="machine-lane__amounts">
+        <MachineSnapshotItem label="A recuperer" value={formatCurrency(rail.claimable_amount)} />
+        <MachineSnapshotItem label="Recupere" value={formatCurrency(rail.recovered_amount)} />
+        <MachineSnapshotItem label="Blocages reels" value={blockersCount} />
       </div>
-      <div className="rail-stage-track">
-        {rail.stages.map((stage) => (
-          <RecoveryRailStage key={stage.key} stage={stage} />
-        ))}
+      <div className="machine-lane__steps">
+        <MachineLaneStep label="Preuves manquantes" stage={evidenceNeeded} />
+        <MachineLaneStep label="Preuves recues" stage={evidenceReceived} />
+        <MachineLaneStep label="Emails Uber" stage={uberEmails} />
+        <MachineLaneStep label="Relances / appels" stage={followups} />
+        <MachineLaneStep label="Paiements confirmes" stage={payments} />
       </div>
-      <div className="rail-actions">
+      <div className="machine-lane__bottom">
+        <p>{laneStatusText(rail, blockersCount)}</p>
         <Link href={rail.next_action_href} className="button">
           {rail.next_action_label}
-        </Link>
-        <Link href={rail.href} className="secondary-button">
-          Voir parcours
         </Link>
       </div>
     </article>
   );
+}
+
+function MachineLaneStep({ label, stage }: { label: string; stage?: RecoveryMachineStage }) {
+  if (!stage) {
+    return null;
+  }
+  return (
+    <Link href={stage.href} className={`machine-step machine-step--${stage.status}`}>
+      <span>{label}</span>
+      <strong>{stage.count}</strong>
+      <small>{formatCurrency(stage.amount)}</small>
+    </Link>
+  );
+}
+
+function stageByKey(rail: RecoveryMachineRail, key: RecoveryMachineStage["key"]): RecoveryMachineStage | undefined {
+  return rail.stages.find((stage) => stage.key === key);
+}
+
+function laneStatusText(rail: RecoveryMachineRail, blockersCount: number): string {
+  if (blockersCount > 0) {
+    return `${blockersCount} blocage(s) avec raison visible. TENNET ne fabrique rien sans preuve fiable.`;
+  }
+  if (rail.detected_count === 0) {
+    return "Aucun dossier detecte pour ce parcours. Depose les fichiers, TENNET lance la lecture.";
+  }
+  if (rail.recovered_count > 0) {
+    return "Parcours actif : les paiements confirmes sont deja comptabilises.";
+  }
+  return "Parcours pret : TENNET continue les emails, relances et controles autorises.";
 }
 
 function RecoveryRailStage({ stage }: { stage: RecoveryMachineStage }) {
