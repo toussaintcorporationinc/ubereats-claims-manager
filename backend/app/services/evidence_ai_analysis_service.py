@@ -19,6 +19,7 @@ from app.services.bulk_evidence_import_service import BulkEvidenceImportError, r
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp"}
 PDF_EXTENSION = ".pdf"
+EXCEL_EXTENSIONS = {".xlsx", ".xlsm"}
 
 ORDER_PATTERN = re.compile(r"\b(UBER(?:[-_\s]?[A-Z0-9]+){1,5})\b", re.IGNORECASE)
 CONTEXTUAL_DISPLAY_PATTERN = re.compile(
@@ -283,11 +284,16 @@ def build_local_text(imported_file: EvidenceImportedFile) -> str:
 
 
 def extract_document_text(suffix: str, content: bytes) -> str:
-    pieces = [decode_text_payload(content)]
     if suffix == PDF_EXTENSION:
-        pieces.append(extract_pdf_text(content))
+        pieces = [decode_text_payload(content), extract_pdf_text(content)]
     elif suffix in IMAGE_EXTENSIONS:
-        pieces.append(extract_image_ocr_text(content))
+        ocr_text = extract_image_ocr_text(content)
+        decoded_text = decode_text_payload(content)
+        pieces = [ocr_text or (decoded_text if looks_like_labeled_business_text(decoded_text) else "")]
+    elif suffix in EXCEL_EXTENSIONS:
+        pieces = [extract_excel_text(content)]
+    else:
+        pieces = [decode_text_payload(content)]
     return "\n".join(piece for piece in pieces if piece).strip()
 
 
@@ -295,6 +301,25 @@ def decode_text_payload(content: bytes) -> str:
     decoded = content[:32768].decode("utf-8", errors="ignore")
     readable = "".join(char if char.isprintable() or char in "\n\r\t" else " " for char in decoded)
     return readable.strip()
+
+
+def looks_like_labeled_business_text(value: str) -> bool:
+    normalized = normalize_for_match(value)
+    label_hits = sum(
+        1
+        for token in (
+            "restaurant",
+            "client",
+            "commande",
+            "order",
+            "montant",
+            "remboursement",
+            "annulation",
+            "ticket",
+        )
+        if token in normalized
+    )
+    return label_hits >= 2
 
 
 def extract_pdf_text(content: bytes) -> str:
@@ -306,6 +331,35 @@ def extract_pdf_text(content: bytes) -> str:
         return "\n".join(texts).strip()
     except Exception:
         return ""
+
+
+def extract_excel_text(content: bytes) -> str:
+    try:
+        from openpyxl import load_workbook
+
+        workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
+        pieces: list[str] = []
+        for worksheet in workbook.worksheets[:8]:
+            pieces.append(worksheet.title)
+            header_values: list[str] | None = None
+            for row in worksheet.iter_rows(min_row=1, max_row=250, max_col=60, values_only=True):
+                values = [str(value).strip() for value in row if value is not None and str(value).strip()]
+                if values:
+                    pieces.append(" | ".join(values))
+                    if header_values is None and looks_like_header_row(values):
+                        header_values = values
+                    elif header_values is not None:
+                        for header, value in zip(header_values, values, strict=False):
+                            pieces.append(f"{header}: {value}")
+        return "\n".join(pieces).strip()
+    except Exception:
+        return ""
+
+
+def looks_like_header_row(values: list[str]) -> bool:
+    normalized = [normalize_for_match(value) for value in values]
+    header_tokens = {"restaurant", "client", "commande", "order", "montant", "total", "motif", "date"}
+    return sum(1 for value in normalized if any(token in value for token in header_tokens)) >= 2
 
 
 def extract_image_ocr_text(content: bytes) -> str:

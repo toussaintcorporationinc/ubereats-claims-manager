@@ -1073,6 +1073,62 @@ def test_workspace_machine_resolves_proof_restaurant_from_existing_order_snapsho
     assert order.order_date == snapshot.placed_at.date()
 
 
+def test_workspace_machine_extracts_excel_proof_cells(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = Restaurant(name="Big Chicken Burger", sender_email="big@example.com")
+    db_session.add(restaurant)
+    db_session.commit()
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Order accuracy"
+    worksheet.append(["Restaurant", "Client", "Commande", "Montant total", "Motif"])
+    worksheet.append(["Big Chicken Burger", "Excel Client", "XLX123", "17,90 EUR", "Remboursement client"])
+    content = BytesIO()
+    workbook.save(content)
+
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[
+            (
+                "files",
+                (
+                    "download.xlsx",
+                    content.getvalue(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+            )
+        ],
+    ).json()
+    confirm_response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [{"file_id": preview["files"][0]["id"], "action": "import_evidence_bulk"}],
+        },
+    )
+    assert confirm_response.status_code == 200
+
+    response = client.post(
+        "/v1/workspace/machine/run",
+        json={
+            "trigger": "manual",
+            "smart_import_batch_id": preview["batch_preview_id"],
+            "sync_gmail": False,
+            "run_autopilot": False,
+        },
+    )
+
+    assert response.status_code == 200
+    order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "XLX123"))
+    assert order is not None
+    assert order.restaurant_id == restaurant.id
+    assert order.customer_name == "Excel Client"
+    assert str(order.order_amount) == "17.90"
+
+
 def test_workspace_machine_creates_cancellation_case_from_single_stapled_ticket_proof(
     client: TestClient,
     db_session: Session,
