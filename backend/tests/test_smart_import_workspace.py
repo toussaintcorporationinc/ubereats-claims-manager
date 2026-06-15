@@ -1332,6 +1332,12 @@ def test_staff_cannot_run_workspace_machine(client: TestClient, db_session: Sess
     assert response.status_code == 403
 
 
+def test_evidence_analysis_rejects_numeric_customer_names() -> None:
+    assert evidence_analysis_service.clean_customer_name("15.49") is None
+    assert evidence_analysis_service.clean_customer_name("5.01 EUR") is None
+    assert evidence_analysis_service.clean_customer_name("Client Test") == "Client Test"
+
+
 def create_restaurant_order_and_task(db: Session) -> tuple[Restaurant, ClaimOrder]:
     owner = db.scalar(select(User).where(User.email == "owner@example.com"))
     restaurant = Restaurant(name="Restaurant Next Actions", sender_email="claims@example.com")

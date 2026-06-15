@@ -552,7 +552,9 @@ def detect_customer_name(db: Session, text: str, batch_restaurant_id: int | None
             statement = statement.where(ClaimOrder.restaurant_id == restaurant.id)
     candidates = []
     for order in db.scalars(statement).all():
-        customer_name = (order.customer_name or "").strip()
+        customer_name = clean_customer_name(order.customer_name or "")
+        if not customer_name:
+            continue
         normalized_name = normalize_for_match(customer_name)
         if len(normalized_name) >= 4 and normalized_name in normalized_text:
             candidates.append((len(normalized_name), customer_name))
@@ -591,7 +593,7 @@ def extract_labeled_customer_name(text: str) -> str | None:
     match = CUSTOMER_LABEL_PATTERN.search(text)
     if not match:
         return None
-    return clean_human_label(match.group(1), max_length=80)
+    return clean_customer_name(match.group(1))
 
 
 def extract_labeled_restaurant_name(text: str) -> str | None:
@@ -609,6 +611,25 @@ def clean_human_label(value: str, *, max_length: int) -> str | None:
     if normalize_for_match(cleaned) in blocked:
         return None
     return cleaned[:max_length]
+
+
+def clean_customer_name(value: str) -> str | None:
+    cleaned = clean_human_label(value, max_length=80)
+    if cleaned is None:
+        return None
+    normalized = normalize_for_match(cleaned)
+    if re.fullmatch(r"\d+(?:[.,]\d+)?\s*(?:EUR|euro|euros|%)?", cleaned, flags=re.IGNORECASE):
+        return None
+    if re.fullmatch(r"\d+(?:[.,]\d+)?", normalized):
+        return None
+    if re.fullmatch(r"\d+(?:[.,]\d+)?\s*(eur|euro|euros|percent|pourcent|%)?", normalized):
+        return None
+    if normalized in {"tva", "ht", "ttc", "eur", "euro", "euros"}:
+        return None
+    letters = [char for char in cleaned if char.isalpha()]
+    if len(letters) < 2:
+        return None
+    return cleaned
 
 
 def resolve_restaurant_display_name(db: Session, value: str) -> str | None:
