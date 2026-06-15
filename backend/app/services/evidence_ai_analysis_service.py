@@ -5,6 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from io import BytesIO
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -16,14 +17,32 @@ from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.bulk_evidence_import_service import BulkEvidenceImportError, resolve_imported_file_path
 
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp"}
+PDF_EXTENSION = ".pdf"
+
 ORDER_PATTERN = re.compile(r"\b(UBER(?:[-_\s]?[A-Z0-9]+){1,5})\b", re.IGNORECASE)
 CONTEXTUAL_DISPLAY_PATTERN = re.compile(
-    r"(?:commande|cmd|order|ticket|recu|recu|receipt|client|uber|id)[\s:_#-]{0,8}([A-Z0-9][A-Z0-9-]{3,14})",
+    r"(?:n(?:umero)?\s*(?:de)?\s*commande|id\s*(?:de)?\s*(?:la)?\s*commande|"
+    r"commande|cmd|order\s*(?:id)?|ticket|receipt|uber\s*(?:order)?\s*(?:id)?|id)[\s:_#-]{0,12}"
+    r"([A-Z0-9][A-Z0-9-]{3,24})",
     re.IGNORECASE,
 )
 DISPLAY_PATTERN = re.compile(r"\b([A-Z0-9]{5,10})\b")
-AMOUNT_PATTERN = re.compile(r"(?<!\d)(\d{1,4}(?:[.,]\d{2}))(?!\d)")
-DATE_PATTERN = re.compile(r"\b(\d{4}-\d{2}-\d{2}|\d{2}[/-]\d{2}[/-]\d{4})\b")
+AMOUNT_PATTERN = re.compile(r"(?<!\d)(\d{1,4}(?:[.,]\d{1,2}))(?!\d)")
+LABELED_AMOUNT_PATTERN = re.compile(
+    r"(?:montant\s*(?:total)?|total|amount|ventes|prix|remboursement|deduction|deduit)"
+    r"[\s:=-]{0,12}(?:EUR|euros?|€)?\s*(\d{1,4}(?:[.,]\d{1,2})?)(?:\s*(?:EUR|euros?|€))?",
+    re.IGNORECASE,
+)
+DATE_PATTERN = re.compile(r"\b(\d{4}[-/]\d{2}[-/]\d{2}|\d{2}[/-]\d{2}[/-]\d{4})\b")
+CUSTOMER_LABEL_PATTERN = re.compile(
+    r"(?:nom\s*(?:du)?\s*client|client|customer\s*(?:name)?|eater)\s*[:=-]\s*([^\n\r,;|]{2,80})",
+    re.IGNORECASE,
+)
+RESTAURANT_LABEL_PATTERN = re.compile(
+    r"(?:nom\s*(?:du)?\s*restaurant|restaurant|store|merchant)\s*[:=-]\s*([^\n\r,;|]{2,100})",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -171,6 +190,7 @@ class EvidenceAIAnalysisService:
                         "extraction_confidence": str(payload.extraction_confidence),
                         "needs_manual_review": payload.needs_manual_review,
                         "notes": payload.notes,
+                        "unified_order_proof": looks_like_unified_order_proof(payload.extracted_text.lower()),
                     },
                 )
                 db.add(result)
@@ -227,6 +247,8 @@ class EvidenceAIAnalysisService:
         extraction_confidence = Decimal("0.88") if order_number else Decimal("0.72") if display_id else Decimal("0.55")
         if restaurant_name and (order_number or display_id or customer_name):
             extraction_confidence = max(extraction_confidence, Decimal("0.82"))
+        if restaurant_name and (order_number or display_id) and amount is not None:
+            extraction_confidence = max(extraction_confidence, Decimal("0.90"))
         needs_manual_review = evidence_type == "unknown" or identity_score < 2
         return EvidenceAnalysisPayload(
             detected_evidence_type=evidence_type,
@@ -253,11 +275,54 @@ def build_local_text(imported_file: EvidenceImportedFile) -> str:
         batch_context = imported_file.batch.restaurant.name
     try:
         path = resolve_imported_file_path(imported_file)
-        content = path.read_bytes()[:8192]
-        decoded = content.decode("utf-8", errors="ignore")
+        content = path.read_bytes()
+        decoded = extract_document_text(path.suffix.lower(), content)
     except (BulkEvidenceImportError, UnicodeDecodeError):
         decoded = ""
     return f"{filename_text}\n{batch_context}\n{decoded}".strip()
+
+
+def extract_document_text(suffix: str, content: bytes) -> str:
+    pieces = [decode_text_payload(content)]
+    if suffix == PDF_EXTENSION:
+        pieces.append(extract_pdf_text(content))
+    elif suffix in IMAGE_EXTENSIONS:
+        pieces.append(extract_image_ocr_text(content))
+    return "\n".join(piece for piece in pieces if piece).strip()
+
+
+def decode_text_payload(content: bytes) -> str:
+    decoded = content[:32768].decode("utf-8", errors="ignore")
+    readable = "".join(char if char.isprintable() or char in "\n\r\t" else " " for char in decoded)
+    return readable.strip()
+
+
+def extract_pdf_text(content: bytes) -> str:
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(BytesIO(content))
+        texts = [(page.extract_text() or "") for page in reader.pages[:5]]
+        return "\n".join(texts).strip()
+    except Exception:
+        return ""
+
+
+def extract_image_ocr_text(content: bytes) -> str:
+    try:
+        from PIL import Image, ImageOps
+        import pytesseract
+
+        with Image.open(BytesIO(content)) as image:
+            normalized = ImageOps.exif_transpose(image)
+            if normalized.mode not in {"L", "RGB"}:
+                normalized = normalized.convert("RGB")
+            try:
+                return pytesseract.image_to_string(normalized, lang="fra+eng").strip()
+            except pytesseract.TesseractError:
+                return pytesseract.image_to_string(normalized).strip()
+    except Exception:
+        return ""
 
 
 def classify_evidence_type(text: str, filename: str) -> tuple[str, list[str], Decimal]:
@@ -306,9 +371,9 @@ def looks_like_unified_order_proof(normalized: str) -> bool:
 
 def extract_order_number(text: str) -> str | None:
     match = ORDER_PATTERN.search(text)
-    if not match:
-        return None
-    return re.sub(r"[-_\s]+", "-", match.group(1)).strip("-").upper()
+    if match:
+        return re.sub(r"[-_\s]+", "-", match.group(1)).strip("-").upper()
+    return None
 
 
 def extract_display_id(text: str, order_number: str | None) -> str | None:
@@ -317,20 +382,30 @@ def extract_display_id(text: str, order_number: str | None) -> str | None:
     normalized_text = normalize_identifier_text(text)
     match = CONTEXTUAL_DISPLAY_PATTERN.search(normalized_text)
     if match:
-        return clean_display_id(match.group(1))
+        cleaned = clean_display_id(match.group(1))
+        if valid_display_id(cleaned):
+            return cleaned
     if any(token in normalized_text.lower() for token in ("commande", "cmd", "order", "ticket", "receipt", "uber")):
         fallback = DISPLAY_PATTERN.search(normalized_text)
         if fallback:
-            return clean_display_id(fallback.group(1))
+            cleaned = clean_display_id(fallback.group(1))
+            if valid_display_id(cleaned):
+                return cleaned
     return None
 
 
 def extract_amount(text: str) -> Decimal | None:
+    labeled = LABELED_AMOUNT_PATTERN.search(text.replace("\xa0", " "))
+    if labeled:
+        try:
+            return Decimal(labeled.group(1).replace(",", ".")).quantize(Decimal("0.01"))
+        except InvalidOperation:
+            return None
     match = AMOUNT_PATTERN.search(text.replace(" ", ""))
     if not match:
         return None
     try:
-        return Decimal(match.group(1).replace(",", "."))
+        return Decimal(match.group(1).replace(",", ".")).quantize(Decimal("0.01"))
     except InvalidOperation:
         return None
 
@@ -341,8 +416,8 @@ def extract_date(text: str) -> date | None:
         return None
     raw = match.group(1)
     try:
-        if "-" in raw and raw[4] == "-":
-            return date.fromisoformat(raw)
+        if raw[4:5] in {"-", "/"}:
+            return date.fromisoformat(raw.replace("/", "-"))
         day, month, year = re.split(r"[/-]", raw)
         return date(int(year), int(month), int(day))
     except (ValueError, IndexError):
@@ -354,6 +429,11 @@ def detect_restaurant_name(db: Session, text: str, batch_restaurant_id: int | No
         restaurant = db.get(Restaurant, batch_restaurant_id)
         if restaurant is not None:
             return restaurant.name
+    labeled = extract_labeled_restaurant_name(text)
+    if labeled:
+        resolved = resolve_restaurant_display_name(db, labeled)
+        if resolved:
+            return resolved
     normalized_text = normalize_for_match(text)
     restaurants = db.scalars(select(Restaurant).where(Restaurant.active.is_(True)).order_by(Restaurant.id)).all()
     matches: list[tuple[int, str]] = []
@@ -368,6 +448,9 @@ def detect_restaurant_name(db: Session, text: str, batch_restaurant_id: int | No
 
 
 def detect_customer_name(db: Session, text: str, batch_restaurant_id: int | None, restaurant_name: str | None) -> str | None:
+    labeled = extract_labeled_customer_name(text)
+    if labeled:
+        return labeled
     normalized_text = normalize_for_match(text)
     statement = select(ClaimOrder).where(ClaimOrder.customer_name.is_not(None)).order_by(ClaimOrder.id.desc()).limit(500)
     if batch_restaurant_id is not None:
@@ -403,6 +486,50 @@ def normalize_identifier_text(value: str) -> str:
 def clean_display_id(value: str) -> str:
     cleaned = re.sub(r"[^A-Z0-9-]", "", value.upper()).strip("-")
     return cleaned[:20] if cleaned else ""
+
+
+def valid_display_id(value: str | None) -> bool:
+    if not value or len(value) < 4:
+        return False
+    if value in {"TICKET", "CLIENT", "ORDER", "COMMANDE", "RECEIPT"}:
+        return False
+    return any(char.isdigit() for char in value)
+
+
+def extract_labeled_customer_name(text: str) -> str | None:
+    match = CUSTOMER_LABEL_PATTERN.search(text)
+    if not match:
+        return None
+    return clean_human_label(match.group(1), max_length=80)
+
+
+def extract_labeled_restaurant_name(text: str) -> str | None:
+    match = RESTAURANT_LABEL_PATTERN.search(text)
+    if not match:
+        return None
+    return clean_human_label(match.group(1), max_length=100)
+
+
+def clean_human_label(value: str, *, max_length: int) -> str | None:
+    cleaned = re.sub(r"\s+", " ", value).strip(" -_:;,.")
+    if not cleaned or len(cleaned) < 2:
+        return None
+    blocked = {"commande", "order", "ticket", "receipt", "montant", "total"}
+    if normalize_for_match(cleaned) in blocked:
+        return None
+    return cleaned[:max_length]
+
+
+def resolve_restaurant_display_name(db: Session, value: str) -> str | None:
+    from app.services.uber_reporting_import_service import resolve_mapping_by_store_name, resolve_restaurant_by_store_name
+
+    mapping = resolve_mapping_by_store_name(db, value)
+    if mapping is not None and mapping.restaurant is not None:
+        return mapping.restaurant.name
+    restaurant = resolve_restaurant_by_store_name(db, value)
+    if restaurant is not None:
+        return restaurant.name
+    return None
 
 
 def analysis_notes(

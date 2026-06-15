@@ -18,6 +18,9 @@ dependencies = [
   "python-multipart",
   "openpyxl",
   "qrcode",
+  "pillow",
+  "pytesseract",
+  "pypdf",
 ]
 
 [project.optional-dependencies]

@@ -25,6 +25,7 @@ from app.services.followup_policy_service import FOLLOWUP_ELIGIBLE_STATUSES, Fol
 from app.services.gmail_inbound_sync_service import GmailInboundSyncService
 from app.services.historical_restaurant_reclassification_service import HistoricalRestaurantReclassificationService
 from app.services.historical_uber_reporting_repair_service import HistoricalUberReportingRepairService
+from app.services.proof_intake_service import ProofIntakeService
 from app.services.workspace_action_service import WorkspaceActionService
 from app.services.workspace_unclassified_service import WorkspaceUnclassifiedService
 
@@ -55,6 +56,7 @@ class WorkspaceMachineService:
             self.stage("deductions", lambda: self.detect_customer_refunds(payload.restaurant_id)),
             self.stage("claim_orders", lambda: self.create_customer_refund_claim_orders(payload.restaurant_id)),
             self.stage("evidence", lambda: self.process_evidence_queue(payload.restaurant_id)),
+            self.stage("proof_intake", lambda: self.process_proof_intake(payload)),
             self.stage("unclassified", self.inspect_unclassified),
             self.stage("drafts", lambda: self.create_customer_refund_drafts(payload.restaurant_id)),
             self.stage("followups", lambda: self.recalculate_followups(payload.restaurant_id)),
@@ -225,6 +227,24 @@ class WorkspaceMachineService:
             skipped_count=int(recalc.get("skipped_orders", 0)) + int(evidence_result.get("needs_review_count", 0)),
             failed_count=int(evidence_result.get("failed_files_count", 0)),
             warnings=warnings,
+        )
+
+    def process_proof_intake(self, payload: WorkspaceMachineRunRequest) -> WorkspaceMachineStage:
+        result = ProofIntakeService().process(
+            self.db,
+            self.current_user,
+            trigger=payload.trigger,
+            restaurant_id=payload.restaurant_id,
+            smart_import_batch_id=payload.smart_import_batch_id,
+            limit=500,
+        )
+        return WorkspaceMachineStage(
+            name="proof_intake",
+            status="warning" if result.warnings else "completed",
+            processed_count=result.processed_count,
+            created_count=result.created_count,
+            skipped_count=result.skipped_count,
+            warnings=result.warnings[:50],
         )
 
     def inspect_unclassified(self) -> WorkspaceMachineStage:
