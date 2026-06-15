@@ -7,7 +7,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.models import ClaimResponseReview, EmailAccount, EmailDraft, EvidenceFile, FollowUpTask, InboundEmailMessage, User
+from app.models import (
+    ClaimResponseReview,
+    EmailAccount,
+    EmailDraft,
+    EvidenceFile,
+    FollowUpTask,
+    InboundEmailMessage,
+    UberCustomerRefundDispute,
+    User,
+)
 from app.models.domain import utc_now
 
 
@@ -175,6 +184,37 @@ def add_response_review(
     return review
 
 
+def add_customer_refund(
+    db_session: Session,
+    restaurant_id: int,
+    *,
+    order_id: str,
+    amount: str,
+    status: str = "needs_evidence",
+) -> UberCustomerRefundDispute:
+    dispute = UberCustomerRefundDispute(
+        restaurant_id=restaurant_id,
+        uber_store_id="store-reporting",
+        uber_order_id=order_id,
+        display_id=order_id,
+        dispute_type="customer_refund",
+        reason="refund_without_sufficient_proof",
+        status=status,
+        customer_refund_amount=amount,
+        order_amount=amount,
+        currency="EUR",
+        deducted_at=utc_now().date(),
+        order_date=utc_now().date(),
+        evidence_required=True,
+        evidence_status="missing",
+        raw_payload_json={"source": "test"},
+    )
+    db_session.add(dispute)
+    db_session.commit()
+    db_session.refresh(dispute)
+    return dispute
+
+
 def seed_reporting_data(client: TestClient, db_session: Session) -> dict[str, dict]:
     owner = get_owner(db_session)
     first_restaurant = create_restaurant(client, "Reports A")
@@ -231,6 +271,19 @@ def test_owner_can_access_commercial_summary(client: TestClient, db_session: Ses
 
     assert response.status_code == 200
     assert response.json()["totals"]["orders_count"] == 3
+
+
+def test_commercial_summary_dedupes_historical_customer_refund_duplicates(client: TestClient, db_session: Session) -> None:
+    restaurant = create_restaurant(client, "Reports Refunds")
+    add_customer_refund(db_session, restaurant["id"], order_id="UBER-REPORT-DUP", amount="29.99")
+    add_customer_refund(db_session, restaurant["id"], order_id="UBER-REPORT-DUP", amount="29.99")
+
+    response = client.get("/v1/reports/commercial-summary")
+
+    assert response.status_code == 200
+    customer_refunds = response.json()["customer_refunds"]
+    assert customer_refunds["total_deducted_amount"] == "29.99"
+    assert customer_refunds["disputes_count"] == 1
 
 
 def test_manager_summary_only_includes_assigned_restaurants(client: TestClient, db_session: Session) -> None:
