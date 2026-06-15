@@ -8,7 +8,7 @@ export default function RemboursementsPage() {
         title="Tickets agrafes, remboursements lances"
         description="Releve la commande en demande de remboursement dans Uber Eats, imprime le ticket, agrafe-le a la commande ou a la preuve terrain, prends la photo et importe tout en masse. GO lance le classement, les preuves, les emails et le suivi."
         instruction="IMPORTEZ LES PREUVES DE DEMANDES DE REMBOURSEMENTS"
-        fileButtonLabel="Deposer tickets agrafes"
+        fileButtonLabel="Deposer preuves de remboursement"
         trigger="refunds"
       />
 
