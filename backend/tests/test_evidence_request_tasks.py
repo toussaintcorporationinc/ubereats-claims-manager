@@ -1,4 +1,6 @@
 from collections.abc import Generator
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -7,7 +9,16 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.models import AuditLog, EvidenceRequestTask, EvidenceUploadLink, UberReconciliationResult
+from app.models import (
+    AuditLog,
+    EvidenceAnalysisResult,
+    EvidenceImportBatch,
+    EvidenceImportedFile,
+    EvidenceRequestTask,
+    EvidenceUploadLink,
+    UberFinancialTransaction,
+    UberReconciliationResult,
+)
 from app.models.domain import utc_now
 
 
@@ -211,6 +222,104 @@ def test_list_tasks_returns_field_ready_search_context(configured_client: TestCl
     assert task["field_search_hint"] == "Krousty Bat - UBER-SEARCH-123 - Client Test - 14/06/2026 19:45"
     assert task["field_missing_info"] == []
     assert "imprime le vrai ticket Uber" in task["field_photo_instruction"]
+
+
+def test_list_tasks_resolves_field_context_from_matched_evidence_analysis(
+    configured_client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = create_restaurant(configured_client, "Asian Passion")
+    create_order(configured_client, restaurant["id"], "UBER-OCR-123", amount="31.50")
+    recalculate(configured_client)
+    task = db_session.scalar(select(EvidenceRequestTask).where(EvidenceRequestTask.order_id.is_not(None)))
+    assert task is not None
+    batch = EvidenceImportBatch(
+        uploaded_by_user_id=1,
+        restaurant_id=restaurant["id"],
+        original_filename="ticket-ocr.jpg",
+        source_type="multi_file_upload",
+        status="analyzed",
+        total_files=1,
+        stored_files_count=1,
+        analyzed_files_count=1,
+    )
+    db_session.add(batch)
+    db_session.flush()
+    imported_file = EvidenceImportedFile(
+        batch_id=batch.id,
+        uploaded_by_user_id=1,
+        original_filename="ticket-ocr.jpg",
+        internal_filename="ticket-ocr.jpg",
+        storage_backend="local",
+        storage_path="evidence/ticket-ocr.jpg",
+        mime_type="image/jpeg",
+        file_size=1200,
+        checksum_sha256="a" * 64,
+        status="analyzed",
+    )
+    db_session.add(imported_file)
+    db_session.flush()
+    db_session.add(
+        EvidenceAnalysisResult(
+            imported_file_id=imported_file.id,
+            provider="fake",
+            status="success",
+            detected_evidence_type="receipt",
+            detected_uber_order_number="UBER-OCR-123",
+            detected_order_date=date(2026, 6, 14),
+            classification_confidence=Decimal("0.95"),
+            extraction_confidence=Decimal("0.93"),
+            matching_confidence=Decimal("0.91"),
+            raw_result_json={"customer_name": "Client OCR"},
+        )
+    )
+    db_session.commit()
+
+    response = configured_client.get("/v1/evidence-tasks")
+
+    assert response.status_code == 200
+    task_summary = response.json()["tasks"][0]
+    assert task_summary["field_customer_label"] == "Client OCR"
+    assert task_summary["field_date_label"] == "14/06/2026"
+    assert task_summary["field_search_hint"] == "Asian Passion - UBER-OCR-123 - Client OCR - 14/06/2026"
+    assert "nom_client" not in task_summary["field_missing_info"]
+    assert "date_commande" not in task_summary["field_missing_info"]
+
+
+def test_list_tasks_resolves_field_context_from_uber_transaction_payload(
+    configured_client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = create_restaurant(configured_client, "Big Chicken Burger")
+    create_order(configured_client, restaurant["id"], "UBER-PAYLOAD-123", amount="18.75")
+    db_session.add(
+        UberFinancialTransaction(
+            restaurant_id=restaurant["id"],
+            uber_store_id="store-big-chicken",
+            uber_order_id="UBER-PAYLOAD-123",
+            transaction_type="refund",
+            amount=Decimal("-4.00"),
+            currency="EUR",
+            transaction_date=date(2026, 6, 15),
+            raw_payload_json={
+                "order": {
+                    "customer_name": "Client Payload",
+                    "placed_at": "2026-06-13T20:15:00",
+                }
+            },
+            imported_from="manager_export",
+        )
+    )
+    db_session.commit()
+    recalculate(configured_client)
+
+    response = configured_client.get("/v1/evidence-tasks")
+
+    assert response.status_code == 200
+    task_summary = response.json()["tasks"][0]
+    assert task_summary["field_customer_label"] == "Client Payload"
+    assert task_summary["field_date_label"] == "13/06/2026 a 20:15"
+    assert task_summary["field_search_hint"] == "Big Chicken Burger - UBER-PAYLOAD-123 - Client Payload - 13/06/2026 20:15"
 
 
 def test_manager_non_assigned_cannot_list_other_tasks(configured_client: TestClient) -> None:
