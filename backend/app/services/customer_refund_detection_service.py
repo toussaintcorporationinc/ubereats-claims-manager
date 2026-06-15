@@ -249,10 +249,13 @@ def detect_customer_refund_disputes(
 
 
 def is_disputable_transaction(transaction: UberFinancialTransaction) -> bool:
+    amount = Decimal(str(transaction.amount))
+    if amount >= 0:
+        return False
     transaction_type = normalize_text(transaction.transaction_type)
-    if Decimal(str(transaction.amount)) < 0:
+    if any(marker in transaction_type for marker in NEGATIVE_TRANSACTION_TYPES):
         return True
-    return any(marker in transaction_type for marker in NEGATIVE_TRANSACTION_TYPES)
+    return True
 
 
 def classify_transaction(transaction: UberFinancialTransaction) -> tuple[str, str]:
