@@ -343,6 +343,11 @@ def confirm_uber_reporting_batch(
                 row.created_snapshot_id = snapshot.id
                 created_snapshots += int(created)
             elif row.normalized_data.get("row_kind") == "transaction":
+                if is_combined_report_item_adjustment_row(row.normalized_data):
+                    row.status = "skipped"
+                    row.warnings = [*row.warnings, "combined_report_item_line_not_financial_transaction"]
+                    skipped += 1
+                    continue
                 transaction, created = create_transaction_if_missing(db, row.normalized_data)
                 row.created_transaction_id = transaction.id if transaction else None
                 created_transactions += int(created)
@@ -646,6 +651,30 @@ def create_transaction_if_missing(db: Session, data: dict[str, Any]) -> tuple[Ub
     db.add(transaction)
     db.flush()
     return transaction, True
+
+
+def is_combined_report_item_adjustment_row(data: dict[str, Any]) -> bool:
+    raw_data = data.get("raw_data")
+    if not isinstance(raw_data, dict):
+        return False
+    normalized_keys = {normalize_for_match(str(key)) for key in raw_data}
+    item_markers = {
+        "nom du plat de l article",
+        "nom du plat",
+        "item name",
+        "item",
+        "prix a l unite",
+        "quantite demandee",
+        "quantite finale",
+        "nombre demande",
+        "decompte final",
+    }
+    order_level_markers = {
+        "statut de la commande",
+        "id de reference du versement",
+        "montant total",
+    }
+    return bool(normalized_keys & item_markers) and not bool(normalized_keys & order_level_markers)
 
 
 def preview_metadata(db: Session, batch: UberReportingImportBatch) -> tuple[list[str], list[str]]:

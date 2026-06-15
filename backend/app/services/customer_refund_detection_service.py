@@ -252,10 +252,37 @@ def is_disputable_transaction(transaction: UberFinancialTransaction) -> bool:
     amount = Decimal(str(transaction.amount))
     if amount >= 0:
         return False
+    if is_combined_report_item_adjustment_transaction(transaction):
+        return False
     transaction_type = normalize_text(transaction.transaction_type)
     if any(marker in transaction_type for marker in NEGATIVE_TRANSACTION_TYPES):
         return True
     return True
+
+
+def is_combined_report_item_adjustment_transaction(transaction: UberFinancialTransaction) -> bool:
+    payload = transaction.raw_payload_json or {}
+    raw_data = payload.get("raw_data") if isinstance(payload, dict) else None
+    if not isinstance(raw_data, dict):
+        return False
+    normalized_keys = {normalize_text(str(key)) for key in raw_data}
+    item_markers = {
+        "nom du plat de l article",
+        "nom du plat",
+        "item name",
+        "item",
+        "prix a l unite",
+        "quantite demandee",
+        "quantite finale",
+        "nombre demande",
+        "decompte final",
+    }
+    has_item_columns = bool(normalized_keys & item_markers)
+    has_order_level_markers = any(
+        normalize_text(str(key)) in normalized_keys
+        for key in ("statut de la commande", "id de reference du versement", "montant total")
+    )
+    return has_item_columns and not has_order_level_markers
 
 
 def classify_transaction(transaction: UberFinancialTransaction) -> tuple[str, str]:
