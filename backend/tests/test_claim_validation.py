@@ -81,8 +81,7 @@ def get_validation_audit_log(db_session: Session, order_id: int) -> AuditLog | N
 def test_complete_claim_order_becomes_ready_to_send(client: TestClient) -> None:
     restaurant = create_restaurant(client)
     order = create_order(client, restaurant["id"])
-    add_evidence(client, order["id"], "cancellation_proof")
-    add_evidence(client, order["id"], "preparation_proof")
+    add_evidence(client, order["id"], "receipt")
 
     response = client.post(f"/v1/orders/{order['id']}/validate")
 
@@ -98,10 +97,9 @@ def test_complete_claim_order_becomes_ready_to_send(client: TestClient) -> None:
     }
 
 
-def test_claim_order_without_cancellation_proof_becomes_missing_evidence(client: TestClient) -> None:
+def test_claim_order_without_unified_order_proof_becomes_missing_evidence(client: TestClient) -> None:
     restaurant = create_restaurant(client)
     order = create_order(client, restaurant["id"])
-    add_evidence(client, order["id"], "preparation_proof")
 
     response = client.post(f"/v1/orders/{order['id']}/validate")
 
@@ -110,23 +108,22 @@ def test_claim_order_without_cancellation_proof_becomes_missing_evidence(client:
     assert data["is_complete"] is False
     assert data["previous_status"] == "draft"
     assert data["new_status"] == "missing_evidence"
-    assert "cancellation_proof" in data["missing_items"]
-    assert "missing_cancellation_proof" in data["blocking_reasons"]
+    assert "receipt" in data["missing_items"]
+    assert "missing_unified_order_proof" in data["blocking_reasons"]
 
 
-def test_claim_order_without_preparation_or_waste_proof_becomes_missing_evidence(client: TestClient) -> None:
+def test_legacy_cancellation_and_preparation_set_still_valid(client: TestClient) -> None:
     restaurant = create_restaurant(client)
     order = create_order(client, restaurant["id"])
     add_evidence(client, order["id"], "cancellation_proof")
+    add_evidence(client, order["id"], "preparation_proof")
 
     response = client.post(f"/v1/orders/{order['id']}/validate")
 
     assert response.status_code == 200
     data = response.json()
-    assert data["is_complete"] is False
-    assert data["new_status"] == "missing_evidence"
-    assert "preparation_or_waste_proof" in data["missing_items"]
-    assert "missing_preparation_or_waste_proof" in data["blocking_reasons"]
+    assert data["is_complete"] is True
+    assert data["new_status"] == "ready_to_send"
 
 
 def test_claim_order_without_order_amount_becomes_missing_evidence(
@@ -135,8 +132,7 @@ def test_claim_order_without_order_amount_becomes_missing_evidence(
 ) -> None:
     restaurant = create_restaurant(client)
     order = create_incomplete_order_without_amount(db_session, restaurant["id"])
-    add_evidence(client, order.id, "cancellation_proof")
-    add_evidence(client, order.id, "waste_photo")
+    add_evidence(client, order.id, "receipt")
 
     response = client.post(f"/v1/orders/{order.id}/validate")
 
@@ -193,8 +189,7 @@ def test_payment_confirmed_claim_order_cannot_be_revalidated(client: TestClient)
 def test_audit_log_created_after_complete_validation(client: TestClient, db_session: Session) -> None:
     restaurant = create_restaurant(client)
     order = create_order(client, restaurant["id"])
-    add_evidence(client, order["id"], "cancellation_proof")
-    add_evidence(client, order["id"], "waste_photo")
+    add_evidence(client, order["id"], "receipt")
 
     response = client.post(f"/v1/orders/{order['id']}/validate")
 
@@ -224,11 +219,8 @@ def test_validation_response_contains_missing_items_and_blocking_reasons(client:
 
     assert response.status_code == 200
     data = response.json()
-    assert data["missing_items"] == ["cancellation_proof", "preparation_or_waste_proof"]
-    assert data["blocking_reasons"] == [
-        "missing_cancellation_proof",
-        "missing_preparation_or_waste_proof",
-    ]
+    assert data["missing_items"] == ["receipt"]
+    assert data["blocking_reasons"] == ["missing_unified_order_proof"]
 
 
 def test_validation_response_returns_previous_and_new_status(client: TestClient) -> None:

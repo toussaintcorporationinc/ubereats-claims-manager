@@ -32,13 +32,11 @@ def get_claim_validation_gaps(db: Session, order: ClaimOrder) -> tuple[list[str]
         for evidence in order.evidence_files
         if getattr(evidence, "deleted_at", None) is None
     }
-    if "cancellation_proof" not in evidence_types:
-        missing_items.append("cancellation_proof")
-        blocking_reasons.append("missing_cancellation_proof")
-
-    if not ({"preparation_proof", "waste_photo"} & evidence_types):
-        missing_items.append("preparation_or_waste_proof")
-        blocking_reasons.append("missing_preparation_or_waste_proof")
+    has_unified_order_proof = "receipt" in evidence_types
+    has_legacy_proof_set = "cancellation_proof" in evidence_types and bool({"preparation_proof", "waste_photo"} & evidence_types)
+    if not (has_unified_order_proof or has_legacy_proof_set):
+        missing_items.append("receipt")
+        blocking_reasons.append("missing_unified_order_proof")
 
     return missing_items, blocking_reasons
 

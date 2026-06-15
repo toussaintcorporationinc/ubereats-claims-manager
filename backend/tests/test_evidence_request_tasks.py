@@ -137,10 +137,10 @@ def test_recalculate_creates_missing_evidence_tasks(configured_client: TestClien
 
     result = recalculate(configured_client)
 
-    assert result["created_tasks"] == 2
+    assert result["created_tasks"] == 1
     tasks = db_session.scalars(select(EvidenceRequestTask).where(EvidenceRequestTask.order_id == order["id"])).all()
-    assert {task.required_evidence_type for task in tasks} == {"cancellation_proof", "waste_photo"}
-    assert {task.task_type for task in tasks} == {"missing_cancellation_proof", "missing_waste_photo"}
+    assert {task.required_evidence_type for task in tasks} == {"receipt"}
+    assert {task.task_type for task in tasks} == {"missing_receipt"}
     assert {task.restaurant_id for task in tasks} == {restaurant["id"]}
     assert {task.status for task in tasks} == {"pending"}
     assert all(task.title for task in tasks)
@@ -150,12 +150,12 @@ def test_recalculate_does_not_create_duplicate_tasks(configured_client: TestClie
     restaurant = create_restaurant(configured_client)
     create_order(configured_client, restaurant["id"])
 
-    assert recalculate(configured_client)["created_tasks"] == 2
+    assert recalculate(configured_client)["created_tasks"] == 1
     second = recalculate(configured_client)
 
     assert second["created_tasks"] == 0
-    assert second["existing_tasks"] == 2
-    assert len(db_session.scalars(select(EvidenceRequestTask)).all()) == 2
+    assert second["existing_tasks"] == 1
+    assert len(db_session.scalars(select(EvidenceRequestTask)).all()) == 1
 
 
 def test_manager_assigned_can_list_tasks(configured_client: TestClient) -> None:
@@ -169,7 +169,7 @@ def test_manager_assigned_can_list_tasks(configured_client: TestClient) -> None:
     response = configured_client.get("/v1/evidence-tasks", headers=auth_headers(manager_token))
 
     assert response.status_code == 200
-    assert len(response.json()["tasks"]) == 2
+    assert len(response.json()["tasks"]) == 1
 
 
 def test_manager_non_assigned_cannot_list_other_tasks(configured_client: TestClient) -> None:
@@ -200,7 +200,7 @@ def test_staff_assigned_can_upload_task(configured_client: TestClient, db_sessio
     restaurant = create_restaurant(configured_client)
     create_order(configured_client, restaurant["id"])
     recalculate(configured_client)
-    task = db_session.scalar(select(EvidenceRequestTask).where(EvidenceRequestTask.required_evidence_type == "cancellation_proof"))
+    task = db_session.scalar(select(EvidenceRequestTask).where(EvidenceRequestTask.required_evidence_type == "receipt"))
     assert task is not None
     staff = create_user(configured_client, "staff-evidence@example.com", "staff")
     assign_restaurant(configured_client, staff["id"], restaurant["id"])
@@ -212,7 +212,7 @@ def test_staff_assigned_can_upload_task(configured_client: TestClient, db_sessio
     data = response.json()
     assert data["task"]["status"] == "completed"
     assert data["evidence_file"]["uploaded_by_user_id"] == staff["id"]
-    assert data["evidence_file"]["evidence_type"] == "cancellation_proof"
+    assert data["evidence_file"]["evidence_type"] == "receipt"
 
 
 def test_staff_non_assigned_cannot_upload_task(configured_client: TestClient, db_session: Session) -> None:
@@ -231,10 +231,9 @@ def test_staff_non_assigned_cannot_upload_task(configured_client: TestClient, db
 
 def test_task_upload_validates_order_when_all_proofs_present(configured_client: TestClient, db_session: Session) -> None:
     restaurant = create_restaurant(configured_client)
-    order = create_order(configured_client, restaurant["id"], loss_type=None)
-    add_metadata_evidence(configured_client, order["id"], "preparation_proof")
+    create_order(configured_client, restaurant["id"], loss_type=None)
     recalculate(configured_client)
-    task = db_session.scalar(select(EvidenceRequestTask).where(EvidenceRequestTask.required_evidence_type == "cancellation_proof"))
+    task = db_session.scalar(select(EvidenceRequestTask).where(EvidenceRequestTask.required_evidence_type == "receipt"))
     assert task is not None
 
     response = upload_task_file(configured_client, task.id)
@@ -317,19 +316,16 @@ def test_live_evidence_station_returns_prioritized_active_tasks(configured_clien
     restaurant = create_restaurant(configured_client)
     create_order(configured_client, restaurant["id"])
     recalculate(configured_client)
-    urgent_task = db_session.scalar(select(EvidenceRequestTask).where(EvidenceRequestTask.required_evidence_type == "waste_photo"))
-    normal_task = db_session.scalar(select(EvidenceRequestTask).where(EvidenceRequestTask.required_evidence_type == "cancellation_proof"))
+    urgent_task = db_session.scalar(select(EvidenceRequestTask).where(EvidenceRequestTask.required_evidence_type == "receipt"))
     assert urgent_task is not None
-    assert normal_task is not None
     urgent_task.priority = "urgent"
-    normal_task.priority = "normal"
     db_session.commit()
 
     response = configured_client.get("/v1/live-evidence/station")
 
     assert response.status_code == 200
     data = response.json()
-    assert data["total_active_tasks"] == 2
+    assert data["total_active_tasks"] == 1
     assert data["urgent_count"] == 1
     assert data["recommended_task_id"] == urgent_task.id
     assert [task["id"] for task in data["tasks"]][0] == urgent_task.id
@@ -506,16 +502,18 @@ def test_skip_and_complete_task(configured_client: TestClient, db_session: Sessi
     create_order(configured_client, restaurant["id"])
     recalculate(configured_client)
     tasks = db_session.scalars(select(EvidenceRequestTask).order_by(EvidenceRequestTask.id)).all()
-    assert len(tasks) == 2
+    assert len(tasks) == 1
 
     skip_response = configured_client.post(
         f"/v1/evidence-tasks/{tasks[0].id}/skip",
         json={"skip_reason": "Preuve impossible a fournir"},
     )
-    complete_response = configured_client.post(f"/v1/evidence-tasks/{tasks[1].id}/complete")
 
     assert skip_response.status_code == 200
     assert skip_response.json()["status"] == "skipped"
+    tasks[0].status = "pending"
+    db_session.commit()
+    complete_response = configured_client.post(f"/v1/evidence-tasks/{tasks[0].id}/complete")
     assert complete_response.status_code == 200
     assert complete_response.json()["status"] == "completed"
 

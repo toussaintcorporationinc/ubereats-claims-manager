@@ -215,7 +215,7 @@ def test_evidence_requested_recalculates_tasks(client: TestClient, db_session: S
     db_session.refresh(dispute)
     assert dispute.status == "needs_evidence"
     tasks = db_session.scalars(select(EvidenceRequestTask).where(EvidenceRequestTask.customer_refund_dispute_id == dispute.id)).all()
-    assert {task.required_evidence_type for task in tasks} >= {"receipt", "delivery_proof"}
+    assert {task.required_evidence_type for task in tasks} == {"receipt"}
 
 
 def test_ignored_and_payment_confirmed_are_protected(client: TestClient, db_session: Session) -> None:

@@ -1278,6 +1278,24 @@ export type WorkspaceNextActionsResponse = {
   high_value: WorkspaceAction[];
 };
 
+export type WorkspaceUnclassifiedItem = {
+  source_type: string;
+  source_id: number;
+  original_filename: string;
+  title: string;
+  description: string;
+  restaurant: string | null;
+  reason: string;
+  missing_fields: string[];
+  action_url: string;
+  created_at: string;
+};
+
+export type WorkspaceUnclassifiedResponse = {
+  items: WorkspaceUnclassifiedItem[];
+  total_count: number;
+};
+
 export type WorkspaceMachineTrigger = "manual" | "smart_import" | "refunds" | "cancellations";
 
 export type WorkspaceMachineRunPayload = {
@@ -2647,6 +2665,7 @@ export const api = {
   getRecoveryActions: (filters: RecoveryFilters = {}) =>
     request<RecoveryActionsResponse>(`/v1/recovery/actions${buildQuery(filters)}`),
   getWorkspaceNextActions: () => request<WorkspaceNextActionsResponse>("/v1/workspace/next-actions"),
+  getWorkspaceUnclassified: () => request<WorkspaceUnclassifiedResponse>("/v1/workspace/unclassified"),
   getWorkspaceRecoveryMachine: () => request<RecoveryMachineResponse>("/v1/workspace/recovery-machine"),
   runWorkspaceMachine: (payload: WorkspaceMachineRunPayload = {}) =>
     postJson<WorkspaceMachineRunResponse, WorkspaceMachineRunPayload>("/v1/workspace/machine/run", payload),

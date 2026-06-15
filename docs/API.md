@@ -226,9 +226,10 @@ Un dossier complet doit avoir :
 - un numero de commande Uber Eats ;
 - un montant ;
 - une devise ;
-- au moins une preuve `cancellation_proof` ;
-- au moins une preuve `preparation_proof` ou `waste_photo` ;
+- une preuve unique `receipt` exploitable : ticket de caisse agrafe ou pose sur la commande du client ;
 - un statut non final.
+
+Les anciens dossiers avec `cancellation_proof` et `preparation_proof` ou `waste_photo` restent valides.
 
 Si le dossier est incomplet, son statut devient `missing_evidence`, la reponse contient `missing_items` et `blocking_reasons`, et un `AuditLog` est cree.
 
@@ -430,7 +431,7 @@ Regles :
 - `manager` peut recalculer uniquement ses restaurants assignes ;
 - `staff` ne peut pas recalculer ;
 - les statuts finaux `accepted`, `payment_confirmed`, `refused`, `closed` sont ignores ;
-- TENNET cree des taches pour `cancellation_proof` et `preparation_proof` ou `waste_photo` quand elles bloquent la validation ;
+- TENNET cree par defaut une tache `receipt` quand la preuve terrain unique manque ;
 - les resultats Uber reconciliation avec `evidence_required=true` alimentent la priorite si un `ClaimOrder` existe ;
 - aucune tache active en doublon n'est creee pour la meme commande et le meme type de preuve.
 

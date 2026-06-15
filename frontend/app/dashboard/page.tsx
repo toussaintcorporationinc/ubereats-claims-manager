@@ -21,6 +21,7 @@ import {
   type SmartImportFileDecision,
   type WorkspaceNextActionsResponse,
   type WorkspaceMachineRunResponse,
+  type WorkspaceUnclassifiedResponse,
   formatCurrency,
 } from "@/lib/api";
 
@@ -30,6 +31,7 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [nextActions, setNextActions] = useState<WorkspaceNextActionsResponse | null>(null);
+  const [unclassified, setUnclassified] = useState<WorkspaceUnclassifiedResponse | null>(null);
   const [recoveryMachine, setRecoveryMachine] = useState<RecoveryMachineResponse | null>(null);
   const [machineResult, setMachineResult] = useState<WorkspaceMachineRunResponse | null>(null);
   const [homeFiles, setHomeFiles] = useState<File[]>([]);
@@ -42,14 +44,16 @@ export default function DashboardPage() {
   const canRunRecoveryMachine = user?.role === "owner" || user?.role === "manager";
 
   const loadDashboard = useCallback(async () => {
-    const [summaryData, actionsData, recoveryMachineData] = await Promise.all([
+    const [summaryData, actionsData, recoveryMachineData, unclassifiedData] = await Promise.all([
       api.getDashboardSummary(),
       api.getWorkspaceNextActions(),
       api.getWorkspaceRecoveryMachine(),
+      api.getWorkspaceUnclassified(),
     ]);
     setSummary(summaryData);
     setNextActions(actionsData);
     setRecoveryMachine(recoveryMachineData);
+    setUnclassified(unclassifiedData);
   }, []);
 
   useEffect(() => {
@@ -213,6 +217,7 @@ export default function DashboardPage() {
       <ApiError error={error} />
       <ApiError error={pilotError} />
       {machineResult ? <MachineResultBox result={machineResult} /> : null}
+      {unclassified && unclassified.total_count > 0 ? <UnclassifiedPanel unclassified={unclassified} /> : null}
 
       {summary ? (
         <>
@@ -577,6 +582,7 @@ function stageLabel(name: string): string {
     historical_import_repair: "Imports repares",
     deductions: "Deductions",
     claim_orders: "Dossiers",
+    unclassified: "Non classes",
     drafts: "Brouillons",
     followups: "Relances",
     appeals: "Appels",
@@ -584,6 +590,47 @@ function stageLabel(name: string): string {
     autopilot: "AutoPilot",
   };
   return labels[name] ?? name;
+}
+
+function UnclassifiedPanel({ unclassified }: { unclassified: WorkspaceUnclassifiedResponse }) {
+  return (
+    <section className="tool-panel tool-panel--warning">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Non classes</p>
+          <h2>{unclassified.total_count} source(s) a completer</h2>
+          <p className="muted">
+            TENNET ne bloque pas ces fichiers : il te dit ce qui manque, tu ajoutes la preuve ou l'explication, puis la
+            machine reprend automatiquement.
+          </p>
+        </div>
+        <Link href="/smart-import" className="secondary-button">
+          Deposer preuves
+        </Link>
+      </div>
+      <div className="premium-card-grid">
+        {unclassified.items.slice(0, 6).map((item) => (
+          <article key={`${item.source_type}-${item.source_id}`} className="premium-card premium-card--warning">
+            <h3>{item.title}</h3>
+            <p className="muted">{item.original_filename}</p>
+            <p>{item.description}</p>
+            {item.missing_fields.length > 0 ? (
+              <div className="chip-list">
+                {item.missing_fields.map((field) => (
+                  <span key={field} className="chip">
+                    {field}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <Link href={item.action_url} className="button">
+              Corriger
+            </Link>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function stageStatusLabel(status: string): string {
