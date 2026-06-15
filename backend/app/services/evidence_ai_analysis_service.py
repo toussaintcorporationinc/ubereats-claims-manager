@@ -22,6 +22,22 @@ PDF_EXTENSION = ".pdf"
 EXCEL_EXTENSIONS = {".xlsx", ".xlsm"}
 
 ORDER_PATTERN = re.compile(r"\b(UBER(?:[-_\s]?[A-Z0-9]+){1,5})\b", re.IGNORECASE)
+INVALID_ORDER_TOKENS = {
+    "A",
+    "AU",
+    "AUX",
+    "CE",
+    "CES",
+    "DE",
+    "DES",
+    "DU",
+    "EATS",
+    "GUIDE",
+    "POUR",
+    "RAPPORT",
+    "SUR",
+    "VOTRE",
+}
 CONTEXTUAL_DISPLAY_PATTERN = re.compile(
     r"(?:n(?:umero)?\s*(?:de)?\s*commande|id\s*(?:de)?\s*(?:la)?\s*commande|"
     r"commande|cmd|order\s*(?:id)?|ticket|receipt|uber\s*(?:order)?\s*(?:id)?|id)[\s:_#-]{0,12}"
@@ -426,8 +442,19 @@ def looks_like_unified_order_proof(normalized: str) -> bool:
 def extract_order_number(text: str) -> str | None:
     match = ORDER_PATTERN.search(text)
     if match:
-        return re.sub(r"[-_\s]+", "-", match.group(1)).strip("-").upper()
+        candidate = re.sub(r"[-_\s]+", "-", match.group(1)).strip("-").upper()
+        if valid_order_number(candidate):
+            return candidate
     return None
+
+
+def valid_order_number(value: str) -> bool:
+    tokens = [token for token in re.split(r"[-_\s]+", value.upper()) if token]
+    if len(tokens) < 2:
+        return False
+    if any(token in INVALID_ORDER_TOKENS for token in tokens[1:]):
+        return False
+    return any(any(char.isdigit() for char in token) for token in tokens)
 
 
 def extract_display_id(text: str, order_number: str | None) -> str | None:
@@ -449,19 +476,29 @@ def extract_display_id(text: str, order_number: str | None) -> str | None:
 
 
 def extract_amount(text: str) -> Decimal | None:
-    labeled = LABELED_AMOUNT_PATTERN.search(text.replace("\xa0", " "))
+    cleaned_text = text.replace("\xa0", " ")
+    labeled = LABELED_AMOUNT_PATTERN.search(cleaned_text)
     if labeled:
+        if is_percent_match(cleaned_text, labeled):
+            return None
         try:
             return Decimal(labeled.group(1).replace(",", ".")).quantize(Decimal("0.01"))
         except InvalidOperation:
             return None
-    match = AMOUNT_PATTERN.search(text.replace(" ", ""))
-    if not match:
-        return None
-    try:
-        return Decimal(match.group(1).replace(",", ".")).quantize(Decimal("0.01"))
-    except InvalidOperation:
-        return None
+    for match in AMOUNT_PATTERN.finditer(cleaned_text):
+        if is_percent_match(cleaned_text, match):
+            continue
+        try:
+            return Decimal(match.group(1).replace(",", ".")).quantize(Decimal("0.01"))
+        except InvalidOperation:
+            continue
+    return None
+
+
+def is_percent_match(text: str, match: re.Match[str]) -> bool:
+    before = text[max(0, match.start() - 4) : match.start()]
+    after = text[match.end() : match.end() + 4]
+    return "%" in before or "%" in after
 
 
 def extract_date(text: str) -> date | None:
