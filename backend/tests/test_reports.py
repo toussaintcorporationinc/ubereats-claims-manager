@@ -286,6 +286,28 @@ def test_commercial_summary_dedupes_historical_customer_refund_duplicates(client
     assert customer_refunds["disputes_count"] == 1
 
 
+def test_commercial_summary_excludes_ignored_customer_refunds_by_default(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = create_restaurant(client, "Reports Ignored Refunds")
+    add_customer_refund(db_session, restaurant["id"], order_id="UBER-REPORT-ACTIVE", amount="12.50")
+    add_customer_refund(
+        db_session,
+        restaurant["id"],
+        order_id="UBER-REPORT-IGNORED",
+        amount="99.99",
+        status="ignored",
+    )
+
+    response = client.get("/v1/reports/commercial-summary")
+
+    assert response.status_code == 200
+    customer_refunds = response.json()["customer_refunds"]
+    assert customer_refunds["total_deducted_amount"] == "12.50"
+    assert customer_refunds["disputes_count"] == 1
+
+
 def test_manager_summary_only_includes_assigned_restaurants(client: TestClient, db_session: Session) -> None:
     data = seed_reporting_data(client, db_session)
     manager = create_user(client, "manager-reports@example.com", "manager")
