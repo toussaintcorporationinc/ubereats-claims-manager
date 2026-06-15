@@ -578,19 +578,250 @@ button {
   align-items: center;
 }
 
+.machine-hero--focus {
+  grid-template-columns: 1fr;
+  gap: 24px;
+  background:
+    radial-gradient(circle at 50% 22%, rgba(120, 224, 255, 0.24), transparent 28%),
+    linear-gradient(145deg, #ffffff 0%, #f8fdff 54%, #eefaff 100%);
+  padding: clamp(20px, 3vw, 34px);
+}
+
+.machine-hero__main {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.9fr) minmax(260px, 360px) minmax(220px, 0.72fr);
+  gap: clamp(18px, 3vw, 42px);
+  align-items: center;
+}
+
+.machine-hero--focus .heading-copy {
+  max-width: 430px;
+}
+
+.machine-hero--focus .heading-copy h1 {
+  max-width: 430px;
+  color: #112a34;
+  font-size: clamp(2rem, 4vw, 3.8rem);
+}
+
+.machine-hero--focus .heading-copy p {
+  color: #536d79;
+  font-size: clamp(1rem, 1.4vw, 1.18rem);
+  line-height: 1.45;
+}
+
+.machine-hero--focus .machine-command {
+  width: clamp(260px, 26vw, 340px);
+  min-height: clamp(260px, 26vw, 340px);
+}
+
+.machine-hero--focus .machine-ring {
+  width: clamp(248px, 24vw, 320px);
+  height: clamp(248px, 24vw, 320px);
+}
+
+.machine-hero--focus .machine-ring::before {
+  width: 72%;
+  height: 72%;
+}
+
+.machine-hero--focus .machine-command__content {
+  max-width: 178px;
+}
+
+.machine-hero--focus .machine-command__content strong {
+  font-size: clamp(1rem, 1.4vw, 1.26rem);
+}
+
+.machine-hero__actions {
+  display: grid;
+  justify-content: stretch;
+  gap: 12px;
+}
+
+.machine-hero__actions .button,
+.machine-hero__actions .secondary-button {
+  justify-content: center;
+  min-height: 54px;
+  text-align: center;
+}
+
+.machine-pass-button {
+  background: #ffffff;
+  color: #14313b;
+}
+
+.machine-action-note {
+  margin: 0;
+  color: #60737d;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.recovery-machine-focus {
+  display: grid;
+  gap: 16px;
+}
+
+.machine-snapshot,
+.machine-lane__amounts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.machine-snapshot div,
+.machine-lane__amounts div {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  border: 1px solid rgba(65, 190, 235, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 14px;
+  box-shadow: 0 10px 24px rgba(38, 115, 145, 0.06);
+}
+
+.machine-snapshot span,
+.machine-lane__amounts span {
+  color: #60737d;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.machine-snapshot strong,
+.machine-lane__amounts strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #102b35;
+  font-size: clamp(1.1rem, 2vw, 1.7rem);
+}
+
+.machine-lane-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.machine-lane {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+  border: 1px solid rgba(65, 190, 235, 0.24);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 90% 2%, rgba(90, 214, 255, 0.18), transparent 28%),
+    linear-gradient(145deg, #ffffff, #f5fcff);
+  box-shadow: 0 16px 34px rgba(38, 115, 145, 0.08);
+  padding: 18px;
+}
+
+.machine-lane--attention {
+  border-color: rgba(245, 157, 77, 0.44);
+  background:
+    radial-gradient(circle at 90% 2%, rgba(255, 202, 119, 0.18), transparent 28%),
+    linear-gradient(145deg, #ffffff, #fffaf2);
+}
+
+.machine-lane--good {
+  border-color: rgba(27, 188, 148, 0.36);
+}
+
+.machine-lane__top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+}
+
+.machine-lane h2 {
+  margin: 10px 0 8px;
+  color: #12262d;
+  font-size: clamp(1.45rem, 2.4vw, 2.1rem);
+}
+
+.machine-lane p {
+  margin: 0;
+  color: #536d79;
+  line-height: 1.42;
+}
+
+.machine-lane__steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.machine-step {
+  display: grid;
+  min-height: 112px;
+  align-content: space-between;
+  gap: 8px;
+  border: 1px solid rgba(65, 190, 235, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 12px;
+}
+
+.machine-step span {
+  color: #526873;
+  font-size: 0.8rem;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.machine-step strong {
+  color: #12262d;
+  font-size: 1.55rem;
+}
+
+.machine-step small {
+  color: #0d7898;
+  font-size: 0.78rem;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.machine-step--attention {
+  border-color: rgba(245, 157, 77, 0.4);
+  background: #fffaf2;
+}
+
+.machine-step--done {
+  border-color: rgba(27, 188, 148, 0.28);
+}
+
+.machine-step--empty {
+  opacity: 0.7;
+}
+
+.machine-lane__bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.machine-lane__bottom p {
+  color: #536d79;
+  font-weight: 700;
+}
+
 .machine-result {
   display: grid;
   gap: 16px;
-  border: 1px solid rgba(0, 210, 161, 0.28);
+  border: 1px solid rgba(27, 188, 148, 0.28);
   border-radius: 8px;
-  background: #061412;
-  color: #f5fffc;
+  background: linear-gradient(145deg, #ffffff, #f1fff9);
+  color: #112a34;
   padding: 18px;
+  box-shadow: 0 14px 30px rgba(38, 115, 145, 0.08);
 }
 
 .machine-result p {
   margin: 6px 0 0;
-  color: rgba(245, 255, 252, 0.72);
+  color: #536d79;
 }
 
 .machine-result--warning {
@@ -615,25 +846,25 @@ button {
   display: grid;
   gap: 6px;
   min-height: 112px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(65, 190, 235, 0.16);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.78);
   padding: 12px;
 }
 
 .machine-stage strong {
-  color: #f5fffc;
+  color: #12262d;
 }
 
 .machine-stage span {
-  color: #5ef6ff;
+  color: #0d7898;
   font-size: 0.78rem;
   font-weight: 900;
   text-transform: uppercase;
 }
 
 .machine-stage small {
-  color: rgba(245, 255, 252, 0.68);
+  color: #60737d;
   line-height: 1.4;
 }
 
@@ -1479,7 +1710,9 @@ textarea {
   }
 
   .recovery-machine-panel__summary,
-  .recovery-rail-grid {
+  .recovery-rail-grid,
+  .machine-hero__main,
+  .machine-lane-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1589,9 +1822,19 @@ textarea {
     min-height: 196px;
   }
 
+  .machine-hero--focus .machine-command {
+    width: min(280px, 82vw);
+    min-height: min(280px, 82vw);
+  }
+
   .machine-ring {
     width: 188px;
     height: 188px;
+  }
+
+  .machine-hero--focus .machine-ring {
+    width: min(268px, 78vw);
+    height: min(268px, 78vw);
   }
 
   .machine-ring::before {
@@ -1621,7 +1864,9 @@ textarea {
   }
 
   .recovery-machine-panel__numbers,
-  .rail-metrics {
+  .rail-metrics,
+  .machine-snapshot,
+  .machine-lane__amounts {
     grid-template-columns: 1fr;
   }
 
@@ -1648,6 +1893,19 @@ textarea {
 
   .rail-actions {
     grid-template-columns: 1fr;
+  }
+
+  .machine-lane__top,
+  .machine-lane__bottom {
+    grid-template-columns: 1fr;
+  }
+
+  .machine-lane__steps {
+    grid-template-columns: 1fr;
+  }
+
+  .machine-step {
+    min-height: 82px;
   }
 
   .machine-stage-list,

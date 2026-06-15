@@ -267,11 +267,17 @@ def next_action_for_rail(
     primary_action_href: str,
 ) -> tuple[str, str]:
     if missing_evidence_count:
-        return "Completer les preuves ciblees", "/evidence-tasks"
+        if href == "/remboursements":
+            return "Completer preuves remboursements", "/evidence-tasks"
+        return "Completer preuves annulations", "/evidence-tasks"
     if followup_or_appeal_count:
-        return "Traiter les relances et appels", "/recovery/actions"
+        if href == "/remboursements":
+            return "Relancer remboursements", "/recovery/actions"
+        return "Relancer annulations", "/recovery/actions"
     if detected_count:
-        return "Ouvrir le parcours", href
+        if href == "/remboursements":
+            return "Voir remboursements", href
+        return "Voir annulations", href
     return primary_action_label, primary_action_href
 
 

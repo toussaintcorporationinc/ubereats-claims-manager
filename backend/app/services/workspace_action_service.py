@@ -24,7 +24,7 @@ class WorkspaceActionService:
 
     def from_recovery_action(self, action: RecoveryAction) -> WorkspaceAction:
         return WorkspaceAction(
-            title=human_title(action.label),
+            title=action_title(action),
             description=action_description(action),
             restaurant=action.restaurant_name,
             amount=action.amount,
@@ -124,17 +124,43 @@ def workspace_action_type(action: RecoveryAction) -> str:
 def action_description(action: RecoveryAction) -> str:
     if action.action_type == "upload_evidence":
         if action.case_type == "customer_refund_dispute":
-            return "Preuve attendue pour une contestation de remboursement Uber."
+            return "Ajoutez les tickets, photos ou captures demandes pour debloquer la contestation."
         if "remboursement" in action.label.lower():
-            return "Preuve attendue pour une contestation de remboursement Uber."
-        return "Preuve attendue pour une contestation d'annulation Uber."
+            return "Ajoutez les preuves de remboursement demandees avant envoi Uber."
+        return "Ajoutez les preuves d'annulation demandees avant envoi Uber."
     if action.case_type == "customer_refund_dispute":
-        return "Deduction Uber a verifier avec preuves avant contestation."
+        return "Deduction Uber detectee. TENNET attend les preuves fiables avant contestation."
     if action.case_type == "appeal_workflow":
-        return "Refus Uber a poursuivre avec appel controle."
+        return "Refus Uber a reprendre avec un nouvel argument, une preuve ou une escalation."
     if action.action_type == "followup":
-        return "Relance due, sans envoi automatique."
+        return "Relance due si aucune reponse positive n'a ete comptabilisee."
+    if action.action_type == "create_claim_order":
+        return "Perte detectee. TENNET peut creer le dossier sans doublon."
+    if action.action_type in {"create_draft", "create_gmail_draft"}:
+        return "Dossier pret. TENNET prepare l'email Uber avec les preuves disponibles."
     return "Action priorisee par TENNET."
+
+
+def action_title(action: RecoveryAction) -> str:
+    if action.action_type == "upload_evidence":
+        if action.case_type == "customer_refund_dispute" or "remboursement" in action.label.lower():
+            return "Preuves remboursement a fournir"
+        return "Preuves annulation a fournir"
+    if action.action_type == "create_claim_order":
+        if action.case_type == "customer_refund_dispute":
+            return "Creer dossier remboursement"
+        return "Creer dossier annulation"
+    if action.action_type in {"create_draft", "create_gmail_draft"}:
+        if action.case_type == "customer_refund_dispute":
+            return "Email remboursement a preparer"
+        return "Email annulation a preparer"
+    if action.action_type in {"review_refusal", "request_more_evidence", "escalation"}:
+        return "Refus Uber a reprendre"
+    if action.action_type == "followup":
+        return "Relance Uber a traiter"
+    if action.case_type == "customer_refund_dispute":
+        return "Remboursement Uber a verifier"
+    return human_title(action.label)
 
 
 def human_title(label: str) -> str:

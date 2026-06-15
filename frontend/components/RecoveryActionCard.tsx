@@ -27,7 +27,7 @@ export default function RecoveryActionCard({ action }: Props) {
       <div className="card-row card-row--bottom">
         <div className="stack-sm">
           {restaurant ? <span>{restaurant}</span> : null}
-          <span className="muted">{dueAt ? formatDate(dueAt) : action.action_type}</span>
+          <span className="muted">{dueAt ? formatDate(dueAt) : actionTypeLabel(action.action_type)}</span>
         </div>
         <strong>{formatCurrency(action.amount)}</strong>
       </div>
@@ -36,4 +36,21 @@ export default function RecoveryActionCard({ action }: Props) {
       </Link>
     </article>
   );
+}
+
+function actionTypeLabel(actionType: string): string {
+  const labels: Record<string, string> = {
+    upload_evidence: "Preuve a fournir",
+    review_import: "Import a verifier",
+    create_claim_order: "Dossier a creer",
+    create_draft: "Email a preparer",
+    connect_gmail: "Gmail a connecter",
+    send_manual: "Email a envoyer",
+    appeal_refusal: "Refus a reprendre",
+    map_uber_store: "Restaurant a mapper",
+    review_customer_refund: "Remboursement a verifier",
+    export_report: "Rapport",
+    manual_review: "A verifier",
+  };
+  return labels[actionType] ?? "Action TENNET";
 }
