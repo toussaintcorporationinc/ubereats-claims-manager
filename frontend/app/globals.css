@@ -132,6 +132,41 @@ button {
   color: var(--accent-strong);
 }
 
+.nav-advanced {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid rgba(13, 120, 152, 0.12);
+  padding-top: 10px;
+}
+
+.nav-advanced summary {
+  display: flex;
+  min-height: 40px;
+  cursor: pointer;
+  list-style: none;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid rgba(13, 120, 152, 0.14);
+  border-radius: 8px;
+  color: #31515d;
+  font-weight: 900;
+  padding: 0 12px;
+}
+
+.nav-advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.nav-advanced summary::after {
+  content: "+";
+  color: #0d7898;
+  font-weight: 950;
+}
+
+.nav-advanced[open] summary::after {
+  content: "-";
+}
+
 .user-card {
   display: grid;
   gap: 8px;
@@ -683,6 +718,70 @@ button {
   box-shadow: none;
 }
 
+.machine-hero--home {
+  overflow: hidden;
+}
+
+.machine-hero__main--simple {
+  grid-template-columns: minmax(240px, 0.85fr) minmax(300px, 390px) minmax(230px, 0.65fr);
+}
+
+.home-machine-status {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(65, 190, 235, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.76);
+  padding: 18px;
+  box-shadow: 0 16px 34px rgba(38, 115, 145, 0.06);
+}
+
+.home-machine-status strong {
+  color: #102b35;
+  font-size: 1.1rem;
+}
+
+.home-machine-status p {
+  margin: 0;
+  color: #536d79;
+  line-height: 1.42;
+}
+
+.home-general-import {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px dashed rgba(13, 120, 152, 0.26);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 16px;
+}
+
+.home-general-import strong {
+  color: #112a34;
+  font-size: 1rem;
+}
+
+.home-general-import p,
+.home-general-import small {
+  margin: 4px 0 0;
+  color: #60737d;
+  line-height: 1.38;
+}
+
+.home-general-import__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.home-general-import__actions .button,
+.home-general-import__actions .secondary-button {
+  min-height: 46px;
+}
+
 .machine-action-note {
   margin: 0;
   color: #60737d;
@@ -838,6 +937,72 @@ button {
 .machine-lane__bottom p {
   color: #536d79;
   font-weight: 700;
+}
+
+.machine-lane--home {
+  gap: 18px;
+  border-color: rgba(57, 203, 238, 0.34);
+  background:
+    radial-gradient(circle at 84% 0%, rgba(103, 229, 255, 0.2), transparent 30%),
+    linear-gradient(145deg, #ffffff 0%, #f7fdff 58%, #effbff 100%);
+}
+
+.machine-lane--home .rail-progress {
+  width: 112px;
+  height: 112px;
+  background:
+    radial-gradient(circle, #ffffff 0 48%, transparent 49%),
+    conic-gradient(#22c7ec var(--rail-progress, 0%), rgba(194, 240, 250, 0.9) 0);
+  box-shadow: 0 0 32px rgba(35, 199, 237, 0.25), inset 0 0 0 1px rgba(35, 199, 237, 0.14);
+}
+
+.machine-lane--home .rail-progress span {
+  font-size: 1rem;
+}
+
+.machine-lane__command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, 0.42fr);
+  gap: 16px;
+  align-items: stretch;
+  border: 1px solid rgba(13, 120, 152, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 16px;
+}
+
+.machine-lane__command strong {
+  display: block;
+  color: #0d7898;
+  font-size: clamp(0.95rem, 1.4vw, 1.1rem);
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.machine-lane__command p {
+  margin-top: 8px;
+}
+
+.machine-lane__command small {
+  display: block;
+  margin-top: 10px;
+  color: #31515d;
+  font-weight: 800;
+}
+
+.machine-lane__command-actions {
+  display: grid;
+  gap: 10px;
+  align-content: center;
+}
+
+.machine-lane__command-actions .button,
+.machine-lane__command-actions .machine-go-button {
+  justify-content: center;
+  width: 100%;
+  min-height: 56px;
+  border-radius: 8px;
+  text-align: center;
 }
 
 .machine-result {
@@ -1772,8 +1937,20 @@ textarea {
   .recovery-machine-panel__summary,
   .recovery-rail-grid,
   .machine-hero__main,
-  .machine-lane-grid {
+  .machine-lane-grid,
+  .home-general-import,
+  .machine-lane__command {
     grid-template-columns: 1fr;
+  }
+
+  .home-general-import__actions {
+    justify-content: stretch;
+  }
+
+  .home-general-import__actions .button,
+  .home-general-import__actions .secondary-button {
+    justify-content: center;
+    width: 100%;
   }
 
   .recovery-machine-panel__summary {
@@ -1908,6 +2085,17 @@ textarea {
 
   .machine-command__content strong {
     font-size: 0.95rem;
+  }
+
+  .home-machine-status,
+  .machine-lane__command,
+  .home-general-import {
+    padding: 14px;
+  }
+
+  .machine-lane--home .rail-progress {
+    width: 96px;
+    height: 96px;
   }
 
   .machine-hero .heading-copy,

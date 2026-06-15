@@ -16,6 +16,7 @@ import {
   api,
   type DashboardSummary,
   type RecoveryMachineRail,
+  type RecoveryMachineRailKey,
   type RecoveryMachineResponse,
   type RecoveryMachineStage,
   type SmartImportFileDecision,
@@ -35,11 +36,16 @@ export default function DashboardPage() {
   const [recoveryMachine, setRecoveryMachine] = useState<RecoveryMachineResponse | null>(null);
   const [machineResult, setMachineResult] = useState<WorkspaceMachineRunResponse | null>(null);
   const [homeFiles, setHomeFiles] = useState<File[]>([]);
+  const [railFiles, setRailFiles] = useState<Record<RecoveryMachineRailKey, File[]>>({
+    refunds: [],
+    cancellations: [],
+  });
   const [error, setError] = useState<unknown>(null);
   const [pilotError, setPilotError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [pilotRunning, setPilotRunning] = useState(false);
   const [importRunning, setImportRunning] = useState(false);
+  const [railRunning, setRailRunning] = useState<RecoveryMachineRailKey | null>(null);
   const autoPassageStarted = useRef(false);
   const canRunRecoveryMachine = user?.role === "owner" || user?.role === "manager";
 
@@ -134,6 +140,50 @@ export default function DashboardPage() {
     }
   }
 
+  async function runRecoveryRailImport(trigger: RecoveryMachineRailKey) {
+    const files = railFiles[trigger];
+    if (files.length === 0) {
+      setPilotError(
+        new Error(
+          trigger === "refunds"
+            ? "Depose les preuves de remboursement avant GO."
+            : "Depose les preuves d'annulation avant GO.",
+        ),
+      );
+      return;
+    }
+
+    setRailRunning(trigger);
+    setPilotError(null);
+    setMachineResult(null);
+    try {
+      await prepareFinishNotification();
+      const preview = await api.previewSmartImport(files);
+      const decisions: SmartImportFileDecision[] = preview.files.map((file) => ({
+        file_id: file.id,
+        action: file.recommended_action,
+        report_type: file.detected_report_type ?? "combined_report",
+        restaurant_id: null,
+      }));
+      await api.confirmSmartImport(preview.batch_preview_id, decisions);
+      const result = await api.runWorkspaceMachine({
+        trigger,
+        smart_import_batch_id: preview.batch_preview_id,
+        sync_gmail: true,
+        run_autopilot: true,
+      });
+      setMachineResult(result);
+      setNextActions(result.next_actions);
+      notifyWorkspaceMachineFinished(result);
+      setRailFiles((current) => ({ ...current, [trigger]: [] }));
+      await loadDashboard();
+    } catch (apiError) {
+      setPilotError(apiError);
+    } finally {
+      setRailRunning(null);
+    }
+  }
+
   if (loading) {
     return <LoadingState label="Chargement du dashboard" />;
   }
@@ -143,26 +193,34 @@ export default function DashboardPage() {
 
   return (
     <section className="page-section page-section--simple">
-      <div className="machine-hero machine-hero--focus">
-        <div className="machine-hero__main">
+      <div className="machine-hero machine-hero--focus machine-hero--home">
+        <div className="machine-hero__main machine-hero__main--simple">
           <div className="heading-copy">
             <p className="eyebrow">TENNET</p>
             <h1>{user?.role === "staff" ? "Mes preuves a faire" : "Machine de recuperation"}</h1>
             <p>
-              Depose les exports Uber, photos ou ZIP. Clique GO. TENNET importe, classe, rattache, repare, prepare les
-              dossiers et lance toute la machine autorisee par tes regles.
+              Deux parcours clairs : remboursements et annulations. Tu deposes les preuves ou exports, tu cliques GO,
+              TENNET classe, rattache, repare, suit les emails et remonte les blocages reels avec une raison claire.
             </p>
           </div>
           {canSeeBusinessMetrics ? (
-            <div className={`machine-command ${pilotRunning || importRunning ? "machine-command--running" : ""}`}>
+            <div
+              className={`machine-command ${
+                pilotRunning || importRunning || railRunning ? "machine-command--running" : ""
+              }`}
+            >
               <div className="machine-ring" aria-hidden="true">
                 <span />
               </div>
               <div className="machine-command__content">
-                <strong>{pilotRunning || importRunning ? "TENNET travaille" : "Machine active"}</strong>
+                <strong>{pilotRunning || importRunning || railRunning ? "TENNET travaille" : "Machine active"}</strong>
                 <span>
-                  {homeFiles.length > 0
-                    ? `${homeFiles.length} fichier(s) prets`
+                  {railRunning === "refunds"
+                    ? "Remboursements en cours"
+                    : railRunning === "cancellations"
+                      ? "Annulations en cours"
+                      : homeFiles.length > 0
+                        ? `${homeFiles.length} fichier(s) prets`
                     : recoveryMachine
                       ? `${recoveryMachine.global_progress_percent}% du parcours`
                       : "Surveillance continue"}
@@ -170,42 +228,66 @@ export default function DashboardPage() {
               </div>
             </div>
           ) : null}
-          <div className="machine-hero__actions">
-            {canSeeBusinessMetrics ? (
-              <>
-                <label className="button button--hero machine-file-button" htmlFor="dashboard-smart-files">
-                  Deposer fichiers
-                </label>
-                <input
-                  id="dashboard-smart-files"
-                  className="machine-file-input"
-                  type="file"
-                  multiple
-                  accept={acceptedTypes}
-                  onChange={(event) => setHomeFiles(Array.from(event.target.files ?? []))}
-                />
-                <button
-                  type="button"
-                  className="button button--hero machine-go-button"
-                  disabled={pilotRunning || importRunning || homeFiles.length === 0}
-                  onClick={() => void runSmartImportFromDashboard()}
-                >
-                  {pilotRunning || importRunning ? "TENNET travaille" : "GO"}
-                </button>
-                <p className="machine-action-note">
-                  {homeFiles.length > 0
-                    ? `${homeFiles.length} fichier(s) prets. GO inclut import, traitement complet et actions autorisees.`
-                    : "Choisis tes fichiers. GO lance ensuite toute la machine automatiquement."}
-                </p>
-              </>
-            ) : (
+          <div className="home-machine-status">
+            <strong>Passage complet automatique</strong>
+            <p>
+              La synchronisation, les rapprochements et les relances autorisees tournent en arriere-plan. Le bouton GO
+              sert surtout a lancer immediatement un depot de preuves ou fichiers.
+            </p>
+            {!canSeeBusinessMetrics ? (
               <Link href="/evidence-tasks" className="button button--hero">
                 Voir mes preuves
               </Link>
-            )}
+            ) : null}
           </div>
         </div>
-        {canSeeBusinessMetrics && recoveryMachine ? <RecoveryMachineFocusPanel machine={recoveryMachine} /> : null}
+        {canSeeBusinessMetrics && recoveryMachine ? (
+          <RecoveryMachineFocusPanel
+            machine={recoveryMachine}
+            filesByRail={railFiles}
+            runningRail={railRunning}
+            busy={pilotRunning || importRunning}
+            onFilesChange={(railKey, files) => setRailFiles((current) => ({ ...current, [railKey]: files }))}
+            onRun={(railKey) => void runRecoveryRailImport(railKey)}
+          />
+        ) : null}
+        {canSeeBusinessMetrics ? (
+          <section className="home-general-import" aria-label="Depot general">
+            <div>
+              <strong>Depot general</strong>
+              <p>
+                Pour un lot melange, depose tout ici. TENNET route ensuite vers remboursements, annulations, preuves,
+                imports Uber ou non classes avec la raison exacte.
+              </p>
+            </div>
+            <div className="home-general-import__actions">
+              <label className="secondary-button" htmlFor="dashboard-smart-files">
+                Deposer tout
+              </label>
+              <input
+                id="dashboard-smart-files"
+                className="machine-file-input"
+                type="file"
+                multiple
+                accept={acceptedTypes}
+                onChange={(event) => setHomeFiles(Array.from(event.target.files ?? []))}
+              />
+              <button
+                type="button"
+                className="button"
+                disabled={pilotRunning || importRunning || railRunning !== null || homeFiles.length === 0}
+                onClick={() => void runSmartImportFromDashboard()}
+              >
+                {importRunning ? "TENNET travaille" : "GO"}
+              </button>
+            </div>
+            <small>
+              {homeFiles.length > 0
+                ? `${homeFiles.length} fichier(s) prets pour depot general.`
+                : "Option secondaire : utile si tu melanges exports Uber, photos, PDF ou ZIP."}
+            </small>
+          </section>
+        ) : null}
       </div>
 
       <ApiError error={error} />
@@ -393,22 +475,44 @@ export default function DashboardPage() {
   );
 }
 
-function RecoveryMachineFocusPanel({ machine }: { machine: RecoveryMachineResponse }) {
+function RecoveryMachineFocusPanel({
+  machine,
+  filesByRail,
+  runningRail,
+  busy,
+  onFilesChange,
+  onRun,
+}: {
+  machine: RecoveryMachineResponse;
+  filesByRail: Record<RecoveryMachineRailKey, File[]>;
+  runningRail: RecoveryMachineRailKey | null;
+  busy: boolean;
+  onFilesChange: (railKey: RecoveryMachineRailKey, files: File[]) => void;
+  onRun: (railKey: RecoveryMachineRailKey) => void;
+}) {
   const refunds = machine.rails.find((rail) => rail.key === "refunds");
   const cancellations = machine.rails.find((rail) => rail.key === "cancellations");
   const rails = [refunds, cancellations].filter(Boolean) as RecoveryMachineRail[];
 
   return (
     <section className="recovery-machine-focus" aria-label="Parcours de recuperation TENNET">
-      <div className="machine-snapshot">
+      <div className="machine-lane-grid">
+        {rails.map((rail) => (
+          <RecoveryMachineLane
+            key={rail.key}
+            rail={rail}
+            files={filesByRail[rail.key]}
+            running={runningRail === rail.key}
+            disabled={busy || (runningRail !== null && runningRail !== rail.key)}
+            onFilesChange={(files) => onFilesChange(rail.key, files)}
+            onRun={() => onRun(rail.key)}
+          />
+        ))}
+      </div>
+      <div className="machine-snapshot machine-snapshot--compact">
         <MachineSnapshotItem label="Detecte" value={formatCurrency(machine.total_detected_amount)} />
         <MachineSnapshotItem label="Paiements confirmes" value={formatCurrency(machine.total_recovered_amount)} />
         <MachineSnapshotItem label="Actions ouvertes" value={machine.total_actions_count} />
-      </div>
-      <div className="machine-lane-grid">
-        {rails.map((rail) => (
-          <RecoveryMachineLane key={rail.key} rail={rail} />
-        ))}
       </div>
     </section>
   );
@@ -423,16 +527,47 @@ function MachineSnapshotItem({ label, value }: { label: string; value: string | 
   );
 }
 
-function RecoveryMachineLane({ rail }: { rail: RecoveryMachineRail }) {
+function RecoveryMachineLane({
+  rail,
+  files,
+  running,
+  disabled,
+  onFilesChange,
+  onRun,
+}: {
+  rail: RecoveryMachineRail;
+  files: File[];
+  running: boolean;
+  disabled: boolean;
+  onFilesChange: (files: File[]) => void;
+  onRun: () => void;
+}) {
   const evidenceNeeded = stageByKey(rail, "evidence_needed");
   const evidenceReceived = stageByKey(rail, "evidence_received");
   const uberEmails = stageByKey(rail, "uber_emails");
   const followups = stageByKey(rail, "followups");
   const payments = stageByKey(rail, "payments");
   const blockersCount = (evidenceNeeded?.count ?? 0) + (followups?.count ?? 0);
+  const fileInputId = `home-${rail.key}-files`;
+  const config =
+    rail.key === "refunds"
+      ? {
+          instruction: "IMPORTEZ LES PREUVES DE DEMANDES DE REMBOURSEMENTS",
+          helper:
+            "Tickets agrafes, photos, PDF, ZIP ou exports lies aux remboursements client. TENNET rattache au bon client, commande, restaurant et dossier.",
+          fileButtonLabel: "Deposer preuves de remboursement",
+          goLabel: "GO",
+        }
+      : {
+          instruction: "IMPORTEZ LES PREUVES DE DEMANDE D'ANNULATION",
+          helper:
+            "Tickets agrafes, preuves terrain, PDF, ZIP ou exports lies aux annulations. TENNET verifie paiement, doublons et preuves avant action.",
+          fileButtonLabel: "Deposer preuves d'annulation",
+          goLabel: "GO",
+        };
 
   return (
-    <article className={`machine-lane machine-lane--${rail.health}`}>
+    <article className={`machine-lane machine-lane--${rail.health} machine-lane--home`}>
       <div className="machine-lane__top">
         <div>
           <span className="rail-kicker">{rail.short_title}</span>
@@ -445,6 +580,38 @@ function RecoveryMachineLane({ rail }: { rail: RecoveryMachineRail }) {
           style={{ "--rail-progress": `${rail.progress_percent}%` } as CSSProperties}
         >
           <span>{rail.progress_percent}%</span>
+        </div>
+      </div>
+      <div className="machine-lane__command">
+        <div>
+          <strong>{config.instruction}</strong>
+          <p>{config.helper}</p>
+          <small>
+            {files.length > 0
+              ? `${files.length} fichier(s) prets pour ce parcours.`
+              : "Depose les preuves, puis GO lance le traitement complet automatiquement."}
+          </small>
+        </div>
+        <div className="machine-lane__command-actions">
+          <label className="button" htmlFor={fileInputId}>
+            {config.fileButtonLabel}
+          </label>
+          <input
+            id={fileInputId}
+            className="machine-file-input"
+            type="file"
+            multiple
+            accept={acceptedTypes}
+            onChange={(event) => onFilesChange(Array.from(event.target.files ?? []))}
+          />
+          <button
+            type="button"
+            className="button machine-go-button"
+            disabled={disabled || running || files.length === 0}
+            onClick={onRun}
+          >
+            {running ? "TENNET travaille" : config.goLabel}
+          </button>
         </div>
       </div>
       <div className="machine-lane__amounts">
@@ -461,7 +628,7 @@ function RecoveryMachineLane({ rail }: { rail: RecoveryMachineRail }) {
       </div>
       <div className="machine-lane__bottom">
         <p>{laneStatusText(rail, blockersCount)}</p>
-        <Link href={rail.next_action_href} className="button">
+        <Link href={rail.next_action_href} className="secondary-button">
           {rail.next_action_label}
         </Link>
       </div>

@@ -19,6 +19,15 @@ const navGroups: Array<{ key: NavItem["group"]; label: string }> = [
   { key: "admin", label: "Pilotage" },
 ];
 
+const primaryNavigationHrefs = new Set([
+  "/dashboard",
+  "/remboursements",
+  "/annulations",
+  "/evidence-tasks",
+  "/live-evidence",
+  "/restaurants",
+]);
+
 type Props = {
   open: boolean;
   items: NavItem[];
@@ -31,6 +40,8 @@ export default function MobileNavDrawer({ open, items, userRole, onClose, onLogo
   const visibleItems = items
     .filter((item) => !item.ownerOnly || userRole === "owner")
     .filter((item) => !item.ownerOrManagerOnly || userRole === "owner" || userRole === "manager");
+  const primaryItems = visibleItems.filter((item) => primaryNavigationHrefs.has(item.href));
+  const advancedItems = visibleItems.filter((item) => !primaryNavigationHrefs.has(item.href));
 
   return (
     <div className={`mobile-nav ${open ? "mobile-nav--open" : ""}`} aria-hidden={!open}>
@@ -45,24 +56,37 @@ export default function MobileNavDrawer({ open, items, userRole, onClose, onLogo
           </button>
         </div>
         <nav className="nav-list nav-list--grouped">
-          {navGroups.map((group) => {
-            const groupItems = visibleItems.filter((item) => item.group === group.key);
+          <div className="nav-section">
+            <span className="nav-section-title">Essentiel</span>
+            {primaryItems.map((item) => (
+              <Link key={item.href} href={item.href} className="nav-link" onClick={onClose}>
+                {item.label}
+              </Link>
+            ))}
+          </div>
+          {advancedItems.length > 0 ? (
+            <details className="nav-advanced">
+              <summary>Outils avances</summary>
+              {navGroups.map((group) => {
+                const groupItems = advancedItems.filter((item) => item.group === group.key);
 
-            if (groupItems.length === 0) {
-              return null;
-            }
+                if (groupItems.length === 0) {
+                  return null;
+                }
 
-            return (
-              <div key={group.key} className="nav-section">
-                <span className="nav-section-title">{group.label}</span>
-                {groupItems.map((item) => (
-                  <Link key={item.href} href={item.href} className="nav-link" onClick={onClose}>
-                    {item.label}
-                  </Link>
-                ))}
-              </div>
-            );
-          })}
+                return (
+                  <div key={group.key} className="nav-section">
+                    <span className="nav-section-title">{group.label}</span>
+                    {groupItems.map((item) => (
+                      <Link key={item.href} href={item.href} className="nav-link" onClick={onClose}>
+                        {item.label}
+                      </Link>
+                    ))}
+                  </div>
+                );
+              })}
+            </details>
+          ) : null}
         </nav>
         <button type="button" className="secondary-button" onClick={onLogout}>
           Deconnexion
