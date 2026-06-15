@@ -100,7 +100,7 @@ export default function LiveEvidenceStationPage() {
           <p className="eyebrow">Terrain</p>
           <h1>Station preuves</h1>
           <p className="muted">
-            Imprimez le ticket preuve restaurant, prenez la preuve en photo, puis scannez le QR code pour classer la preuve au bon dossier.
+            TENNET te donne le restaurant, le client, la commande et la date. Retrouve la commande dans Uber, imprime le vrai ticket, agrafe, photographie, puis importe.
           </p>
         </div>
         <div className="actions">
@@ -121,7 +121,7 @@ export default function LiveEvidenceStationPage() {
           <div className="section-heading">
             <h2>File active</h2>
             <span className="muted">
-              Web: impression systeme. App Android: ticket preuve restaurant Bluetooth ESC/POS + camera directe. Aucune lecture tablette Uber.
+              Web: impression systeme. App Android: fiche terrain Bluetooth ESC/POS + camera directe. Aucune lecture tablette Uber.
             </span>
           </div>
           <div className="detail-grid detail-grid--compact">
@@ -219,7 +219,7 @@ export default function LiveEvidenceStationPage() {
             disabled={printingTaskId === recommendedTask.id}
             onClick={() => void handlePrint(recommendedTask)}
           >
-            {printingTaskId === recommendedTask.id ? "Preparation" : "Imprimer ticket"}
+            {printingTaskId === recommendedTask.id ? "Preparation" : "Imprimer fiche"}
           </button>
           {tickets[recommendedTask.id] ? (
             <a className="secondary-button" href={tickets[recommendedTask.id].upload_url} target="_blank" rel="noreferrer">
@@ -249,37 +249,49 @@ function EvidenceStationCard({
     <article className={`premium-card evidence-station-card${primary ? " evidence-station-card--primary" : ""}`}>
       <div className="card-row">
         <div>
-          <h3>{evidenceLabels[task.required_evidence_type] ?? task.title}</h3>
-          <p className="muted">{task.restaurant_name}</p>
+          <h3>{task.field_context_label}</h3>
+          <p className="muted">{task.field_photo_instruction}</p>
         </div>
         <StatusBadge status={task.status} />
       </div>
       <div className="detail-grid detail-grid--compact">
         <div className="detail-item">
-          <span>Commande</span>
-          <strong>{task.uber_order_number}</strong>
+          <span>Restaurant</span>
+          <strong>{task.field_restaurant_label}</strong>
         </div>
         <div className="detail-item">
           <span>Client</span>
-          <strong>{task.customer_name ?? "-"}</strong>
+          <strong>{task.field_customer_label}</strong>
+        </div>
+        <div className="detail-item">
+          <span>Commande Uber</span>
+          <strong>{task.field_order_label}</strong>
+        </div>
+        <div className="detail-item">
+          <span>Date</span>
+          <strong>{task.field_date_label}</strong>
         </div>
         <div className="detail-item">
           <span>Montant</span>
-          <strong>{formatCurrency(task.order_amount, task.currency)}</strong>
+          <strong>{task.field_amount_label || formatCurrency(task.order_amount, task.currency)}</strong>
         </div>
         <div className="detail-item">
           <span>Echeance</span>
           <strong>{formatDate(task.due_at)}</strong>
         </div>
       </div>
+      <div className="field-search-hint">
+        <span>A chercher dans Uber</span>
+        <strong>{task.field_search_hint}</strong>
+      </div>
       <p>{task.description || task.reason}</p>
       <div className="card-row card-row--bottom">
         <StatusBadge status={task.priority} />
-        <span className="muted">Ticket + photo + QR</span>
+        <span className="muted">{evidenceLabels[task.required_evidence_type] ?? task.title}</span>
       </div>
       <div className="actions">
         <button type="button" className="button" disabled={printing} onClick={onPrint}>
-          {printing ? "Preparation" : "Imprimer ticket"}
+          {printing ? "Preparation" : "Imprimer fiche terrain"}
         </button>
         {ticket ? (
           <a className="secondary-button" href={ticket.upload_url} target="_blank" rel="noreferrer">

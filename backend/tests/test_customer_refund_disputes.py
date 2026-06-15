@@ -115,12 +115,19 @@ def add_transaction(
     return transaction
 
 
-def add_snapshot(db_session: Session, restaurant_id: int, order_id: str = "UBER-REFUND-1") -> UberOrderSnapshot:
+def add_snapshot(
+    db_session: Session,
+    restaurant_id: int,
+    order_id: str = "UBER-REFUND-1",
+    *,
+    customer_name: str | None = None,
+) -> UberOrderSnapshot:
     snapshot = UberOrderSnapshot(
         restaurant_id=restaurant_id,
         uber_store_id="store-refund",
         uber_order_id=order_id,
         display_id=order_id,
+        customer_name=customer_name,
         current_state="completed",
         placed_at=utc_now(),
         order_total_amount="24.90",
@@ -349,7 +356,7 @@ def test_evidence_requirements_by_type(configured_client: TestClient, db_session
 
 def test_create_claim_order_from_dispute(configured_client: TestClient, db_session: Session) -> None:
     restaurant = create_restaurant(configured_client)
-    add_snapshot(db_session, restaurant["id"])
+    add_snapshot(db_session, restaurant["id"], customer_name="Client Remboursement")
     add_transaction(db_session, restaurant["id"])
     detect(configured_client)
     dispute = db_session.scalar(select(UberCustomerRefundDispute))
@@ -359,6 +366,7 @@ def test_create_claim_order_from_dispute(configured_client: TestClient, db_sessi
 
     assert response.status_code == 201
     assert response.json()["uber_order_number"] == "UBER-REFUND-1"
+    assert response.json()["customer_name"] == "Client Remboursement"
     second = configured_client.post(f"/v1/customer-refunds/{dispute.id}/create-claim-order")
     assert second.status_code == 409
 

@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.core.auth import ensure_can_access_order, ensure_can_access_restaurant, get_accessible_restaurant_ids, get_current_user, require_owner_or_manager
 from app.core.database import get_db
-from app.models import ClaimOrder, EvidenceRequestTask, EvidenceUploadLink, User
+from app.models import ClaimOrder, EvidenceRequestTask, EvidenceUploadLink, UberOrderSnapshot, User
 from app.schemas.domain import (
     EvidenceRequestPriority,
     EvidencePrintTicketCreateRequest,
@@ -239,13 +239,22 @@ def get_task_or_404(task_id: int, db: Session) -> EvidenceRequestTask:
 
 def build_task_summary(task: EvidenceRequestTask) -> EvidenceRequestTaskSummary:
     order = task.order
+    related_snapshot = None
+    if not order.customer_name or not order.order_date or not order.order_time:
+        related_snapshot = find_related_snapshot(task)
+    customer_name = resolve_customer_name(task, related_snapshot)
+    order_date = resolve_order_date(task, related_snapshot)
+    order_time = resolve_order_time(task, related_snapshot)
+    field_missing_info = build_field_missing_info(customer_name, order_date, order.order_amount)
     return EvidenceRequestTaskSummary(
         id=task.id,
         order_id=task.order_id,
         restaurant_id=order.restaurant_id,
         restaurant_name=order.restaurant.name,
         uber_order_number=order.uber_order_number,
-        customer_name=order.customer_name,
+        customer_name=customer_name,
+        order_date=order_date,
+        order_time=order_time,
         order_amount=order.order_amount,
         currency=order.currency,
         claim_status=order.status,
@@ -260,9 +269,170 @@ def build_task_summary(task: EvidenceRequestTask) -> EvidenceRequestTaskSummary:
         reconciliation_result_id=task.reconciliation_result_id,
         customer_refund_dispute_id=task.customer_refund_dispute_id,
         last_upload_evidence_id=task.last_upload_evidence_id,
+        field_context_label=build_field_context_label(task),
+        field_restaurant_label=order.restaurant.name,
+        field_customer_label=customer_name or "Nom client non trouve dans l'import",
+        field_order_label=order.uber_order_number,
+        field_date_label=format_field_date(order_date, order_time),
+        field_amount_label=format_field_amount(order.order_amount, order.currency),
+        field_search_hint=build_field_search_hint(
+            restaurant_name=order.restaurant.name,
+            customer_name=customer_name,
+            order_number=order.uber_order_number,
+            order_date=order_date,
+            order_time=order_time,
+        ),
+        field_photo_instruction=build_field_photo_instruction(task),
+        field_missing_info=field_missing_info,
         created_at=task.created_at,
         updated_at=task.updated_at,
     )
+
+
+def resolve_customer_name(task: EvidenceRequestTask, related_snapshot: UberOrderSnapshot | None) -> str | None:
+    order = task.order
+    if order.customer_name:
+        return order.customer_name
+    if task.reconciliation_result and task.reconciliation_result.matched_snapshot:
+        return task.reconciliation_result.matched_snapshot.customer_name
+    if task.customer_refund_dispute and task.customer_refund_dispute.claim_order:
+        if task.customer_refund_dispute.claim_order.customer_name:
+            return task.customer_refund_dispute.claim_order.customer_name
+    if related_snapshot:
+        return related_snapshot.customer_name
+    return None
+
+
+def resolve_order_date(task: EvidenceRequestTask, related_snapshot: UberOrderSnapshot | None):
+    order = task.order
+    if order.order_date:
+        return order.order_date
+    if task.customer_refund_dispute and task.customer_refund_dispute.order_date:
+        return task.customer_refund_dispute.order_date
+    if task.reconciliation_result and task.reconciliation_result.matched_snapshot and task.reconciliation_result.matched_snapshot.placed_at:
+        return task.reconciliation_result.matched_snapshot.placed_at.date()
+    if related_snapshot and related_snapshot.placed_at:
+        return related_snapshot.placed_at.date()
+    return None
+
+
+def resolve_order_time(task: EvidenceRequestTask, related_snapshot: UberOrderSnapshot | None):
+    order = task.order
+    if order.order_time:
+        return order.order_time
+    if task.reconciliation_result and task.reconciliation_result.matched_snapshot and task.reconciliation_result.matched_snapshot.placed_at:
+        return task.reconciliation_result.matched_snapshot.placed_at.time().replace(microsecond=0)
+    if related_snapshot and related_snapshot.placed_at:
+        return related_snapshot.placed_at.time().replace(microsecond=0)
+    return None
+
+
+def find_related_snapshot(task: EvidenceRequestTask) -> UberOrderSnapshot | None:
+    db = object_session(task)
+    if db is None:
+        return None
+    dispute = task.customer_refund_dispute
+    order_number = task.order.uber_order_number
+    candidate_numbers = {order_number}
+    if dispute:
+        candidate_numbers.update(value for value in (dispute.uber_order_id, dispute.display_id) if value)
+    statement = select(UberOrderSnapshot).where(
+        UberOrderSnapshot.restaurant_id == task.order.restaurant_id,
+        UberOrderSnapshot.uber_order_id.in_(candidate_numbers),
+    )
+    if dispute and dispute.uber_store_id:
+        statement = statement.where(UberOrderSnapshot.uber_store_id == dispute.uber_store_id)
+    snapshot = db.scalar(statement.order_by(UberOrderSnapshot.id.desc()).limit(1))
+    if snapshot is not None:
+        return snapshot
+    return db.scalar(
+        select(UberOrderSnapshot)
+        .where(
+            UberOrderSnapshot.restaurant_id == task.order.restaurant_id,
+            UberOrderSnapshot.display_id.in_(candidate_numbers),
+        )
+        .order_by(UberOrderSnapshot.id.desc())
+        .limit(1)
+    )
+
+
+def build_field_context_label(task: EvidenceRequestTask) -> str:
+    if task.customer_refund_dispute:
+        return "Remboursement client / deduction Uber"
+    if task.reconciliation_result:
+        return "Annulation / compensation Uber"
+    loss_type = (task.order.loss_type or "").strip()
+    return loss_type or "Dossier Uber"
+
+
+def build_field_missing_info(customer_name: str | None, order_date, order_amount) -> list[str]:
+    missing: list[str] = []
+    if not customer_name:
+        missing.append("nom_client")
+    if not order_date:
+        missing.append("date_commande")
+    if order_amount is None:
+        missing.append("montant_commande")
+    return missing
+
+
+def build_field_search_hint(
+    *,
+    restaurant_name: str,
+    customer_name: str | None,
+    order_number: str,
+    order_date,
+    order_time,
+) -> str:
+    parts = [restaurant_name, order_number]
+    if customer_name:
+        parts.append(customer_name)
+    if order_date:
+        date_part = order_date.strftime("%d/%m/%Y")
+        if order_time:
+            date_part = f"{date_part} {order_time.strftime('%H:%M')}"
+        parts.append(date_part)
+    return " - ".join(parts)
+
+
+def build_field_photo_instruction(task: EvidenceRequestTask) -> str:
+    evidence_label = FIELD_EVIDENCE_LABELS.get(task.required_evidence_type, "preuve")
+    return (
+        f"Retrouve la commande avec les informations ci-dessus, imprime le vrai ticket Uber, "
+        f"agrafe-le sur la commande, prends une photo nette ({evidence_label}) puis importe-la ici."
+    )
+
+
+def format_field_date(order_date, order_time) -> str:
+    if not order_date:
+        return "Date non trouvee dans l'import"
+    value = order_date.strftime("%d/%m/%Y")
+    if order_time:
+        value = f"{value} a {order_time.strftime('%H:%M')}"
+    return value
+
+
+def format_field_amount(amount, currency: str) -> str:
+    if amount is None:
+        return "Montant non trouve"
+    return f"{amount:.2f} {currency}"
+
+
+FIELD_EVIDENCE_LABELS = {
+    "receipt": "ticket de caisse agrafe sur la commande",
+    "cancellation_proof": "preuve d'annulation",
+    "preparation_proof": "commande preparee / emballee",
+    "waste_photo": "commande / gaspillage visible",
+    "uber_screenshot": "capture Uber",
+    "delivery_proof": "preuve de livraison",
+    "packaging_photo": "photo emballage",
+    "sealed_bag_photo": "photo sac ferme",
+    "courier_statement": "message livreur",
+    "gps_or_route_proof": "preuve GPS / trajet",
+    "customer_contact_proof": "preuve contact client",
+    "order_details_screenshot": "details commande Uber",
+    "other": "preuve demandee",
+}
 
 
 def build_public_link_response(upload_link: EvidenceUploadLink) -> PublicEvidenceUploadLinkRead:

@@ -1239,6 +1239,34 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.detail-item--wide {
+  grid-column: span 2;
+}
+
+.field-search-hint {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid #8bd8d2;
+  border-radius: 8px;
+  background: #f3fffd;
+  color: var(--text);
+}
+
+.field-search-hint span {
+  color: #08766f;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.field-search-hint strong {
+  color: #082f35;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
 .api-error {
   display: grid;
   gap: 8px;

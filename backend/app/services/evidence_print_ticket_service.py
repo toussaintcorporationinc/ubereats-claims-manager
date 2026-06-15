@@ -195,7 +195,7 @@ def build_ticket_html(
   <main class="ticket">
     <div class="center">
       <div class="brand">{escape(order.restaurant.name)}</div>
-      <div class="muted">COMMANDE UBER - PREUVE RESTAURANT</div>
+      <div class="muted">COMMANDE UBER - FICHE TERRAIN</div>
     </div>
     <div class="line"></div>
     <div class="row"><span>Commande Uber</span><strong>{escape(order.uber_order_number)}</strong></div>
@@ -209,9 +209,9 @@ def build_ticket_html(
     <div class="line"></div>
     <div class="center qr">{qr_svg}</div>
     <p class="instructions">
-      1. Gardez ce ticket avec la commande.<br />
-      2. Photographiez le ticket avec la preuve demandee.<br />
-      3. Scannez le QR code pour envoyer la photo au bon dossier.
+      1. Retrouvez cette commande dans Uber avec le client, la date et le numero.<br />
+      2. Imprimez le vrai ticket Uber et agrafez-le sur la commande.<br />
+      3. Photographiez l'ensemble puis scannez le QR code pour envoyer la photo au bon dossier.
     </p>
     <p class="instructions">{description}</p>
     <div class="line"></div>
