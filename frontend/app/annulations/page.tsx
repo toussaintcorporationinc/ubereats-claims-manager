@@ -1,28 +1,16 @@
-"use client";
-
-import Link from "next/link";
+import MachineImportHero from "@/components/MachineImportHero";
 
 export default function AnnulationsPage() {
   return (
     <section className="page-section page-section--simple">
-      <div className="machine-hero machine-hero--compact">
-        <div className="heading-copy">
-          <p className="eyebrow">Annulations Uber</p>
-          <h1>Tickets en masse, annulations suivies</h1>
-          <p>
-            Tu importes les tickets et les exports. TENNET rapproche les commandes annulees, verifie les paiements deja
-            accordes, regroupe les preuves et suit les mails Uber.
-          </p>
-        </div>
-        <div className="simple-hero__actions machine-hero__actions">
-          <Link href="/smart-import" className="button button--hero">
-            Deposer les tickets
-          </Link>
-          <Link href="/uber/reconciliation" className="secondary-button">
-            Voir analyse
-          </Link>
-        </div>
-      </div>
+      <MachineImportHero
+        eyebrow="Annulations Uber"
+        title="Annulations"
+        description="Tickets, exports, photos ou ZIP : depose les preuves de commandes annulees en masse, TENNET rapproche les annulations, verifie les paiements et garde les blocages visibles."
+        instruction="IMPORTEZ LES PREUVES DE DEMANDE D'ANNULATION"
+        fileButtonLabel="Deposer preuves annulation"
+        trigger="cancellations"
+      />
 
       <section className="tool-panel">
         <div className="section-heading">
@@ -60,22 +48,6 @@ export default function AnnulationsPage() {
         </div>
       </section>
 
-      <section className="tool-panel">
-        <div className="section-heading">
-          <div>
-            <h2>Action suivante</h2>
-            <p className="muted">Un seul depart : depot massif. TENNET route ensuite vers reconciliation, preuves et recuperation.</p>
-          </div>
-        </div>
-        <div className="simple-hero__actions">
-          <Link href="/smart-import" className="button">
-            Importer tickets et exports
-          </Link>
-          <Link href="/recovery/actions" className="secondary-button">
-            Voir actions restantes
-          </Link>
-        </div>
-      </section>
     </section>
   );
 }
