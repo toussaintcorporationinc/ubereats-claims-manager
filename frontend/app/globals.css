@@ -227,6 +227,11 @@ button {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.machine-hero--category {
+  grid-template-columns: minmax(260px, 0.9fr) minmax(260px, 340px) minmax(220px, 0.7fr);
+  gap: clamp(18px, 3vw, 40px);
+}
+
 .machine-hero p,
 .machine-hero .muted {
   color: #4f6672;
@@ -249,6 +254,23 @@ button {
 .machine-hero__actions {
   align-items: center;
   justify-content: flex-end;
+}
+
+.machine-category-orb {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.machine-category-orb > p {
+  max-width: 300px;
+  margin: 0;
+  color: #007a9f;
+  font-size: clamp(0.92rem, 1.2vw, 1.05rem);
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .machine-command {

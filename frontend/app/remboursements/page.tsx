@@ -1,28 +1,16 @@
-"use client";
-
-import Link from "next/link";
+import MachineImportHero from "@/components/MachineImportHero";
 
 export default function RemboursementsPage() {
   return (
     <section className="page-section page-section--simple">
-      <div className="machine-hero machine-hero--compact">
-        <div className="heading-copy">
-          <p className="eyebrow">Remboursements Uber</p>
-          <h1>Depose tout, TENNET lance le parcours</h1>
-          <p>
-            Demandes de remboursement, commande non recue, article manquant, mauvaise commande ou ajustement negatif :
-            TENNET trie, rapproche, demande les preuves et suit les reponses Uber sans te faire chercher partout.
-          </p>
-        </div>
-        <div className="simple-hero__actions machine-hero__actions">
-          <Link href="/smart-import" className="button button--hero">
-            Deposer les fichiers
-          </Link>
-          <Link href="/customer-refunds" className="secondary-button">
-            Dossiers remboursement
-          </Link>
-        </div>
-      </div>
+      <MachineImportHero
+        eyebrow="Remboursements Uber"
+        title="Remboursements"
+        description="Demandes client, commande non recue, article manquant, mauvaise commande ou ajustement negatif : depose les fichiers et preuves en masse, TENNET rattache chaque commande au bon restaurant."
+        instruction="IMPORTEZ LES PREUVES DE DEMANDES DE REMBOURSEMENTS"
+        fileButtonLabel="Deposer fichiers / preuves"
+        trigger="refunds"
+      />
 
       <section className="tool-panel">
         <div className="section-heading">
@@ -60,22 +48,6 @@ export default function RemboursementsPage() {
         </div>
       </section>
 
-      <section className="tool-panel">
-        <div className="section-heading">
-          <div>
-            <h2>Action suivante</h2>
-            <p className="muted">Commence par Smart Import. Le reste du parcours se remplit automatiquement autour des dossiers.</p>
-          </div>
-        </div>
-        <div className="simple-hero__actions">
-          <Link href="/smart-import" className="button">
-            Importer remboursements et preuves
-          </Link>
-          <Link href="/recovery" className="secondary-button">
-            Voir argent a recuperer
-          </Link>
-        </div>
-      </section>
     </section>
   );
 }
