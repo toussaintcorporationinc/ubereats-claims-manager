@@ -280,6 +280,27 @@ def test_detect_does_not_duplicate_same_transaction(configured_client: TestClien
     assert len(db_session.scalars(select(UberCustomerRefundDispute)).all()) == 1
 
 
+def test_positive_order_error_adjustment_is_not_detected_as_deduction(
+    configured_client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = create_restaurant(configured_client)
+    add_transaction(
+        db_session,
+        restaurant["id"],
+        transaction_type="order_error_adjustment",
+        amount="39.98",
+        payload={"description": "Ajustement erreur de commande positif"},
+    )
+
+    response = detect(configured_client)
+
+    assert response.status_code == 200
+    assert response.json()["detected_count"] == 0
+    assert response.json()["total_deducted_amount"] == "0"
+    assert db_session.scalar(select(UberCustomerRefundDispute)) is None
+
+
 def test_evidence_requirements_by_type(configured_client: TestClient, db_session: Session) -> None:
     restaurant = create_restaurant(configured_client)
     add_transaction(db_session, restaurant["id"], order_id="UBER-NOT-RECEIVED", payload={"reason": "not received"})
