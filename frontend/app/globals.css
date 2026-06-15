@@ -646,9 +646,19 @@ button {
   text-align: center;
 }
 
-.machine-pass-button {
-  background: #ffffff;
-  color: #14313b;
+.machine-go-button {
+  min-height: 66px;
+  border-color: rgba(20, 188, 220, 0.26);
+  background: linear-gradient(135deg, #0ea873 0%, #15b7cb 100%);
+  box-shadow: 0 18px 40px rgba(18, 180, 180, 0.18);
+  font-size: clamp(1.22rem, 2vw, 1.55rem);
+  letter-spacing: 0;
+}
+
+.machine-go-button:disabled {
+  background: #dcecf1;
+  color: #5d727b;
+  box-shadow: none;
 }
 
 .machine-action-note {
