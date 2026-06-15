@@ -149,8 +149,8 @@ export default function DashboardPage() {
             <p className="eyebrow">TENNET</p>
             <h1>{user?.role === "staff" ? "Mes preuves a faire" : "Machine de recuperation"}</h1>
             <p>
-              Depose les exports Uber, photos ou ZIP. TENNET classe, rattache, repare, prepare les dossiers, suit les
-              emails et garde les blocages visibles avec une raison claire.
+              Depose les exports Uber, photos ou ZIP. Clique GO. TENNET importe, classe, rattache, repare, prepare les
+              dossiers et lance toute la machine autorisee par tes regles.
             </p>
           </div>
           {canSeeBusinessMetrics ? (
@@ -184,25 +184,19 @@ export default function DashboardPage() {
                   accept={acceptedTypes}
                   onChange={(event) => setHomeFiles(Array.from(event.target.files ?? []))}
                 />
-                {homeFiles.length > 0 ? (
-                  <button
-                    type="button"
-                    className="button button--hero"
-                    disabled={pilotRunning || importRunning}
-                    onClick={() => void runSmartImportFromDashboard()}
-                  >
-                    {importRunning ? "TENNET traite" : "Lancer avec fichiers"}
-                  </button>
-                ) : null}
                 <button
                   type="button"
-                  className="secondary-button machine-pass-button"
-                  disabled={pilotRunning || importRunning}
-                  onClick={() => void runTennetPilot()}
+                  className="button button--hero machine-go-button"
+                  disabled={pilotRunning || importRunning || homeFiles.length === 0}
+                  onClick={() => void runSmartImportFromDashboard()}
                 >
-                  {pilotRunning ? "Passage en cours" : "Passage complet"}
+                  {pilotRunning || importRunning ? "TENNET travaille" : "GO"}
                 </button>
-                <p className="machine-action-note">Le passage complet tourne aussi automatiquement en arriere-plan.</p>
+                <p className="machine-action-note">
+                  {homeFiles.length > 0
+                    ? `${homeFiles.length} fichier(s) prets. GO inclut import, traitement complet et actions autorisees.`
+                    : "Choisis tes fichiers. GO lance ensuite toute la machine automatiquement."}
+                </p>
               </>
             ) : (
               <Link href="/evidence-tasks" className="button button--hero">
