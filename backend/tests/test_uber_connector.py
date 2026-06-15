@@ -620,6 +620,43 @@ def test_combined_french_uber_export_with_two_line_header_creates_snapshot_and_a
     assert transaction.amount == Decimal("-24.99")
 
 
+def test_combined_report_item_adjustment_rows_are_not_financial_transactions(
+    unauthenticated_client: TestClient,
+    db_session: Session,
+) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Restaurant Export Francais")
+    create_store_mapping(
+        unauthenticated_client,
+        owner_token,
+        restaurant["id"],
+        "06079c7e-a1b3-4816-b18b-35ffb89bbdce",
+    )
+    csv_text = "\n".join(
+        [
+            "Id. de la commande,Id. du flux,Nom du restaurant,Id. du restaurant,Id. du restaurant,Date de la commande,Type de restauration,Ventes (TVA incluse),Ajustements lies a des erreurs de commande (TVA incluse),Nom du plat de l article,Prix a l unite,Quantite demandee",
+            "#TEST2,workflow-test-2,Restaurant Export Francais,,06079c7e-a1b3-4816-b18b-35ffb89bbdce,01/06/2026,Livraison - Coursier du restaurant,24.99,0,,,",
+            "#TEST2,workflow-test-2,Restaurant Export Francais,,06079c7e-a1b3-4816-b18b-35ffb89bbdce,01/06/2026,Livraison - Coursier du restaurant,0,-24.99,,,",
+            ",workflow-test-2,Restaurant Export Francais,,06079c7e-a1b3-4816-b18b-35ffb89bbdce,01/06/2026,Livraison - Coursier du restaurant,0,-24.99,Menu test,24.99,1",
+        ]
+    )
+
+    preview = preview_report(unauthenticated_client, owner_token, csv_text, "combined_report")
+    result = unauthenticated_client.post(
+        f"/v1/uber/reporting/batches/{preview['batch_id']}/confirm",
+        headers=auth_headers(owner_token),
+    )
+
+    assert result.status_code == 200, result.text
+    assert result.json()["created_snapshots_count"] == 1
+    assert result.json()["created_transactions_count"] == 1
+    transactions = db_session.scalars(
+        select(UberFinancialTransaction).where(UberFinancialTransaction.uber_order_id == "workflow-test-2")
+    ).all()
+    assert len(transactions) == 1
+    assert transactions[0].amount == Decimal("-24.99")
+
+
 def test_preview_rejects_forbidden_extension_and_reports_missing_columns(unauthenticated_client: TestClient) -> None:
     owner_token = bootstrap_owner(unauthenticated_client)
     forbidden = unauthenticated_client.post(
