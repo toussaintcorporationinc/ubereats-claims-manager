@@ -305,6 +305,8 @@ class ReportingService:
             statement = statement.where(UberCustomerRefundDispute.deducted_at <= self.filters.date_to)
         if self.filters.status:
             statement = statement.where(UberCustomerRefundDispute.status == self.filters.status)
+        else:
+            statement = statement.where(UberCustomerRefundDispute.status != "ignored")
         if self.filters.min_amount is not None:
             statement = statement.where(UberCustomerRefundDispute.customer_refund_amount >= self.filters.min_amount)
         if self.filters.max_amount is not None:
