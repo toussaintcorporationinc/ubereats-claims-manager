@@ -1,10 +1,25 @@
+from datetime import date, datetime, time
+from typing import Any
+import unicodedata
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, object_session
 
 from app.core.auth import ensure_can_access_order, ensure_can_access_restaurant, get_accessible_restaurant_ids, get_current_user, require_owner_or_manager
 from app.core.database import get_db
-from app.models import ClaimOrder, EvidenceRequestTask, EvidenceUploadLink, UberOrderSnapshot, User
+from app.models import (
+    ClaimOrder,
+    EvidenceAnalysisResult,
+    EvidenceImportBatch,
+    EvidenceImportedFile,
+    EvidenceMatchCandidate,
+    EvidenceRequestTask,
+    EvidenceUploadLink,
+    UberFinancialTransaction,
+    UberOrderSnapshot,
+    User,
+)
 from app.schemas.domain import (
     EvidenceRequestPriority,
     EvidencePrintTicketCreateRequest,
@@ -240,11 +255,19 @@ def get_task_or_404(task_id: int, db: Session) -> EvidenceRequestTask:
 def build_task_summary(task: EvidenceRequestTask) -> EvidenceRequestTaskSummary:
     order = task.order
     related_snapshot = None
+    candidate_numbers = build_candidate_order_numbers(task)
     if not order.customer_name or not order.order_date or not order.order_time:
-        related_snapshot = find_related_snapshot(task)
-    customer_name = resolve_customer_name(task, related_snapshot)
-    order_date = resolve_order_date(task, related_snapshot)
-    order_time = resolve_order_time(task, related_snapshot)
+        related_snapshot = find_related_snapshot(task, candidate_numbers)
+    if related_snapshot:
+        candidate_numbers = build_candidate_order_numbers(task, related_snapshot)
+    related_analysis = None
+    related_transaction_payload = None
+    if not order.customer_name or not order.order_date or not order.order_time:
+        related_analysis = find_related_analysis(task, candidate_numbers)
+        related_transaction_payload = find_related_transaction_payload(task, candidate_numbers)
+    customer_name = resolve_customer_name(task, related_snapshot, related_analysis, related_transaction_payload)
+    order_date = resolve_order_date(task, related_snapshot, related_analysis, related_transaction_payload)
+    order_time = resolve_order_time(task, related_snapshot, related_transaction_payload)
     field_missing_info = build_field_missing_info(customer_name, order_date, order.order_amount)
     return EvidenceRequestTaskSummary(
         id=task.id,
@@ -271,7 +294,7 @@ def build_task_summary(task: EvidenceRequestTask) -> EvidenceRequestTaskSummary:
         last_upload_evidence_id=task.last_upload_evidence_id,
         field_context_label=build_field_context_label(task),
         field_restaurant_label=order.restaurant.name,
-        field_customer_label=customer_name or "Nom client non trouve dans l'import",
+        field_customer_label=customer_name or "Nom client non trouve dans les imports/preuves",
         field_order_label=order.uber_order_number,
         field_date_label=format_field_date(order_date, order_time),
         field_amount_label=format_field_amount(order.order_amount, order.currency),
@@ -289,21 +312,50 @@ def build_task_summary(task: EvidenceRequestTask) -> EvidenceRequestTaskSummary:
     )
 
 
-def resolve_customer_name(task: EvidenceRequestTask, related_snapshot: UberOrderSnapshot | None) -> str | None:
+def resolve_customer_name(
+    task: EvidenceRequestTask,
+    related_snapshot: UberOrderSnapshot | None,
+    related_analysis: EvidenceAnalysisResult | None = None,
+    related_transaction_payload: dict[str, Any] | None = None,
+) -> str | None:
     order = task.order
     if order.customer_name:
         return order.customer_name
     if task.reconciliation_result and task.reconciliation_result.matched_snapshot:
-        return task.reconciliation_result.matched_snapshot.customer_name
+        if task.reconciliation_result.matched_snapshot.customer_name:
+            return task.reconciliation_result.matched_snapshot.customer_name
     if task.customer_refund_dispute and task.customer_refund_dispute.claim_order:
         if task.customer_refund_dispute.claim_order.customer_name:
             return task.customer_refund_dispute.claim_order.customer_name
-    if related_snapshot:
+    if related_snapshot and related_snapshot.customer_name:
         return related_snapshot.customer_name
+    analysis_customer_name = extract_analysis_customer_name(related_analysis)
+    if analysis_customer_name:
+        return analysis_customer_name
+    transaction_customer_name = payload_string_value(
+        related_transaction_payload,
+        {
+            "customer_name",
+            "client_name",
+            "eater_name",
+            "customer",
+            "client",
+            "nom_client",
+            "nom_du_client",
+            "nom",
+        },
+    )
+    if transaction_customer_name:
+        return transaction_customer_name
     return None
 
 
-def resolve_order_date(task: EvidenceRequestTask, related_snapshot: UberOrderSnapshot | None):
+def resolve_order_date(
+    task: EvidenceRequestTask,
+    related_snapshot: UberOrderSnapshot | None,
+    related_analysis: EvidenceAnalysisResult | None = None,
+    related_transaction_payload: dict[str, Any] | None = None,
+):
     order = task.order
     if order.order_date:
         return order.order_date
@@ -313,10 +365,29 @@ def resolve_order_date(task: EvidenceRequestTask, related_snapshot: UberOrderSna
         return task.reconciliation_result.matched_snapshot.placed_at.date()
     if related_snapshot and related_snapshot.placed_at:
         return related_snapshot.placed_at.date()
+    if related_analysis and related_analysis.detected_order_date:
+        return related_analysis.detected_order_date
+    transaction_date = payload_date_value(
+        related_transaction_payload,
+        {
+            "order_date",
+            "placed_at",
+            "order_created_at",
+            "date_commande",
+            "date_de_commande",
+            "date_de_la_commande",
+        },
+    )
+    if transaction_date:
+        return transaction_date
     return None
 
 
-def resolve_order_time(task: EvidenceRequestTask, related_snapshot: UberOrderSnapshot | None):
+def resolve_order_time(
+    task: EvidenceRequestTask,
+    related_snapshot: UberOrderSnapshot | None,
+    related_transaction_payload: dict[str, Any] | None = None,
+):
     order = task.order
     if order.order_time:
         return order.order_time
@@ -324,18 +395,43 @@ def resolve_order_time(task: EvidenceRequestTask, related_snapshot: UberOrderSna
         return task.reconciliation_result.matched_snapshot.placed_at.time().replace(microsecond=0)
     if related_snapshot and related_snapshot.placed_at:
         return related_snapshot.placed_at.time().replace(microsecond=0)
+    transaction_time = payload_time_value(
+        related_transaction_payload,
+        {
+            "order_time",
+            "placed_at",
+            "order_created_at",
+            "heure_commande",
+            "heure_de_commande",
+            "heure_d_acceptation_de_la_commande",
+            "heure_acceptation_commande",
+            "time",
+        },
+    )
+    if transaction_time:
+        return transaction_time
     return None
 
 
-def find_related_snapshot(task: EvidenceRequestTask) -> UberOrderSnapshot | None:
+def build_candidate_order_numbers(task: EvidenceRequestTask, related_snapshot: UberOrderSnapshot | None = None) -> set[str]:
+    values = {task.order.uber_order_number}
+    dispute = task.customer_refund_dispute
+    if dispute:
+        values.update(value for value in (dispute.uber_order_id, dispute.display_id) if value)
+    result = task.reconciliation_result
+    if result:
+        values.update(value for value in (result.uber_order_id, result.display_id) if value)
+    if related_snapshot:
+        values.update(value for value in (related_snapshot.uber_order_id, related_snapshot.display_id) if value)
+    return {value.strip() for value in values if value and value.strip()}
+
+
+def find_related_snapshot(task: EvidenceRequestTask, candidate_numbers: set[str] | None = None) -> UberOrderSnapshot | None:
     db = object_session(task)
     if db is None:
         return None
     dispute = task.customer_refund_dispute
-    order_number = task.order.uber_order_number
-    candidate_numbers = {order_number}
-    if dispute:
-        candidate_numbers.update(value for value in (dispute.uber_order_id, dispute.display_id) if value)
+    candidate_numbers = candidate_numbers or build_candidate_order_numbers(task)
     statement = select(UberOrderSnapshot).where(
         UberOrderSnapshot.restaurant_id == task.order.restaurant_id,
         UberOrderSnapshot.uber_order_id.in_(candidate_numbers),
@@ -354,6 +450,177 @@ def find_related_snapshot(task: EvidenceRequestTask) -> UberOrderSnapshot | None
         .order_by(UberOrderSnapshot.id.desc())
         .limit(1)
     )
+
+
+def find_related_analysis(task: EvidenceRequestTask, candidate_numbers: set[str]) -> EvidenceAnalysisResult | None:
+    db = object_session(task)
+    if db is None:
+        return None
+    conditions = []
+    if candidate_numbers:
+        conditions.extend(
+            [
+                EvidenceAnalysisResult.detected_uber_order_number.in_(candidate_numbers),
+                EvidenceAnalysisResult.detected_display_id.in_(candidate_numbers),
+            ]
+        )
+    candidate_pairs = [("claim_order", task.order_id), ("evidence_task", task.id)]
+    if task.customer_refund_dispute_id:
+        candidate_pairs.append(("customer_refund_dispute", task.customer_refund_dispute_id))
+    if task.reconciliation_result_id:
+        candidate_pairs.append(("reconciliation_result", task.reconciliation_result_id))
+    linked_analysis_ids = select(EvidenceMatchCandidate.analysis_result_id).where(
+        or_(
+            *[
+                (EvidenceMatchCandidate.candidate_type == candidate_type)
+                & (EvidenceMatchCandidate.candidate_id == candidate_id)
+                for candidate_type, candidate_id in candidate_pairs
+                if candidate_id
+            ]
+        )
+    )
+    conditions.append(EvidenceAnalysisResult.id.in_(linked_analysis_ids))
+    return db.scalar(
+        select(EvidenceAnalysisResult)
+        .join(EvidenceImportedFile)
+        .join(EvidenceImportBatch)
+        .where(
+            or_(*conditions),
+            or_(EvidenceImportBatch.restaurant_id == task.order.restaurant_id, EvidenceImportBatch.restaurant_id.is_(None)),
+        )
+        .order_by(
+            EvidenceAnalysisResult.extraction_confidence.desc(),
+            EvidenceAnalysisResult.matching_confidence.desc(),
+            EvidenceAnalysisResult.id.desc(),
+        )
+        .limit(1)
+    )
+
+
+def find_related_transaction_payload(task: EvidenceRequestTask, candidate_numbers: set[str]) -> dict[str, Any] | None:
+    db = object_session(task)
+    if db is None:
+        return None
+    conditions = []
+    if candidate_numbers:
+        conditions.append(UberFinancialTransaction.uber_order_id.in_(candidate_numbers))
+    if task.customer_refund_dispute and task.customer_refund_dispute.financial_transaction_id:
+        conditions.append(UberFinancialTransaction.id == task.customer_refund_dispute.financial_transaction_id)
+    if not conditions:
+        return None
+    transaction = db.scalar(
+        select(UberFinancialTransaction)
+        .where(
+            UberFinancialTransaction.restaurant_id == task.order.restaurant_id,
+            or_(*conditions),
+        )
+        .order_by(UberFinancialTransaction.id.desc())
+        .limit(1)
+    )
+    if transaction is None:
+        return None
+    return transaction.raw_payload_json or None
+
+
+def extract_analysis_customer_name(analysis: EvidenceAnalysisResult | None) -> str | None:
+    if analysis is None:
+        return None
+    raw_result = analysis.raw_result_json or {}
+    return payload_string_value(
+        raw_result,
+        {
+            "customer_name",
+            "client_name",
+            "eater_name",
+            "customer",
+            "client",
+            "nom_client",
+            "nom_du_client",
+            "nom",
+        },
+    )
+
+
+def payload_string_value(payload: dict[str, Any] | None, accepted_keys: set[str]) -> str | None:
+    value = payload_value(payload, accepted_keys)
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+    return None
+
+
+def payload_date_value(payload: dict[str, Any] | None, accepted_keys: set[str]) -> date | None:
+    value = payload_value(payload, accepted_keys)
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    for parser_value in (cleaned, cleaned[:10]):
+        try:
+            return date.fromisoformat(parser_value)
+        except ValueError:
+            pass
+    normalized = cleaned.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized).date()
+    except ValueError:
+        return None
+
+
+def payload_time_value(payload: dict[str, Any] | None, accepted_keys: set[str]) -> time | None:
+    value = payload_value(payload, accepted_keys)
+    if isinstance(value, datetime):
+        return value.time().replace(microsecond=0)
+    if isinstance(value, time):
+        return value.replace(microsecond=0)
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    normalized = cleaned.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized).time().replace(microsecond=0)
+    except ValueError:
+        pass
+    try:
+        return time.fromisoformat(cleaned[:8]).replace(microsecond=0)
+    except ValueError:
+        try:
+            return time.fromisoformat(cleaned[:5]).replace(microsecond=0)
+        except ValueError:
+            return None
+
+
+def payload_value(payload: dict[str, Any] | None, accepted_keys: set[str]) -> Any | None:
+    if not payload:
+        return None
+    normalized_keys = {normalize_payload_key(key) for key in accepted_keys}
+    for key, value in iter_payload_items(payload):
+        if normalize_payload_key(key) in normalized_keys and value not in (None, ""):
+            return value
+    return None
+
+
+def iter_payload_items(value: Any):
+    if isinstance(value, dict):
+        for key, nested_value in value.items():
+            yield str(key), nested_value
+            yield from iter_payload_items(nested_value)
+    elif isinstance(value, list):
+        for nested_value in value:
+            yield from iter_payload_items(nested_value)
+
+
+def normalize_payload_key(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    ascii_value = "".join(char for char in normalized if not unicodedata.combining(char))
+    return "".join(char if char.isalnum() else "_" for char in ascii_value.lower()).strip("_")
 
 
 def build_field_context_label(task: EvidenceRequestTask) -> str:
