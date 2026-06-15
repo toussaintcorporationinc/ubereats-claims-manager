@@ -389,7 +389,8 @@ def customer_refund_task_description(dispute: UberCustomerRefundDispute, evidenc
         f"Preuve requise pour contester une deduction Uber Eats. Type: {dispute.dispute_type}. "
         f"Commande: {order_label}. Montant deduit: {dispute.customer_refund_amount} {dispute.currency}. "
         f"Preuve attendue: {title_for_evidence(evidence_type)}. "
-        "Imprime ou recupere la preuve, prends les photos, puis importe tout en masse dans Smart Import."
+        "Une seule photo suffit si elle montre le ticket de caisse agrafe ou pose sur la commande du client, "
+        "avec restaurant et numero de commande lisibles. Importe ensuite toutes les preuves en masse dans Smart Import."
     )
 
 
@@ -507,7 +508,7 @@ def task_type_for_evidence(evidence_type: str) -> str:
 
 def title_for_evidence(evidence_type: str) -> str:
     labels = {
-        "receipt": "Ticket de caisse requis",
+        "receipt": "Ticket agrafe sur commande requis",
         "delivery_proof": "Preuve de livraison requise",
         "preparation_proof": "Preuve de preparation requise",
         "packaging_photo": "Photo du packaging requise",

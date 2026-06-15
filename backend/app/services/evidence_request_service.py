@@ -399,6 +399,22 @@ def build_task_specs(
     specs: list[EvidenceTaskSpec] = []
     priority = get_task_priority(order, reconciliation_result)
     reconciliation_result_id = reconciliation_result.id if reconciliation_result else None
+    if "receipt" in missing_items:
+        specs.append(
+            EvidenceTaskSpec(
+                evidence_type="receipt",
+                task_type="missing_receipt",
+                title="Ticket agrafe sur la commande requis",
+                description=(
+                    "Ajoutez une seule photo nette montrant le ticket de caisse agrafe ou pose sur la commande du client. "
+                    "La photo doit rendre visibles le restaurant, le numero de commande/client et la commande preparee."
+                ),
+                reason="missing_unified_order_proof",
+                priority=priority,
+                reconciliation_result_id=reconciliation_result_id,
+            )
+        )
+        return specs
     if "cancellation_proof" in missing_items:
         specs.append(
             EvidenceTaskSpec(
@@ -460,7 +476,8 @@ def evidence_task_description(
     return (
         f"{fallback_description} Cas: {case_label}. Restaurant: {order.restaurant.name if order.restaurant else order.restaurant_id}. "
         f"Commande: {order.uber_order_number}. Client: {customer}. Montant: {amount}. "
-        "Imprime ou recupere la preuve correspondante, puis importe toutes les photos en masse dans Smart Import."
+        "Imprime le ticket si necessaire, agrafe-le ou pose-le sur la commande, prends une seule photo nette, "
+        "puis importe toutes les preuves en masse dans Smart Import."
     )
 
 

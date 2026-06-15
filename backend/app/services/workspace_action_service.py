@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models import User
 from app.schemas.domain import RecoveryAction, WorkspaceAction, WorkspaceNextActionsResponse
 from app.services.recovery_cockpit_service import RecoveryCockpitService, RecoveryFilters
+from app.services.workspace_unclassified_service import WorkspaceUnclassifiedService
 
 HIGH_VALUE_THRESHOLD = Decimal("100")
 
@@ -18,6 +19,7 @@ class WorkspaceActionService:
     def next_actions(self) -> WorkspaceNextActionsResponse:
         recovery_actions = RecoveryCockpitService(self.db, self.current_user, RecoveryFilters()).actions(limit=80, offset=0)
         workspace_actions = [self.from_recovery_action(action) for action in recovery_actions]
+        workspace_actions.extend(self.unclassified_actions())
         if self.current_user.role in {"owner", "manager"}:
             workspace_actions.extend(self.owner_manager_guided_actions())
         return bucket_actions(workspace_actions)
@@ -71,6 +73,21 @@ class WorkspaceActionService:
                 action_url="/autopilot",
                 action_type="manual_review",
             ),
+        ]
+
+    def unclassified_actions(self) -> list[WorkspaceAction]:
+        items = WorkspaceUnclassifiedService(self.db, self.current_user).list_items(limit=12).items
+        return [
+            WorkspaceAction(
+                title=f"Non classe - {item.original_filename}",
+                description=item.description,
+                restaurant=item.restaurant,
+                amount=None,
+                priority="high" if item.reason in {"missing_identity", "ambiguous_matches"} else "normal",
+                action_url=item.action_url,
+                action_type="manual_review",
+            )
+            for item in items
         ]
 
 

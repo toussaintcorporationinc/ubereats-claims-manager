@@ -39,14 +39,11 @@ Les motifs ambigus restent en revue manuelle. TENNET ne doit jamais inventer une
 
 ## Preuves necessaires
 
-Regles V1.1 :
+Regles V1.2 :
 
-- `order_not_received` : `receipt`, `delivery_proof` requis ; `gps_or_route_proof`, `customer_contact_proof`, `courier_statement` recommandes.
-- `missing_item` : `receipt`, `preparation_proof` requis ; `packaging_photo`, `sealed_bag_photo`, `order_details_screenshot` recommandes.
-- `incorrect_item` : `receipt`, `preparation_proof` requis ; `packaging_photo`, `order_details_screenshot` recommandes.
-- `damaged_order` : `receipt`, `packaging_photo` requis ; `sealed_bag_photo` recommande.
-- `quality_issue` : `receipt`, `preparation_proof` requis ; `packaging_photo` recommande.
-- `customer_refund`, `order_error_adjustment`, `chargeback`, `unknown` : `receipt`, `uber_screenshot` requis ; `preparation_proof`, `order_details_screenshot` recommandes.
+- tous les types exigent `receipt` ;
+- `receipt` signifie une photo unique du ticket de caisse agrafe ou pose sur la commande du client ;
+- `delivery_proof`, `preparation_proof`, `packaging_photo`, `uber_screenshot` et autres preuves restent des renforts optionnels si Uber les redemande explicitement.
 
 Une preuve manquante bloque la creation du brouillon de contestation. Les preuves peuvent etre ajoutees depuis le dossier TENNET, depuis une tache de preuve ou via un lien mobile tokenise.
 

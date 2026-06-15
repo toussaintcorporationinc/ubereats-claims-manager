@@ -4,37 +4,32 @@ TENNET utilise les preuves pour verifier qu'un dossier de reclamation Uber Eats 
 
 ## Preuves bloquantes
 
-Un dossier n'est pas pret sans :
+Un dossier n'est pas pret sans une preuve unique `receipt` exploitable.
+
+Dans TENNET V1.2, `receipt` signifie : une seule photo nette du ticket de caisse agrafe ou pose sur la commande du
+client, avec restaurant, numero de commande/client et commande preparee visibles.
+
+Les anciens dossiers restent compatibles avec l'ancien ensemble de preuves :
 
 - `cancellation_proof` ;
 - `preparation_proof` ou `waste_photo`.
-
-Le ticket `receipt` reste recommande mais non bloquant dans cette version.
 
 ## File de demandes
 
 La page `/evidence-tasks` permet a un owner ou manager de recalculer les preuves manquantes.
 
-TENNET cree une tache par preuve bloquante manquante :
-
-- `cancellation_proof` si la preuve d'annulation manque ;
-- `preparation_proof` si aucune preuve de preparation ou photo de gaspillage n'existe ;
-- `waste_photo` si le type de perte indique clairement du gaspillage.
+TENNET cree par defaut une seule tache `receipt` par dossier bloque : imprimer le ticket si necessaire, l'agrafer ou le
+poser sur la commande, prendre une seule photo nette, puis importer les preuves en masse.
 
 Chaque tache doit indiquer le contexte metier lisible : remboursement ou annulation, restaurant, numero de commande, client quand il est connu, montant et preuve attendue. L'objectif terrain est que l'utilisateur sache exactement quel ticket imprimer ou quelle photo prendre avant de renvoyer les preuves en masse a TENNET.
 
 Les resultats Uber reconciliation avec `evidence_required=true` peuvent alimenter la priorite quand un dossier TENNET existe deja.
 
-Les deductions Uber detectees depuis transactions financieres creent aussi des exigences de preuves :
+Les deductions Uber detectees depuis transactions financieres creent aussi une exigence obligatoire `receipt`.
 
-- `order_not_received` : `receipt` et `delivery_proof` obligatoires ;
-- `missing_item` : `receipt` et `preparation_proof` obligatoires ;
-- `incorrect_item` : `receipt` et `preparation_proof` obligatoires ;
-- `damaged_order` : `receipt` et `packaging_photo` obligatoires ;
-- `quality_issue` : `receipt` et `preparation_proof` obligatoires ;
-- `customer_refund`, `order_error_adjustment`, `chargeback` et `unknown` : `receipt` et `uber_screenshot` obligatoires.
-
-Les preuves recommandees comme `sealed_bag_photo`, `order_details_screenshot`, `gps_or_route_proof`, `customer_contact_proof` ou `courier_statement` peuvent renforcer le dossier mais ne sont pas toutes bloquantes en V1.1.
+Les preuves comme `delivery_proof`, `preparation_proof`, `sealed_bag_photo`, `order_details_screenshot`,
+`gps_or_route_proof`, `customer_contact_proof`, `courier_statement` ou `uber_screenshot` peuvent renforcer le dossier si
+Uber les redemande, mais elles ne sont plus demandees par defaut.
 
 ## Priorites
 
