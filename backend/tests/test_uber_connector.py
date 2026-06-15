@@ -620,6 +620,45 @@ def test_combined_french_uber_export_with_two_line_header_creates_snapshot_and_a
     assert transaction.amount == Decimal("-24.99")
 
 
+def test_combined_report_prefers_order_error_adjustment_including_vat(
+    unauthenticated_client: TestClient,
+    db_session: Session,
+) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Restaurant Export Francais")
+    create_store_mapping(
+        unauthenticated_client,
+        owner_token,
+        restaurant["id"],
+        "06079c7e-a1b3-4816-b18b-35ffb89bbdce",
+    )
+    csv_text = "\n".join(
+        [
+            "Id. de la commande,Id. du flux,Nom du restaurant,Id. du restaurant,Id. du restaurant,Date de la commande,Type de restauration,Ventes (TVA incluse),Ajustements lies a des erreurs de commande hors tva,Order Error Adjustments Incl VAT,Montant total",
+            "#TEST-VAT,workflow-test-vat,Restaurant Export Francais,,06079c7e-a1b3-4816-b18b-35ffb89bbdce,01/06/2026,Livraison - Coursier du restaurant,0,-24.99,-27.49,-27.49",
+        ]
+    )
+
+    preview = preview_report(unauthenticated_client, owner_token, csv_text, "combined_report")
+
+    row = preview["rows_preview"][0]
+    assert row["normalized_data"]["row_kind"] == "transaction"
+    assert row["normalized_data"]["transaction_type"] == "order_error_adjustment"
+    assert row["normalized_data"]["amount"] == "-27.49"
+
+    result = unauthenticated_client.post(
+        f"/v1/uber/reporting/batches/{preview['batch_id']}/confirm",
+        headers=auth_headers(owner_token),
+    )
+
+    assert result.status_code == 200, result.text
+    transaction = db_session.scalar(
+        select(UberFinancialTransaction).where(UberFinancialTransaction.uber_order_id == "workflow-test-vat")
+    )
+    assert transaction is not None
+    assert transaction.amount == Decimal("-27.49")
+
+
 def test_combined_report_item_adjustment_rows_are_not_financial_transactions(
     unauthenticated_client: TestClient,
     db_session: Session,

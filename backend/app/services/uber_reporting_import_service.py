@@ -154,8 +154,12 @@ COLUMN_ALIASES["amount"] += (
 )
 
 ORDER_ERROR_ADJUSTMENT_AMOUNT_ALIASES = (
+    "order error adjustments incl vat",
+    "order error adjustments including vat",
+    "order error adjustments tva incluse",
     "ajustements lies a des erreurs de commande (tva incluse)",
     "ajustements liés à des erreurs de commande (tva incluse)",
+    "montant total",
     "ajustements lies a des erreurs de commande (hors tva)",
     "ajustements liés à des erreurs de commande (hors tva)",
 )
