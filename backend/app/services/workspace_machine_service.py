@@ -69,7 +69,7 @@ class WorkspaceMachineService:
             self.stage("appeals", lambda: self.recalculate_appeals(payload.restaurant_id)),
         ]
         if payload.sync_gmail:
-            stages.append(self.stage("gmail_sync", self.sync_gmail))
+            stages.append(self.stage("gmail_sync", lambda: self.sync_gmail(run_autopilot_after_sync=payload.run_autopilot)))
         else:
             stages.append(WorkspaceMachineStage(name="gmail_sync", status="skipped", warnings=["sync_gmail_disabled_for_run"]))
         if payload.run_autopilot:
@@ -391,7 +391,7 @@ class WorkspaceMachineService:
             warnings=result.errors,
         )
 
-    def sync_gmail(self) -> WorkspaceMachineStage:
+    def sync_gmail(self, *, run_autopilot_after_sync: bool) -> WorkspaceMachineStage:
         if not self.settings.email_provider_enabled or not self.settings.gmail_inbound_sync_enabled:
             return WorkspaceMachineStage(name="gmail_sync", status="skipped", warnings=["gmail_sync_disabled"])
         service = GmailInboundSyncService(self.provider)
@@ -403,7 +403,7 @@ class WorkspaceMachineService:
                 max_messages=self.settings.gmail_inbound_max_messages_per_sync,
                 analyze_responses=True,
                 apply_reviews=True,
-                run_autopilot_after_sync=True,
+                run_autopilot_after_sync=run_autopilot_after_sync,
             )
         except EmailProviderError as exc:
             self.db.commit()
