@@ -121,6 +121,7 @@ class WorkspaceMachineService:
                     lambda: self.hydrate_historical_order_identity(
                         payload.restaurant_id,
                         limit=MACHINE_FAST_IDENTITY_HYDRATION_LIMIT,
+                        max_import_rows_per_candidate=1,
                     ),
                 ),
             ]
@@ -132,6 +133,7 @@ class WorkspaceMachineService:
                 lambda: self.hydrate_historical_order_identity(
                     payload.restaurant_id,
                     limit=MACHINE_FULL_IDENTITY_HYDRATION_LIMIT,
+                    max_import_rows_per_candidate=5,
                 ),
             ),
         ]
@@ -209,7 +211,13 @@ class WorkspaceMachineService:
             warnings=warnings,
         )
 
-    def hydrate_historical_order_identity(self, restaurant_id: int | None, *, limit: int) -> WorkspaceMachineStage:
+    def hydrate_historical_order_identity(
+        self,
+        restaurant_id: int | None,
+        *,
+        limit: int,
+        max_import_rows_per_candidate: int,
+    ) -> WorkspaceMachineStage:
         if self.current_user.role != "owner":
             return WorkspaceMachineStage(
                 name="historical_identity_hydration",
@@ -221,6 +229,7 @@ class WorkspaceMachineService:
             self.current_user,
             restaurant_id=restaurant_id,
             limit=limit,
+            max_import_rows_per_candidate=max_import_rows_per_candidate,
         )
         sources_warning = f"sources:{','.join(result.get('sources', []))}" if result.get("sources") else None
         indexed_rows = int(result.get("indexed_import_rows_count", 0))
