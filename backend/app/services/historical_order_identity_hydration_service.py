@@ -9,8 +9,6 @@ from app.models import ClaimOrder, UberReconciliationResult, UberReportingImport
 from app.services.audit import add_audit_log
 from app.services.order_identity_resolution_service import (
     ResolvedOrderIdentity,
-    candidate_numbers_from_dispute,
-    candidate_numbers_from_payload,
     clean_candidates,
     clean_customer_name,
     identity_from_import_row,
@@ -179,9 +177,15 @@ class HistoricalOrderIdentityHydrationService:
         reconciliation_results: list[UberReconciliationResult],
     ) -> set[str]:
         values = {order.uber_order_number, order.internal_reference}
-        values.update(candidate_numbers_from_payload(order.notes))
         for dispute in order.customer_refund_disputes:
-            values.update(candidate_numbers_from_dispute(dispute))
+            values.update(
+                {
+                    dispute.uber_order_id,
+                    dispute.display_id,
+                    dispute.customer_refund_reference,
+                    dispute.financial_transaction.uber_order_id if dispute.financial_transaction else None,
+                }
+            )
         for result in reconciliation_results:
             values.update({result.uber_order_id, result.display_id})
         return clean_candidates(values)
