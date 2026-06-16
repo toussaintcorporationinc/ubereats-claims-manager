@@ -33,6 +33,8 @@ from app.services.workspace_unclassified_service import WorkspaceUnclassifiedSer
 
 MACHINE_EVIDENCE_ANALYSIS_LIMIT = 250
 MACHINE_PROOF_INTAKE_LIMIT = 250
+MACHINE_FAST_IDENTITY_HYDRATION_LIMIT = 1000
+MACHINE_FULL_IDENTITY_HYDRATION_LIMIT = 10000
 
 
 class WorkspaceMachineError(Exception):
@@ -114,16 +116,24 @@ class WorkspaceMachineService:
                     status="skipped",
                     warnings=["historical_cleanup_not_requested_for_fast_go"],
                 ),
-                WorkspaceMachineStage(
-                    name="historical_identity_hydration",
-                    status="skipped",
-                    warnings=["historical_cleanup_not_requested_for_fast_go"],
+                self.stage(
+                    "historical_identity_hydration",
+                    lambda: self.hydrate_historical_order_identity(
+                        payload.restaurant_id,
+                        limit=MACHINE_FAST_IDENTITY_HYDRATION_LIMIT,
+                    ),
                 ),
             ]
         return [
             self.stage("historical_reclassification", lambda: self.reclassify_historical_restaurants(payload.restaurant_id)),
             self.stage("historical_import_repair", lambda: self.repair_historical_import_rows(payload.restaurant_id)),
-            self.stage("historical_identity_hydration", lambda: self.hydrate_historical_order_identity(payload.restaurant_id)),
+            self.stage(
+                "historical_identity_hydration",
+                lambda: self.hydrate_historical_order_identity(
+                    payload.restaurant_id,
+                    limit=MACHINE_FULL_IDENTITY_HYDRATION_LIMIT,
+                ),
+            ),
         ]
 
     def stage(self, name: str, callback: Callable[[], WorkspaceMachineStage]) -> WorkspaceMachineStage:
@@ -199,7 +209,7 @@ class WorkspaceMachineService:
             warnings=warnings,
         )
 
-    def hydrate_historical_order_identity(self, restaurant_id: int | None) -> WorkspaceMachineStage:
+    def hydrate_historical_order_identity(self, restaurant_id: int | None, *, limit: int) -> WorkspaceMachineStage:
         if self.current_user.role != "owner":
             return WorkspaceMachineStage(
                 name="historical_identity_hydration",
@@ -210,15 +220,19 @@ class WorkspaceMachineService:
             self.db,
             self.current_user,
             restaurant_id=restaurant_id,
-            limit=10000,
+            limit=limit,
         )
+        sources_warning = f"sources:{','.join(result.get('sources', []))}" if result.get("sources") else None
+        indexed_rows = int(result.get("indexed_import_rows_count", 0))
+        bulk_matches = int(result.get("bulk_import_matches_count", 0))
+        warnings = [warning for warning in (sources_warning, f"bulk_import_matches:{bulk_matches}" if bulk_matches else None) if warning]
         return WorkspaceMachineStage(
             name="historical_identity_hydration",
             status="completed",
             processed_count=int(result.get("scanned_count", 0)),
             created_count=int(result.get("updated_orders_count", 0)),
             skipped_count=int(result.get("skipped_count", 0)),
-            warnings=[f"sources:{','.join(result.get('sources', []))}"] if result.get("sources") else [],
+            warnings=[*warnings, f"indexed_import_rows:{indexed_rows}"] if indexed_rows else warnings,
         )
 
     def create_customer_refund_claim_orders(self, restaurant_id: int | None) -> WorkspaceMachineStage:
