@@ -2,7 +2,7 @@ from collections.abc import Generator
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -26,6 +26,7 @@ from app.models.domain import utc_now
 from app.routes.email import get_gmail_provider
 from app.services.email_provider import EmailConnectionStatus, EmailProviderError, EmailSendResult, InboundEmailPayload
 from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncService
+from app.services.gmail_inbound_sync_service import GmailInboundSyncResult, GmailInboundSyncService
 
 
 class FakeInboundGmailProvider:
@@ -458,6 +459,48 @@ def test_sync_truncates_long_gmail_subject(
     assert inbound_message.subject is not None
     assert len(inbound_message.subject) == 255
     assert inbound_message.body_text == "Nous revenons vers vous."
+
+
+def test_reprocess_unreviewed_messages_respects_max_messages(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    account = get_active_account(db_session, owner.id)
+    assert account is not None
+    for index in range(3):
+        db_session.add(
+            InboundEmailMessage(
+                email_account_id=account.id,
+                provider="gmail",
+                provider_message_id=f"msg-existing-{index}",
+                from_email="support@uber.com",
+                subject=f"Réponse Uber {index}",
+                body_text="Nous revenons vers vous.",
+                match_status="unlinked",
+                match_reason="no_match",
+                review_status="unreviewed",
+                received_at=utc_now(),
+            )
+        )
+    db_session.commit()
+
+    result = GmailInboundSyncResult(status="success")
+    GmailInboundSyncService(fake_gmail_provider).reprocess_unreviewed_messages(
+        db_session,
+        owner,
+        account,
+        result,
+        apply_reviews=False,
+        max_messages=2,
+        exclude_message_ids=set(),
+    )
+
+    assert result.manual_review_messages == 2
+    assert db_session.scalar(select(func.count(GmailResponseAnalysis.id))) == 2
 
 
 def test_message_with_known_thread_id_is_linked_and_audited(

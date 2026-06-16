@@ -293,7 +293,7 @@ class GmailInboundSyncService:
                 InboundEmailMessage.match_status.in_(["linked", "unlinked"]),
             )
             .order_by(InboundEmailMessage.received_at.desc().nullslast(), InboundEmailMessage.id.desc())
-            .limit(max(max_messages, MAX_EXISTING_REPROCESS_MESSAGES))
+            .limit(max(0, min(max_messages, MAX_EXISTING_REPROCESS_MESSAGES)))
         ).all()
         for message in messages:
             if message.id in exclude_message_ids:
