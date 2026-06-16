@@ -26,6 +26,7 @@ RESPONSE_UPDATABLE_ORDER_STATUSES = {"sent", "waiting_uber_response"}
 MAX_BODY_TEXT_LENGTH = 20000
 ACTIONABLE_NEGATIVE_REVIEW_TYPES = {"refused"}
 MAX_EXISTING_REPROCESS_MESSAGES = 1000
+OrderIdentifierIndex = list[tuple[ClaimOrder, list[str]]]
 
 
 @dataclass
@@ -282,6 +283,7 @@ class GmailInboundSyncService:
         max_messages: int,
         exclude_message_ids: set[int],
     ) -> None:
+        order_identifier_index = self.build_order_identifier_index(db, user)
         messages = db.scalars(
             select(InboundEmailMessage)
             .where(
@@ -296,7 +298,13 @@ class GmailInboundSyncService:
             if message.id in exclude_message_ids:
                 continue
             if message.match_status == "unlinked":
-                match = self.match_message(db, user, account, inbound_payload_from_message(message))
+                match = self.match_message(
+                    db,
+                    user,
+                    account,
+                    inbound_payload_from_message(message),
+                    order_identifier_index=order_identifier_index,
+                )
                 if match.order is not None and match.match_status == "linked":
                     self.record_linked_message(db, user, message, match.order, match_reason=match.match_reason)
                     result.linked_messages += 1
@@ -396,6 +404,8 @@ class GmailInboundSyncService:
         user: User,
         account: EmailAccount,
         payload: InboundEmailPayload,
+        *,
+        order_identifier_index: OrderIdentifierIndex | None = None,
     ) -> MatchResult:
         if same_email(payload.from_email, account.email_address):
             return MatchResult(None, "ignored", "ignored_sender")
@@ -407,11 +417,21 @@ class GmailInboundSyncService:
         if not sender_matches_filter(payload.from_email, get_settings().gmail_support_sender_filter):
             return MatchResult(None, "ignored", "ignored_sender")
 
-        order_from_subject = self.match_by_order_number(db, user, payload.subject or "")
+        order_from_subject = self.match_by_order_number(
+            db,
+            user,
+            payload.subject or "",
+            order_identifier_index=order_identifier_index,
+        )
         if order_from_subject is not None:
             return MatchResult(order_from_subject, "linked", "subject_match")
 
-        order_from_body = self.match_by_order_number(db, user, payload.body_text or "")
+        order_from_body = self.match_by_order_number(
+            db,
+            user,
+            payload.body_text or "",
+            order_identifier_index=order_identifier_index,
+        )
         if order_from_body is not None:
             return MatchResult(order_from_body, "linked", "order_number_match")
 
@@ -441,18 +461,34 @@ class GmailInboundSyncService:
             return provider_draft.email_draft.order
         return None
 
-    def match_by_order_number(self, db: Session, user: User, text: str) -> ClaimOrder | None:
-        if not text:
-            return None
+    def build_order_identifier_index(self, db: Session, user: User) -> OrderIdentifierIndex:
         query = select(ClaimOrder).options(selectinload(ClaimOrder.customer_refund_disputes))
         accessible_restaurant_ids = get_accessible_restaurant_ids(db, user)
         if accessible_restaurant_ids is not None:
             if not accessible_restaurant_ids:
-                return None
+                return []
             query = query.where(ClaimOrder.restaurant_id.in_(accessible_restaurant_ids))
+        return [
+            (order, candidates)
+            for order in db.scalars(query).all()
+            if (candidates := order_identifier_candidates(order))
+        ]
 
-        for order in db.scalars(query).all():
-            for candidate in order_identifier_candidates(order):
+    def match_by_order_number(
+        self,
+        db: Session,
+        user: User,
+        text: str,
+        *,
+        order_identifier_index: OrderIdentifierIndex | None = None,
+    ) -> ClaimOrder | None:
+        if not text:
+            return None
+        index = order_identifier_index
+        if index is None:
+            index = self.build_order_identifier_index(db, user)
+        for order, candidates in index:
+            for candidate in candidates:
                 if text_contains_identifier(text, candidate):
                     return order
         return None
