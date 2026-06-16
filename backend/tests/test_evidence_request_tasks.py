@@ -444,6 +444,7 @@ def test_historical_identity_hydration_updates_existing_claim_order(
         )
     )
     db_session.commit()
+    recalculate(configured_client)
     owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
     assert owner is not None
 
@@ -452,10 +453,100 @@ def test_historical_identity_hydration_updates_existing_claim_order(
     order = db_session.get(ClaimOrder, created["id"])
     assert order is not None
     assert result["updated_orders_count"] == 1
+    assert result["bulk_import_matches_count"] == 1
     assert order.customer_name == "Client Backfill"
     assert order.order_date == date(2026, 6, 16)
+    assert order.internal_reference == "FRT-422"
+    list_response = configured_client.get("/v1/evidence-tasks")
+    assert list_response.status_code == 200
+    task_summary = list_response.json()["tasks"][0]
+    assert task_summary["field_customer_label"] == "Client Backfill"
+    assert task_summary["field_order_label"] == "FRT-422"
+    assert task_summary["field_date_label"] == "16/06/2026"
     db_session.flush()
     assert db_session.scalar(select(AuditLog).where(AuditLog.action == "historical_order_identity.hydrated"))
+
+
+def test_historical_identity_hydration_bulk_indexes_import_rows(
+    configured_client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = create_restaurant(configured_client, "Frit Dodo")
+    created_one = create_order(configured_client, restaurant["id"], "11111111-1111-4111-8111-111111111111", amount="43.62")
+    created_two = create_order(configured_client, restaurant["id"], "22222222-2222-4222-8222-222222222222", amount="21.81")
+    batch = UberReportingImportBatch(
+        uploaded_by_user_id=1,
+        original_filename="historical-bulk.csv",
+        report_type="orders_report",
+        file_type="csv",
+        status="partially_imported",
+        total_rows=2,
+    )
+    db_session.add(batch)
+    db_session.flush()
+    db_session.add_all(
+        [
+            UberReportingImportRow(
+                batch_id=batch.id,
+                row_number=3,
+                raw_data={
+                    "UUID du processus": "11111111-1111-4111-8111-111111111111",
+                    "Id. de la commande": "FRT-501",
+                    "Nom du client": "Client Bulk Un",
+                    "Date de la commande": "16/06/2026",
+                    "Montant total": "43,62",
+                    "Devise": "EUR",
+                },
+                normalized_data={
+                    "restaurant_id": restaurant["id"],
+                    "uber_order_id": "11111111-1111-4111-8111-111111111111",
+                    "display_id": "FRT-501",
+                },
+                status="created",
+                errors=[],
+                warnings=[],
+            ),
+            UberReportingImportRow(
+                batch_id=batch.id,
+                row_number=4,
+                raw_data={
+                    "UUID du processus": "22222222-2222-4222-8222-222222222222",
+                    "Id. de la commande": "FRT-502",
+                    "Nom du client": "Client Bulk Deux",
+                    "Date de la commande": "17/06/2026",
+                    "Montant total": "21,81",
+                    "Devise": "EUR",
+                },
+                normalized_data={
+                    "restaurant_id": restaurant["id"],
+                    "uber_order_id": "22222222-2222-4222-8222-222222222222",
+                    "display_id": "FRT-502",
+                },
+                status="created",
+                errors=[],
+                warnings=[],
+            ),
+        ]
+    )
+    db_session.commit()
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+
+    result = HistoricalOrderIdentityHydrationService().apply(db_session, owner, limit=10)
+
+    order_one = db_session.get(ClaimOrder, created_one["id"])
+    order_two = db_session.get(ClaimOrder, created_two["id"])
+    assert order_one is not None
+    assert order_two is not None
+    assert result["updated_orders_count"] == 2
+    assert result["bulk_import_matches_count"] == 2
+    assert result["indexed_import_rows_count"] == 2
+    assert order_one.customer_name == "Client Bulk Un"
+    assert order_one.order_date == date(2026, 6, 16)
+    assert order_one.internal_reference == "FRT-501"
+    assert order_two.customer_name == "Client Bulk Deux"
+    assert order_two.order_date == date(2026, 6, 17)
+    assert order_two.internal_reference == "FRT-502"
 
 
 def test_manager_non_assigned_cannot_list_other_tasks(configured_client: TestClient) -> None:

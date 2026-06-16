@@ -156,6 +156,7 @@ def resolve_identity_for_task(
     order = task.order
     identity = ResolvedOrderIdentity(
         order_number=order.uber_order_number,
+        display_id=order.internal_reference if order.internal_reference and not is_uuid_like(order.internal_reference) else None,
         customer_name=clean_customer_name(order.customer_name),
         order_date=order.order_date,
         order_time=order.order_time,
@@ -249,6 +250,7 @@ def resolve_identity_for_order(
         return resolve_identity_for_task(db, task, allow_import_fallback=allow_import_fallback)
     identity = ResolvedOrderIdentity(
         order_number=order.uber_order_number,
+        display_id=order.internal_reference if order.internal_reference and not is_uuid_like(order.internal_reference) else None,
         customer_name=clean_customer_name(order.customer_name),
         order_date=order.order_date,
         order_time=order.order_time,
@@ -256,7 +258,7 @@ def resolve_identity_for_order(
         currency=order.currency,
         source="claim_order",
     )
-    candidates = {order.uber_order_number}
+    candidates = clean_candidates({order.uber_order_number, order.internal_reference})
     snapshot = find_snapshot(db, order.restaurant_id, candidates, None)
     if snapshot is not None:
         merge_identity(identity, identity_from_snapshot(snapshot), prefer_display=True)
