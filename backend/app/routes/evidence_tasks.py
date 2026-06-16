@@ -49,6 +49,7 @@ from app.services.evidence_request_service import (
     upload_evidence_with_link,
 )
 from app.services.evidence_print_ticket_service import create_print_ticket
+from app.services.order_identity_resolution_service import resolve_identity_for_task
 
 router = APIRouter(tags=["evidence-tasks"])
 
@@ -254,21 +255,15 @@ def get_task_or_404(task_id: int, db: Session) -> EvidenceRequestTask:
 
 def build_task_summary(task: EvidenceRequestTask) -> EvidenceRequestTaskSummary:
     order = task.order
-    related_snapshot = None
-    candidate_numbers = build_candidate_order_numbers(task)
-    if not order.customer_name or not order.order_date or not order.order_time:
-        related_snapshot = find_related_snapshot(task, candidate_numbers)
-    if related_snapshot:
-        candidate_numbers = build_candidate_order_numbers(task, related_snapshot)
-    related_analysis = None
-    related_transaction_payload = None
-    if not order.customer_name or not order.order_date or not order.order_time:
-        related_analysis = find_related_analysis(task, candidate_numbers)
-        related_transaction_payload = find_related_transaction_payload(task, candidate_numbers)
-    customer_name = resolve_customer_name(task, related_snapshot, related_analysis, related_transaction_payload)
-    order_date = resolve_order_date(task, related_snapshot, related_analysis, related_transaction_payload)
-    order_time = resolve_order_time(task, related_snapshot, related_transaction_payload)
-    field_missing_info = build_field_missing_info(customer_name, order_date, order.order_amount)
+    db = object_session(task)
+    identity = resolve_identity_for_task(db, task) if db is not None else None
+    customer_name = identity.customer_name if identity else order.customer_name
+    order_date = identity.order_date if identity else order.order_date
+    order_time = identity.order_time if identity else order.order_time
+    order_label = identity.best_order_label if identity and identity.best_order_label else order.uber_order_number
+    amount = identity.order_amount if identity and identity.order_amount is not None else order.order_amount
+    currency = (identity.currency or order.currency) if identity else order.currency
+    field_missing_info = build_field_missing_info(customer_name, order_date, amount)
     return EvidenceRequestTaskSummary(
         id=task.id,
         order_id=task.order_id,
@@ -278,8 +273,8 @@ def build_task_summary(task: EvidenceRequestTask) -> EvidenceRequestTaskSummary:
         customer_name=customer_name,
         order_date=order_date,
         order_time=order_time,
-        order_amount=order.order_amount,
-        currency=order.currency,
+        order_amount=amount,
+        currency=currency,
         claim_status=order.status,
         task_type=task.task_type,
         required_evidence_type=task.required_evidence_type,
@@ -295,13 +290,13 @@ def build_task_summary(task: EvidenceRequestTask) -> EvidenceRequestTaskSummary:
         field_context_label=build_field_context_label(task),
         field_restaurant_label=order.restaurant.name,
         field_customer_label=customer_name or "Nom client non trouve dans les imports/preuves",
-        field_order_label=order.uber_order_number,
+        field_order_label=order_label,
         field_date_label=format_field_date(order_date, order_time),
-        field_amount_label=format_field_amount(order.order_amount, order.currency),
+        field_amount_label=format_field_amount(amount, currency),
         field_search_hint=build_field_search_hint(
             restaurant_name=order.restaurant.name,
             customer_name=customer_name,
-            order_number=order.uber_order_number,
+            order_number=order_label,
             order_date=order_date,
             order_time=order_time,
         ),
