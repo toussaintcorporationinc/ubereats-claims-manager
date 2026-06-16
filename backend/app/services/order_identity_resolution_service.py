@@ -32,6 +32,8 @@ UUID_SEARCH_PATTERN = re.compile(
     r"\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b",
     re.IGNORECASE,
 )
+PAYLOAD_FALLBACK_SCAN_LIMIT = 250
+IMPORT_ROW_IDENTITY_SCAN_LIMIT = 1000
 
 ORDER_ID_KEYS = {
     "uber_order_id",
@@ -290,7 +292,7 @@ def find_snapshot(
         select(UberOrderSnapshot)
         .where(UberOrderSnapshot.restaurant_id == restaurant_id)
         .order_by(UberOrderSnapshot.id.desc())
-        .limit(2500)
+        .limit(PAYLOAD_FALLBACK_SCAN_LIMIT)
     ).all()
     return first_payload_match(rows, candidates)
 
@@ -321,7 +323,7 @@ def find_transaction(
         select(UberFinancialTransaction)
         .where(UberFinancialTransaction.restaurant_id == restaurant_id)
         .order_by(UberFinancialTransaction.id.desc())
-        .limit(2500)
+        .limit(PAYLOAD_FALLBACK_SCAN_LIMIT)
     ).all()
     return first_payload_match(rows, candidates)
 
@@ -387,7 +389,7 @@ def find_import_row_identity(
         .join(UberReportingImportBatch, UberReportingImportRow.batch_id == UberReportingImportBatch.id)
         .where(UberReportingImportRow.status.in_(("created", "valid", "warning", "duplicate", "skipped", "invalid")))
         .order_by(UberReportingImportRow.id.desc())
-        .limit(20000)
+        .limit(IMPORT_ROW_IDENTITY_SCAN_LIMIT)
     ).all()
     best: ResolvedOrderIdentity | None = None
     best_score = -1

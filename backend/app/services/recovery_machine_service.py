@@ -56,9 +56,11 @@ class RecoveryMachineService:
         self.current_user = current_user
 
     def summary(self) -> RecoveryMachineResponse:
-        cockpit = RecoveryCockpitService(self.db, self.current_user, RecoveryFilters())
-        cases = cockpit.cases(limit=None, offset=0)
-        actions = cockpit.actions(limit=None, offset=0)
+        # The homepage must stay responsive even with a large import history.
+        # Detailed exports/pages still use the full cockpit service.
+        cockpit = RecoveryCockpitService(self.db, self.current_user, RecoveryFilters(), max_source_rows=750)
+        cases = cockpit.cases(limit=750, offset=0)
+        actions = cockpit.actions(limit=750, offset=0)
         rails = [
             self.build_rail(
                 key="refunds",

@@ -68,10 +68,18 @@ class RecoveryExportLimitError(Exception):
 
 
 class RecoveryCockpitService:
-    def __init__(self, db: Session, user: User, filters: RecoveryFilters | None = None) -> None:
+    def __init__(
+        self,
+        db: Session,
+        user: User,
+        filters: RecoveryFilters | None = None,
+        *,
+        max_source_rows: int | None = None,
+    ) -> None:
         self.db = db
         self.user = user
         self.filters = filters or RecoveryFilters()
+        self.max_source_rows = max_source_rows
 
     def summary(self) -> RecoverySummary:
         cases = self.cases(limit=None, offset=0)
@@ -125,6 +133,7 @@ class RecoveryCockpitService:
             .order_by(ClaimOrder.created_at.desc(), ClaimOrder.id.desc())
         )
         statement = self.apply_restaurant_filter(statement, ClaimOrder)
+        statement = self.apply_source_limit(statement)
         orders = self.db.scalars(statement).all()
         cases = []
         for order in orders:
@@ -173,6 +182,7 @@ class RecoveryCockpitService:
             UberReconciliationResult.created_at.desc(), UberReconciliationResult.id.desc()
         )
         statement = self.apply_restaurant_filter(statement, UberReconciliationResult)
+        statement = self.apply_source_limit(statement)
         results = self.db.scalars(statement).all()
         cases = []
         for result in results:
@@ -232,6 +242,7 @@ class RecoveryCockpitService:
             UberCustomerRefundDispute.created_at.desc(), UberCustomerRefundDispute.id.desc()
         )
         statement = self.apply_restaurant_filter(statement, UberCustomerRefundDispute)
+        statement = self.apply_source_limit(statement)
         disputes = self.db.scalars(statement).all()
         cases = []
         for dispute in disputes:
@@ -279,6 +290,7 @@ class RecoveryCockpitService:
     def evidence_actions(self) -> list[RecoveryAction]:
         statement = select(EvidenceRequestTask).where(EvidenceRequestTask.status.in_(("pending", "uploaded")))
         statement = self.apply_restaurant_filter(statement, EvidenceRequestTask)
+        statement = self.apply_source_limit(statement)
         tasks = self.db.scalars(statement).all()
         return [
             RecoveryAction(
@@ -298,6 +310,7 @@ class RecoveryCockpitService:
     def customer_refund_actions(self) -> list[RecoveryAction]:
         statement = select(UberCustomerRefundDispute).where(UberCustomerRefundDispute.status.not_in(("ignored", "refused", "payment_confirmed")))
         statement = self.apply_restaurant_filter(statement, UberCustomerRefundDispute)
+        statement = self.apply_source_limit(statement)
         disputes = self.db.scalars(statement).all()
         actions: list[RecoveryAction] = []
         for dispute in disputes:
@@ -324,6 +337,7 @@ class RecoveryCockpitService:
             .where(FollowUpTask.status.in_(("pending", "draft_created", "provider_draft_created")))
         )
         statement = self.apply_restaurant_filter(statement, ClaimOrder)
+        statement = self.apply_source_limit(statement)
         tasks = self.db.scalars(statement).all()
         return [
             RecoveryAction(
@@ -343,6 +357,7 @@ class RecoveryCockpitService:
     def appeal_actions(self) -> list[RecoveryAction]:
         statement = select(AppealWorkflow).where(AppealWorkflow.status.in_(ACTIVE_APPEAL_STATUSES))
         statement = self.apply_restaurant_filter(statement, AppealWorkflow)
+        statement = self.apply_source_limit(statement)
         workflows = self.db.scalars(statement).all()
         actions: list[RecoveryAction] = []
         for workflow in workflows:
@@ -374,6 +389,11 @@ class RecoveryCockpitService:
                 return statement.where(restaurant_column == -1)
             return statement.where(restaurant_column.in_(accessible_ids))
         return statement
+
+    def apply_source_limit(self, statement):
+        if self.max_source_rows is None:
+            return statement
+        return statement.limit(self.max_source_rows)
 
     def case_matches_filters(self, case: RecoveryCase) -> bool:
         if not self.filters.include_ignored and case.recovery_stage == "ignored":
