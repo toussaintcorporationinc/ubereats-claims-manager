@@ -147,7 +147,12 @@ class ResolvedOrderIdentity:
         return self.order_number or self.display_id
 
 
-def resolve_identity_for_task(db: Session, task: EvidenceRequestTask) -> ResolvedOrderIdentity:
+def resolve_identity_for_task(
+    db: Session,
+    task: EvidenceRequestTask,
+    *,
+    allow_import_fallback: bool = True,
+) -> ResolvedOrderIdentity:
     order = task.order
     identity = ResolvedOrderIdentity(
         order_number=order.uber_order_number,
@@ -193,7 +198,7 @@ def resolve_identity_for_task(db: Session, task: EvidenceRequestTask) -> Resolve
     if linked_row_identity is not None:
         merge_identity(identity, linked_row_identity, prefer_display=True)
 
-    if identity_score(identity) < 5:
+    if allow_import_fallback and identity_score(identity) < 5:
         row_identity = find_import_row_identity(db, order.restaurant_id, candidates)
         if row_identity is not None:
             merge_identity(identity, row_identity, prefer_display=True)
@@ -228,7 +233,12 @@ def hydrate_order_identity_from_sources(
     return changed
 
 
-def resolve_identity_for_order(db: Session, order: ClaimOrder) -> ResolvedOrderIdentity:
+def resolve_identity_for_order(
+    db: Session,
+    order: ClaimOrder,
+    *,
+    allow_import_fallback: bool = True,
+) -> ResolvedOrderIdentity:
     task = db.scalar(
         select(EvidenceRequestTask)
         .where(EvidenceRequestTask.order_id == order.id)
@@ -236,7 +246,7 @@ def resolve_identity_for_order(db: Session, order: ClaimOrder) -> ResolvedOrderI
         .limit(1)
     )
     if task is not None:
-        return resolve_identity_for_task(db, task)
+        return resolve_identity_for_task(db, task, allow_import_fallback=allow_import_fallback)
     identity = ResolvedOrderIdentity(
         order_number=order.uber_order_number,
         customer_name=clean_customer_name(order.customer_name),
@@ -256,7 +266,7 @@ def resolve_identity_for_order(db: Session, order: ClaimOrder) -> ResolvedOrderI
     linked_row_identity = find_linked_import_row_identity(db, snapshot=snapshot, transaction=transaction)
     if linked_row_identity is not None:
         merge_identity(identity, linked_row_identity, prefer_display=True)
-    if identity_score(identity) < 5:
+    if allow_import_fallback and identity_score(identity) < 5:
         row_identity = find_import_row_identity(db, order.restaurant_id, candidates)
         if row_identity is not None:
             merge_identity(identity, row_identity, prefer_display=True)

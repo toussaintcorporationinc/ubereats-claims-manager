@@ -115,7 +115,11 @@ def list_tasks(
         statement = statement.where(EvidenceRequestTask.assigned_to_user_id == current_user.id)
 
     tasks = db.scalars(statement.offset(offset).limit(limit)).all()
-    return EvidenceRequestTasksResponse(tasks=[build_task_summary(task) for task in tasks], limit=limit, offset=offset)
+    return EvidenceRequestTasksResponse(
+        tasks=[build_task_summary(task, allow_import_fallback=False) for task in tasks],
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/v1/evidence-tasks/{task_id}", response_model=EvidenceRequestTaskRead)
@@ -266,10 +270,19 @@ def get_task_or_404(task_id: int, db: Session) -> EvidenceRequestTask:
     return task
 
 
-def build_task_summary(task: EvidenceRequestTask, *, deep_identity: bool = True) -> EvidenceRequestTaskSummary:
+def build_task_summary(
+    task: EvidenceRequestTask,
+    *,
+    deep_identity: bool = True,
+    allow_import_fallback: bool = True,
+) -> EvidenceRequestTaskSummary:
     order = task.order
     db = object_session(task)
-    identity = resolve_identity_for_task(db, task) if deep_identity and db is not None else None
+    identity = (
+        resolve_identity_for_task(db, task, allow_import_fallback=allow_import_fallback)
+        if deep_identity and db is not None
+        else None
+    )
     customer_name = identity.customer_name if identity else order.customer_name
     order_date = identity.order_date if identity else order.order_date
     order_time = identity.order_time if identity else order.order_time

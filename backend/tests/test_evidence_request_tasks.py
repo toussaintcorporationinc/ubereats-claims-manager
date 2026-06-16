@@ -349,6 +349,19 @@ def test_list_tasks_resolves_field_context_from_historical_uber_import_row(
     technical_order_id = "9f862f78-ee39-4be4-b5d7-6ef3b78e8613"
     create_order(configured_client, restaurant["id"], technical_order_id, amount="43.62")
     recalculate(configured_client)
+    transaction = UberFinancialTransaction(
+        restaurant_id=restaurant["id"],
+        uber_store_id="store-frit-dodo",
+        uber_order_id=technical_order_id,
+        transaction_type="refund",
+        amount=Decimal("-43.62"),
+        currency="EUR",
+        transaction_date=date(2026, 6, 15),
+        raw_payload_json={"uber_order_id": technical_order_id},
+        imported_from="manager_export",
+    )
+    db_session.add(transaction)
+    db_session.flush()
     batch = UberReportingImportBatch(
         uploaded_by_user_id=1,
         original_filename="download.csv",
@@ -379,6 +392,7 @@ def test_list_tasks_resolves_field_context_from_historical_uber_import_row(
             status="created",
             errors=[],
             warnings=[],
+            created_transaction_id=transaction.id,
         )
     )
     db_session.commit()
