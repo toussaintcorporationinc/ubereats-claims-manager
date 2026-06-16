@@ -152,6 +152,7 @@ def resolve_identity_for_task(
     task: EvidenceRequestTask,
     *,
     allow_import_fallback: bool = True,
+    allow_payload_fallback: bool = True,
 ) -> ResolvedOrderIdentity:
     order = task.order
     identity = ResolvedOrderIdentity(
@@ -180,12 +181,24 @@ def resolve_identity_for_task(
         merge_identity(identity, identity_from_reconciliation_result(result), prefer_display=True)
         candidates.update(value for value in (result.uber_order_id, result.display_id) if value)
 
-    snapshot = find_snapshot(db, order.restaurant_id, candidates, dispute.uber_store_id if dispute else None)
+    snapshot = find_snapshot(
+        db,
+        order.restaurant_id,
+        candidates,
+        dispute.uber_store_id if dispute else None,
+        allow_payload_fallback=allow_payload_fallback,
+    )
     if snapshot is not None:
         merge_identity(identity, identity_from_snapshot(snapshot), prefer_display=True)
         candidates.update(value for value in (snapshot.uber_order_id, snapshot.display_id) if value)
 
-    transaction = find_transaction(db, order.restaurant_id, candidates, dispute)
+    transaction = find_transaction(
+        db,
+        order.restaurant_id,
+        candidates,
+        dispute,
+        allow_payload_fallback=allow_payload_fallback,
+    )
     if transaction is not None:
         merge_identity(identity, identity_from_transaction(transaction), prefer_display=True)
         candidates.update(candidate_numbers_from_payload(transaction.raw_payload_json))
@@ -239,6 +252,7 @@ def resolve_identity_for_order(
     order: ClaimOrder,
     *,
     allow_import_fallback: bool = True,
+    allow_payload_fallback: bool = True,
 ) -> ResolvedOrderIdentity:
     task = db.scalar(
         select(EvidenceRequestTask)
@@ -247,7 +261,12 @@ def resolve_identity_for_order(
         .limit(1)
     )
     if task is not None:
-        return resolve_identity_for_task(db, task, allow_import_fallback=allow_import_fallback)
+        return resolve_identity_for_task(
+            db,
+            task,
+            allow_import_fallback=allow_import_fallback,
+            allow_payload_fallback=allow_payload_fallback,
+        )
     identity = ResolvedOrderIdentity(
         order_number=order.uber_order_number,
         display_id=order.internal_reference if order.internal_reference and not is_uuid_like(order.internal_reference) else None,
@@ -259,10 +278,10 @@ def resolve_identity_for_order(
         source="claim_order",
     )
     candidates = clean_candidates({order.uber_order_number, order.internal_reference})
-    snapshot = find_snapshot(db, order.restaurant_id, candidates, None)
+    snapshot = find_snapshot(db, order.restaurant_id, candidates, None, allow_payload_fallback=allow_payload_fallback)
     if snapshot is not None:
         merge_identity(identity, identity_from_snapshot(snapshot), prefer_display=True)
-    transaction = find_transaction(db, order.restaurant_id, candidates, None)
+    transaction = find_transaction(db, order.restaurant_id, candidates, None, allow_payload_fallback=allow_payload_fallback)
     if transaction is not None:
         merge_identity(identity, identity_from_transaction(transaction), prefer_display=True)
     linked_row_identity = find_linked_import_row_identity(db, snapshot=snapshot, transaction=transaction)
@@ -304,6 +323,8 @@ def find_snapshot(
     restaurant_id: int,
     candidate_numbers: set[str],
     uber_store_id: str | None,
+    *,
+    allow_payload_fallback: bool = True,
 ) -> UberOrderSnapshot | None:
     candidates = clean_candidates(candidate_numbers)
     if not candidates:
@@ -317,6 +338,8 @@ def find_snapshot(
     snapshot = db.scalar(statement.order_by(UberOrderSnapshot.id.desc()).limit(1))
     if snapshot is not None:
         return snapshot
+    if not allow_payload_fallback:
+        return None
     rows = db.scalars(
         select(UberOrderSnapshot)
         .where(UberOrderSnapshot.restaurant_id == restaurant_id)
@@ -331,6 +354,8 @@ def find_transaction(
     restaurant_id: int,
     candidate_numbers: set[str],
     dispute: UberCustomerRefundDispute | None,
+    *,
+    allow_payload_fallback: bool = True,
 ) -> UberFinancialTransaction | None:
     candidates = clean_candidates(candidate_numbers)
     conditions = []
@@ -348,6 +373,8 @@ def find_transaction(
     )
     if transaction is not None:
         return transaction
+    if not allow_payload_fallback:
+        return None
     rows = db.scalars(
         select(UberFinancialTransaction)
         .where(UberFinancialTransaction.restaurant_id == restaurant_id)

@@ -267,7 +267,9 @@ def build_workflow_detail(db: Session, workflow: AppealWorkflow) -> AppealDetail
         attempts=[AppealAttemptRead.model_validate(attempt) for attempt in attempts],
         refusal_analyses=[RefusalAnalysisRead.model_validate(analysis) for analysis in analyses],
         evidence_tasks=[
-            EvidenceRequestTaskSummary.model_validate(build_task_summary(task))
+            EvidenceRequestTaskSummary.model_validate(
+                build_task_summary(task, allow_import_fallback=False, allow_payload_fallback=False)
+            )
             for task in evidence_tasks_for_workflow(db, workflow)
         ],
         email_history=[EmailDraftRead.model_validate(draft) for draft in email_history_for_workflow(db, workflow)],
