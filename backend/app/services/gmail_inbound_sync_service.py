@@ -490,6 +490,7 @@ class GmailInboundSyncService:
             index = self.build_order_identifier_index(db, user)
         normalized_text = normalize_identifier(text)
         compact_text = normalize_identifier_with_boundaries(text)
+        identifier_tokens = {normalize_identifier(token) for token in compact_text.split() if token}
         for order, candidates in index:
             for candidate in candidates:
                 if text_contains_identifier(
@@ -497,6 +498,7 @@ class GmailInboundSyncService:
                     candidate,
                     normalized_text=normalized_text,
                     compact_text=compact_text,
+                    identifier_tokens=identifier_tokens,
                 ):
                     return order
         return None
@@ -593,6 +595,7 @@ def text_contains_identifier(
     *,
     normalized_text: str | None = None,
     compact_text: str | None = None,
+    identifier_tokens: set[str] | None = None,
 ) -> bool:
     cleaned = candidate.strip()
     if not cleaned:
@@ -602,6 +605,8 @@ def text_contains_identifier(
         return False
     if len(normalized_candidate) >= 12:
         return normalized_candidate in (normalized_text if normalized_text is not None else normalize_identifier(text))
+    if identifier_tokens is not None:
+        return normalized_candidate in identifier_tokens
     escaped = re.escape(cleaned.lstrip("#"))
     if not escaped:
         return False
