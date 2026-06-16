@@ -8,8 +8,6 @@ from sqlalchemy.orm import Session, selectinload
 from app.models import ClaimOrder, UberReconciliationResult, UberReportingImportRow, User
 from app.services.audit import add_audit_log
 from app.services.order_identity_resolution_service import (
-    DISPLAY_ID_KEYS,
-    ORDER_ID_KEYS,
     ResolvedOrderIdentity,
     candidate_numbers_from_dispute,
     candidate_numbers_from_payload,
@@ -21,12 +19,31 @@ from app.services.order_identity_resolution_service import (
     is_uuid_like,
     merge_identity,
     normalize_identifier,
-    payload_string_value,
+    normalize_payload_key,
     resolve_identity_for_order,
 )
 
 IMPORT_ROW_HYDRATION_SCAN_LIMIT = 50000
 IMPORT_ROW_HYDRATION_STATUSES = ("created", "valid", "warning", "duplicate", "skipped", "invalid")
+IMPORT_ROW_DIRECT_KEYS = (
+    "uber_order_id",
+    "display_id",
+    "order_id",
+    "order_number",
+    "numero_commande",
+    "id_de_la_commande",
+)
+IMPORT_ROW_RAW_IDENTIFIER_KEYS = {
+    "id_de_la_commande",
+    "id_du_flux",
+    "uuid_du_processus",
+    "uuid_de_la_commande",
+    "numero_commande",
+    "numero_de_commande",
+    "order_uuid",
+    "order_id",
+    "order_number",
+}
 
 
 @dataclass(slots=True)
@@ -180,13 +197,12 @@ class HistoricalOrderIdentityHydrationService:
         normalized_wanted = {normalize_identifier(candidate) for candidate in wanted_candidates if candidate}
         if not normalized_wanted:
             return {}
-        statement = (
-            select(UberReportingImportRow)
-            .where(UberReportingImportRow.status.in_(IMPORT_ROW_HYDRATION_STATUSES))
-            .order_by(UberReportingImportRow.id.desc())
-            .limit(import_row_scan_limit)
+        rows = self.load_candidate_import_rows(
+            db,
+            wanted_candidates=wanted_candidates,
+            restaurant_id=restaurant_id,
+            import_row_scan_limit=import_row_scan_limit,
         )
-        rows = db.scalars(statement).all()
         index: dict[str, list[IndexedImportRowIdentity]] = {}
         for row in rows:
             row_restaurant_id = self.import_row_restaurant_id(row)
@@ -214,6 +230,54 @@ class HistoricalOrderIdentityHydrationService:
                 index.setdefault(key, []).append(indexed)
         return index
 
+    def load_candidate_import_rows(
+        self,
+        db: Session,
+        *,
+        wanted_candidates: set[str],
+        restaurant_id: int | None,
+        import_row_scan_limit: int,
+    ) -> list[UberReportingImportRow]:
+        bind = db.get_bind()
+        candidate_values = self.candidate_value_variants(wanted_candidates)
+        if bind is not None and bind.dialect.name != "sqlite" and candidate_values:
+            direct_conditions = [
+                UberReportingImportRow.normalized_data[key].as_string().in_(candidate_values)
+                for key in IMPORT_ROW_DIRECT_KEYS
+            ]
+            rows = list(
+                db.scalars(
+                    select(UberReportingImportRow)
+                    .where(
+                        UberReportingImportRow.status.in_(IMPORT_ROW_HYDRATION_STATUSES),
+                        or_(*direct_conditions),
+                    )
+                    .order_by(UberReportingImportRow.id.desc())
+                    .limit(import_row_scan_limit)
+                ).all()
+            )
+            if rows:
+                return rows
+        statement = (
+            select(UberReportingImportRow)
+            .where(UberReportingImportRow.status.in_(IMPORT_ROW_HYDRATION_STATUSES))
+            .order_by(UberReportingImportRow.id.desc())
+            .limit(import_row_scan_limit)
+        )
+        return list(db.scalars(statement).all())
+
+    def candidate_value_variants(self, candidates: set[str]) -> list[str]:
+        values: set[str] = set()
+        for candidate in candidates:
+            cleaned = str(candidate or "").strip()
+            if not cleaned:
+                continue
+            values.add(cleaned)
+            values.add(cleaned.lstrip("#"))
+            if not cleaned.startswith("#"):
+                values.add(f"#{cleaned}")
+        return list(values)
+
     def import_row_restaurant_id(self, row: UberReportingImportRow) -> int | None:
         value = (row.normalized_data or {}).get("restaurant_id")
         return int(value) if str(value or "").isdigit() else None
@@ -232,8 +296,12 @@ class HistoricalOrderIdentityHydrationService:
             }
         )
         for payload in (normalized_data, row.raw_data or {}):
-            values.add(payload_string_value(payload, ORDER_ID_KEYS))
-            values.add(payload_string_value(payload, DISPLAY_ID_KEYS))
+            if not isinstance(payload, dict):
+                continue
+            for key, value in payload.items():
+                if normalize_payload_key(str(key)) in IMPORT_ROW_RAW_IDENTIFIER_KEYS:
+                    if value is not None:
+                        values.add(str(value))
         return clean_candidates(values)
 
     def identity_from_bulk_import_index(
