@@ -102,7 +102,12 @@ class HistoricalOrderIdentityHydrationService:
         sources: set[str] = set()
 
         for order in orders:
-            identity = resolve_identity_for_order(db, order, allow_import_fallback=False)
+            identity = resolve_identity_for_order(
+                db,
+                order,
+                allow_import_fallback=False,
+                allow_payload_fallback=False,
+            )
             reconciliation_results = reconciliation_results_by_order.get(order.id, [])
             for result in reconciliation_results:
                 merge_identity(identity, identity_from_reconciliation_result(result), prefer_display=True)
