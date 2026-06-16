@@ -193,9 +193,10 @@ def resolve_identity_for_task(db: Session, task: EvidenceRequestTask) -> Resolve
     if linked_row_identity is not None:
         merge_identity(identity, linked_row_identity, prefer_display=True)
 
-    row_identity = find_import_row_identity(db, order.restaurant_id, candidates)
-    if row_identity is not None:
-        merge_identity(identity, row_identity, prefer_display=True)
+    if identity_score(identity) < 5:
+        row_identity = find_import_row_identity(db, order.restaurant_id, candidates)
+        if row_identity is not None:
+            merge_identity(identity, row_identity, prefer_display=True)
 
     return identity
 
@@ -255,9 +256,10 @@ def resolve_identity_for_order(db: Session, order: ClaimOrder) -> ResolvedOrderI
     linked_row_identity = find_linked_import_row_identity(db, snapshot=snapshot, transaction=transaction)
     if linked_row_identity is not None:
         merge_identity(identity, linked_row_identity, prefer_display=True)
-    row_identity = find_import_row_identity(db, order.restaurant_id, candidates)
-    if row_identity is not None:
-        merge_identity(identity, row_identity, prefer_display=True)
+    if identity_score(identity) < 5:
+        row_identity = find_import_row_identity(db, order.restaurant_id, candidates)
+        if row_identity is not None:
+            merge_identity(identity, row_identity, prefer_display=True)
     return identity
 
 
