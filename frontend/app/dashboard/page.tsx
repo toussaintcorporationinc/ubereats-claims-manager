@@ -11,6 +11,7 @@ import RecoveryActionCard from "@/components/RecoveryActionCard";
 import StatCard from "@/components/StatCard";
 import StatusBadge from "@/components/StatusBadge";
 import { useAuth } from "@/lib/auth";
+import { buildMachineSmartImportDecisions } from "@/lib/smartImportMachine";
 import { notifyWorkspaceMachineFinished, prepareFinishNotification } from "@/lib/tennetNotifications";
 import {
   api,
@@ -19,7 +20,6 @@ import {
   type RecoveryMachineRailKey,
   type RecoveryMachineResponse,
   type RecoveryMachineStage,
-  type SmartImportFileDecision,
   type WorkspaceNextActionsResponse,
   type WorkspaceMachineRunResponse,
   type WorkspaceUnclassifiedResponse,
@@ -115,12 +115,7 @@ export default function DashboardPage() {
     try {
       await prepareFinishNotification();
       const preview = await api.previewSmartImport(homeFiles);
-      const decisions: SmartImportFileDecision[] = preview.files.map((file) => ({
-        file_id: file.id,
-        action: file.recommended_action,
-        report_type: file.detected_report_type ?? "combined_report",
-        restaurant_id: null,
-      }));
+      const decisions = buildMachineSmartImportDecisions(preview.files, "smart_import");
       await api.confirmSmartImport(preview.batch_preview_id, decisions);
       const result = await api.runWorkspaceMachine({
         trigger: "smart_import",
@@ -159,12 +154,7 @@ export default function DashboardPage() {
     try {
       await prepareFinishNotification();
       const preview = await api.previewSmartImport(files);
-      const decisions: SmartImportFileDecision[] = preview.files.map((file) => ({
-        file_id: file.id,
-        action: file.recommended_action,
-        report_type: file.detected_report_type ?? "combined_report",
-        restaurant_id: null,
-      }));
+      const decisions = buildMachineSmartImportDecisions(preview.files, trigger);
       await api.confirmSmartImport(preview.batch_preview_id, decisions);
       const result = await api.runWorkspaceMachine({
         trigger,
@@ -743,6 +733,7 @@ function stageLabel(name: string): string {
     historical_import_repair: "Imports repares",
     deductions: "Deductions",
     claim_orders: "Dossiers",
+    smart_import_recovery: "Fichiers repris",
     unclassified: "Non classes",
     drafts: "Brouillons",
     followups: "Relances",

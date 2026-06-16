@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import ApiError from "@/components/ApiError";
+import { buildMachineSmartImportDecisions } from "@/lib/smartImportMachine";
 import { notifyWorkspaceMachineFinished, prepareFinishNotification } from "@/lib/tennetNotifications";
-import { api, type SmartImportFileDecision, type WorkspaceMachineRunResponse, type WorkspaceMachineTrigger } from "@/lib/api";
+import { api, type WorkspaceMachineRunResponse, type WorkspaceMachineTrigger } from "@/lib/api";
 
 const acceptedTypes = ".csv,.xlsx,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.zip,image/*,application/pdf";
 
@@ -40,12 +41,7 @@ export default function MachineImportHero({
     try {
       await prepareFinishNotification();
       const preview = await api.previewSmartImport(files);
-      const decisions: SmartImportFileDecision[] = preview.files.map((file) => ({
-        file_id: file.id,
-        action: file.recommended_action,
-        report_type: file.detected_report_type ?? "combined_report",
-        restaurant_id: null,
-      }));
+      const decisions = buildMachineSmartImportDecisions(preview.files, trigger);
       await api.confirmSmartImport(preview.batch_preview_id, decisions);
       const machineResult = await api.runWorkspaceMachine({
         trigger,
