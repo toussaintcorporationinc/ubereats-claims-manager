@@ -33,7 +33,6 @@ from app.services.workspace_unclassified_service import WorkspaceUnclassifiedSer
 
 MACHINE_EVIDENCE_ANALYSIS_LIMIT = 250
 MACHINE_PROOF_INTAKE_LIMIT = 250
-MACHINE_FAST_IDENTITY_HYDRATION_LIMIT = 1000
 MACHINE_FULL_IDENTITY_HYDRATION_LIMIT = 10000
 
 
@@ -116,13 +115,10 @@ class WorkspaceMachineService:
                     status="skipped",
                     warnings=["historical_cleanup_not_requested_for_fast_go"],
                 ),
-                self.stage(
-                    "historical_identity_hydration",
-                    lambda: self.hydrate_historical_order_identity(
-                        payload.restaurant_id,
-                        limit=MACHINE_FAST_IDENTITY_HYDRATION_LIMIT,
-                        max_import_rows_per_candidate=1,
-                    ),
+                WorkspaceMachineStage(
+                    name="historical_identity_hydration",
+                    status="skipped",
+                    warnings=["historical_cleanup_not_requested_for_fast_go"],
                 ),
             ]
         return [
