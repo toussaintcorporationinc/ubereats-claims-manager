@@ -189,6 +189,10 @@ def resolve_identity_for_task(db: Session, task: EvidenceRequestTask) -> Resolve
         merge_identity(identity, identity_from_analysis(analysis), prefer_display=True)
         candidates.update(value for value in (analysis.detected_uber_order_number, analysis.detected_display_id) if value)
 
+    linked_row_identity = find_linked_import_row_identity(db, snapshot=snapshot, transaction=transaction)
+    if linked_row_identity is not None:
+        merge_identity(identity, linked_row_identity, prefer_display=True)
+
     row_identity = find_import_row_identity(db, order.restaurant_id, candidates)
     if row_identity is not None:
         merge_identity(identity, row_identity, prefer_display=True)
@@ -248,6 +252,9 @@ def resolve_identity_for_order(db: Session, order: ClaimOrder) -> ResolvedOrderI
     transaction = find_transaction(db, order.restaurant_id, candidates, None)
     if transaction is not None:
         merge_identity(identity, identity_from_transaction(transaction), prefer_display=True)
+    linked_row_identity = find_linked_import_row_identity(db, snapshot=snapshot, transaction=transaction)
+    if linked_row_identity is not None:
+        merge_identity(identity, linked_row_identity, prefer_display=True)
     row_identity = find_import_row_identity(db, order.restaurant_id, candidates)
     if row_identity is not None:
         merge_identity(identity, row_identity, prefer_display=True)
@@ -423,6 +430,35 @@ def find_import_row_identity(
     return best_import_row_identity(rows, candidates, restaurant_id) or best
 
 
+def find_linked_import_row_identity(
+    db: Session,
+    *,
+    snapshot: UberOrderSnapshot | None,
+    transaction: UberFinancialTransaction | None,
+) -> ResolvedOrderIdentity | None:
+    conditions = []
+    if snapshot is not None:
+        conditions.append(UberReportingImportRow.created_snapshot_id == snapshot.id)
+    if transaction is not None:
+        conditions.append(UberReportingImportRow.created_transaction_id == transaction.id)
+    if not conditions:
+        return None
+    row = db.execute(
+        select(UberReportingImportRow, UberReportingImportBatch)
+        .join(UberReportingImportBatch, UberReportingImportRow.batch_id == UberReportingImportBatch.id)
+        .where(
+            UberReportingImportRow.status.in_(("created", "valid", "warning", "duplicate", "skipped", "invalid")),
+            or_(*conditions),
+        )
+        .order_by(UberReportingImportRow.id.desc())
+        .limit(1)
+    ).first()
+    if row is None:
+        return None
+    import_row, _batch = row
+    return identity_from_import_row(import_row)
+
+
 def best_import_row_identity(rows, candidates: set[str], restaurant_id: int) -> ResolvedOrderIdentity | None:
     best: ResolvedOrderIdentity | None = None
     best_score = -1
@@ -443,6 +479,13 @@ def best_import_row_identity(rows, candidates: set[str], restaurant_id: int) -> 
         if score >= 5:
             return best
     return best
+
+
+def identity_from_import_row(row: UberReportingImportRow) -> ResolvedOrderIdentity:
+    identity = ResolvedOrderIdentity(source=f"uber_reporting_import_row:{row.id}")
+    for payload in (row.normalized_data or {}, row.raw_data or {}):
+        merge_identity(identity, identity_from_payload(payload, source=identity.source), prefer_display=True)
+    return identity
 
 
 def identity_from_snapshot(snapshot: UberOrderSnapshot) -> ResolvedOrderIdentity:
