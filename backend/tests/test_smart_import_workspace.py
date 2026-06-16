@@ -1009,6 +1009,67 @@ def test_workspace_machine_creates_refund_case_from_ocr_image_text(
     assert dispute.dispute_type == "order_not_received"
 
 
+def test_workspace_machine_processes_targeted_smart_import_batch_even_when_not_recent(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = Restaurant(name="Krousty Bat", sender_email="tiramisumaisonfrance@example.com")
+    db_session.add(restaurant)
+    db_session.commit()
+    proof_text = (
+        "Restaurant: Krousty Bat\n"
+        "Client: Batch Cible\n"
+        "Commande: TARGET123\n"
+        "Date: 15/06/2026\n"
+        "Montant total: 22,40 EUR\n"
+        "Remboursement client - commande non recue\n"
+    )
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("preuve-cible.jpg", proof_text.encode("utf-8"), "image/jpeg"))],
+    ).json()
+    confirm_response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [{"file_id": preview["files"][0]["id"], "action": "import_evidence_bulk"}],
+        },
+    )
+    assert confirm_response.status_code == 200
+
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+    for index in range(55):
+        db_session.add(
+            EvidenceImportBatch(
+                uploaded_by_user_id=owner.id,
+                restaurant_id=restaurant.id,
+                original_filename=f"later-{index}.jpg",
+                source_type="multi_file_upload",
+                status="uploaded",
+            )
+        )
+    db_session.commit()
+
+    response = client.post(
+        "/v1/workspace/machine/run",
+        json={
+            "trigger": "refunds",
+            "smart_import_batch_id": preview["batch_preview_id"],
+            "sync_gmail": False,
+            "run_autopilot": False,
+        },
+    )
+
+    assert response.status_code == 200
+    stages = {stage["name"]: stage for stage in response.json()["stages"]}
+    assert stages["evidence"]["processed_count"] >= 1
+    assert stages["proof_intake"]["created_count"] == 1
+    order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "TARGET123"))
+    assert order is not None
+    assert order.customer_name == "Batch Cible"
+
+
 def test_workspace_machine_resolves_proof_restaurant_from_existing_order_snapshot(
     client: TestClient,
     db_session: Session,
@@ -1071,6 +1132,82 @@ def test_workspace_machine_resolves_proof_restaurant_from_existing_order_snapsho
     assert order.customer_name == "Client Snapshot"
     assert str(order.order_amount) == "21.40"
     assert order.order_date == snapshot.placed_at.date()
+
+
+def test_workspace_machine_hydrates_single_proof_from_historical_uber_import_row(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = Restaurant(name="Frit Dodo", sender_email="frit@example.com")
+    db_session.add(restaurant)
+    db_session.flush()
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+    batch = UberReportingImportBatch(
+        uploaded_by_user_id=owner.id,
+        original_filename="historique-uber.csv",
+        report_type="combined_report",
+        file_type="csv",
+        status="parsed",
+        total_rows=1,
+        valid_rows=1,
+    )
+    db_session.add(batch)
+    db_session.flush()
+    db_session.add(
+        UberReportingImportRow(
+            batch_id=batch.id,
+            row_number=1,
+            raw_data={
+                "Nom du restaurant": "Frit Dodo",
+                "Id. de la commande": "HIST123",
+                "Nom du client": "Client Historique",
+                "Date de la commande": "15/06/2026",
+                "Montant total": "28,60",
+            },
+            normalized_data={
+                "restaurant_id": restaurant.id,
+                "display_id": "HIST123",
+                "customer_name": "Client Historique",
+                "order_date": "2026-06-15",
+                "order_amount": "28.60",
+                "currency": "EUR",
+            },
+            status="valid",
+        )
+    )
+    db_session.commit()
+
+    proof_text = "Restaurant: Frit Dodo\nCommande: HIST123\nRemboursement client\nTicket agrafe\n"
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("preuve-historique.jpg", proof_text.encode("utf-8"), "image/jpeg"))],
+    ).json()
+    client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [{"file_id": preview["files"][0]["id"], "action": "import_evidence_bulk"}],
+        },
+    )
+
+    response = client.post(
+        "/v1/workspace/machine/run",
+        json={
+            "trigger": "refunds",
+            "smart_import_batch_id": preview["batch_preview_id"],
+            "sync_gmail": False,
+            "run_autopilot": False,
+        },
+    )
+
+    assert response.status_code == 200
+    order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "HIST123"))
+    assert order is not None
+    assert order.restaurant_id == restaurant.id
+    assert order.customer_name == "Client Historique"
+    assert order.order_date.isoformat() == "2026-06-15"
+    assert str(order.order_amount) == "28.60"
 
 
 def test_workspace_machine_extracts_excel_proof_cells(
