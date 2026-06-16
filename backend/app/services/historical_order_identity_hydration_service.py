@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session, selectinload
 from app.models import ClaimOrder, UberReconciliationResult, UberReportingImportRow, User
 from app.services.audit import add_audit_log
 from app.services.order_identity_resolution_service import (
+    DISPLAY_ID_KEYS,
+    ORDER_ID_KEYS,
     ResolvedOrderIdentity,
     candidate_numbers_from_dispute,
     candidate_numbers_from_payload,
@@ -19,6 +21,7 @@ from app.services.order_identity_resolution_service import (
     is_uuid_like,
     merge_identity,
     normalize_identifier,
+    payload_string_value,
     resolve_identity_for_order,
 )
 
@@ -189,8 +192,7 @@ class HistoricalOrderIdentityHydrationService:
             row_restaurant_id = self.import_row_restaurant_id(row)
             if restaurant_id is not None and row_restaurant_id is not None and row_restaurant_id != restaurant_id:
                 continue
-            identity = identity_from_import_row(row)
-            row_candidates = self.candidates_for_import_row_identity(identity)
+            row_candidates = self.direct_candidates_for_import_row(row)
             matching_keys = {
                 normalize_identifier(candidate)
                 for candidate in row_candidates
@@ -198,6 +200,7 @@ class HistoricalOrderIdentityHydrationService:
             }
             if not matching_keys:
                 continue
+            identity = identity_from_import_row(row)
             score = identity_score(identity)
             if score <= 0:
                 continue
@@ -215,9 +218,22 @@ class HistoricalOrderIdentityHydrationService:
         value = (row.normalized_data or {}).get("restaurant_id")
         return int(value) if str(value or "").isdigit() else None
 
-    def candidates_for_import_row_identity(self, identity: ResolvedOrderIdentity) -> set[str]:
+    def direct_candidates_for_import_row(self, row: UberReportingImportRow) -> set[str]:
         values: set[str] = set()
-        values.update({identity.order_number, identity.display_id})
+        normalized_data = row.normalized_data or {}
+        values.update(
+            {
+                normalized_data.get("uber_order_id"),
+                normalized_data.get("display_id"),
+                normalized_data.get("order_id"),
+                normalized_data.get("order_number"),
+                normalized_data.get("numero_commande"),
+                normalized_data.get("id_de_la_commande"),
+            }
+        )
+        for payload in (normalized_data, row.raw_data or {}):
+            values.add(payload_string_value(payload, ORDER_ID_KEYS))
+            values.add(payload_string_value(payload, DISPLAY_ID_KEYS))
         return clean_candidates(values)
 
     def identity_from_bulk_import_index(
