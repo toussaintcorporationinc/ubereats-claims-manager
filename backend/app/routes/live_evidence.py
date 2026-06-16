@@ -75,7 +75,7 @@ def build_response(
     offset: int,
 ) -> LiveEvidenceStationResponse:
     all_tasks = total_tasks if total_tasks is not None else tasks
-    summaries = [build_task_summary(task) for task in tasks]
+    summaries = [build_task_summary(task, allow_import_fallback=False) for task in tasks]
     return LiveEvidenceStationResponse(
         tasks=summaries,
         recommended_task_id=summaries[0].id if summaries else None,
