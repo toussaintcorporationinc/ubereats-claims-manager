@@ -66,6 +66,7 @@ class HistoricalOrderIdentityHydrationService:
         restaurant_id: int | None = None,
         limit: int = 10000,
         import_row_scan_limit: int = IMPORT_ROW_HYDRATION_SCAN_LIMIT,
+        max_import_rows_per_candidate: int = IMPORT_ROW_MAX_ROWS_PER_CANDIDATE,
     ) -> dict[str, object]:
         statement = select(ClaimOrder).where(
             or_(
@@ -92,6 +93,7 @@ class HistoricalOrderIdentityHydrationService:
             wanted_candidates=set().union(*order_candidates.values()) if order_candidates else set(),
             restaurant_id=restaurant_id,
             import_row_scan_limit=import_row_scan_limit,
+            max_import_rows_per_candidate=max_import_rows_per_candidate,
         )
 
         updated_order_ids: list[int] = []
@@ -205,6 +207,7 @@ class HistoricalOrderIdentityHydrationService:
         wanted_candidates: set[str],
         restaurant_id: int | None,
         import_row_scan_limit: int,
+        max_import_rows_per_candidate: int,
     ) -> dict[str, list[IndexedImportRowIdentity]]:
         normalized_wanted = {normalize_identifier(candidate) for candidate in wanted_candidates if candidate}
         if not normalized_wanted:
@@ -232,7 +235,7 @@ class HistoricalOrderIdentityHydrationService:
             open_matching_keys = {
                 key
                 for key in matching_keys
-                if indexed_counts_by_key.get(key, 0) < IMPORT_ROW_MAX_ROWS_PER_CANDIDATE
+                if indexed_counts_by_key.get(key, 0) < max_import_rows_per_candidate
             }
             if not open_matching_keys:
                 continue
