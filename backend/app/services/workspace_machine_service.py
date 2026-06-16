@@ -57,7 +57,7 @@ class WorkspaceMachineService:
             self.stage("historical_identity_hydration", lambda: self.hydrate_historical_order_identity(payload.restaurant_id)),
             self.stage("deductions", lambda: self.detect_customer_refunds(payload.restaurant_id)),
             self.stage("claim_orders", lambda: self.create_customer_refund_claim_orders(payload.restaurant_id)),
-            self.stage("evidence", lambda: self.process_evidence_queue(payload.restaurant_id)),
+            self.stage("evidence", lambda: self.process_evidence_queue(payload)),
             self.stage("proof_intake", lambda: self.process_proof_intake(payload)),
             self.stage("unclassified", self.inspect_unclassified),
             self.stage("drafts", lambda: self.create_customer_refund_drafts(payload.restaurant_id)),
@@ -222,19 +222,25 @@ class WorkspaceMachineService:
             warnings=errors,
         )
 
-    def process_evidence_queue(self, restaurant_id: int | None) -> WorkspaceMachineStage:
+    def process_evidence_queue(self, payload: WorkspaceMachineRunRequest) -> WorkspaceMachineStage:
+        evidence_batch_ids = ProofIntakeService().evidence_batch_ids_for_preview(
+            self.db,
+            self.current_user,
+            payload.smart_import_batch_id,
+        )
         recalc = recalculate_evidence_tasks(
             self.db,
             self.current_user,
-            restaurant_id=restaurant_id,
+            restaurant_id=payload.restaurant_id,
             dry_run=False,
         )
         self.db.flush()
         evidence_result = EvidenceAIAnalysisService().analyze_pending_batches(
             self.db,
             self.current_user,
-            restaurant_id=restaurant_id,
-            limit=500,
+            restaurant_id=payload.restaurant_id,
+            limit=2000,
+            batch_ids=evidence_batch_ids,
         )
         warnings = [*recalc.get("errors", []), *evidence_result.get("errors", [])]
         processed_count = (
@@ -260,7 +266,7 @@ class WorkspaceMachineService:
             trigger=payload.trigger,
             restaurant_id=payload.restaurant_id,
             smart_import_batch_id=payload.smart_import_batch_id,
-            limit=500,
+            limit=2000,
         )
         return WorkspaceMachineStage(
             name="proof_intake",

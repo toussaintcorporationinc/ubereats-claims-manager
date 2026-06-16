@@ -88,11 +88,18 @@ class EvidenceAIAnalysisService:
         *,
         restaurant_id: int | None,
         limit: int,
+        batch_ids: list[int] | None = None,
     ) -> dict[str, object]:
         from app.services.evidence_matching_service import EvidenceMatchingService
 
-        batches_statement = select(EvidenceImportBatch).order_by(EvidenceImportBatch.id.desc()).limit(50)
-        if restaurant_id is not None:
+        batches_statement = select(EvidenceImportBatch).order_by(EvidenceImportBatch.id.desc())
+        if batch_ids is not None:
+            if not batch_ids:
+                return empty_analysis_result()
+            batches_statement = batches_statement.where(EvidenceImportBatch.id.in_(batch_ids))
+        else:
+            batches_statement = batches_statement.limit(50)
+        if restaurant_id is not None and batch_ids is None:
             batches_statement = batches_statement.where(EvidenceImportBatch.restaurant_id == restaurant_id)
         batches = db.scalars(batches_statement).all()
         analyzed_files_count = 0
@@ -708,3 +715,13 @@ def latest_analysis_result(imported_file: EvidenceImportedFile) -> EvidenceAnaly
 
 def has_attached_decision(imported_file: EvidenceImportedFile) -> bool:
     return any(decision.decision == "attached" for decision in imported_file.attachment_decisions)
+
+
+def empty_analysis_result() -> dict[str, object]:
+    return {
+        "analyzed_files_count": 0,
+        "auto_matched_count": 0,
+        "needs_review_count": 0,
+        "failed_files_count": 0,
+        "errors": [],
+    }

@@ -30,6 +30,12 @@ from app.services.customer_refund_dispute_service import ensure_evidence_require
 from app.services.customer_refund_evidence_policy_service import evidence_policy_for_dispute
 from app.services.evidence_ai_analysis_service import has_attached_decision, latest_analysis_result
 from app.services.evidence_bulk_review_service import attach_imported_file
+from app.services.order_identity_resolution_service import (
+    candidate_numbers_from_payload,
+    clean_candidates,
+    find_import_row_identity,
+    identity_from_analysis,
+)
 from app.services.uber_reporting_import_service import resolve_mapping_by_store_name, resolve_restaurant_by_store_name
 
 
@@ -222,13 +228,37 @@ class ProofIntakeService:
             )
             if value
         )
-        order_number = analysis.detected_uber_order_number or analysis.detected_display_id
+        analysis_identity = identity_from_analysis(analysis)
+        candidate_numbers = clean_candidates(
+            value
+            for value in {
+                analysis.detected_uber_order_number,
+                analysis.detected_display_id,
+                analysis_identity.order_number,
+                analysis_identity.display_id,
+                *candidate_numbers_from_payload(raw),
+                *candidate_numbers_from_payload(text),
+            }
+            if likely_order_candidate(value)
+        )
+        order_number = first_order_number(candidate_numbers, analysis.detected_uber_order_number or analysis.detected_display_id)
         order_context = self.resolve_order_context(db, order_number) if order_number else {}
         restaurant_id = (
             imported_file.batch.restaurant_id
             or self.resolve_restaurant_id(db, analysis.detected_restaurant_name, text)
             or order_context.get("restaurant_id")
         )
+        if restaurant_id is not None and candidate_numbers:
+            row_identity = find_import_row_identity(db, int(restaurant_id), candidate_numbers)
+            if row_identity is not None:
+                order_context = {
+                    **order_context,
+                    "customer_name": order_context.get("customer_name") or row_identity.customer_name,
+                    "order_amount": order_context.get("order_amount") or row_identity.order_amount,
+                    "currency": order_context.get("currency") or row_identity.currency,
+                    "order_date": order_context.get("order_date") or row_identity.order_date,
+                }
+                order_number = order_number or row_identity.best_order_label
         customer_name = (str(raw.get("customer_name")).strip() if raw.get("customer_name") else None) or order_context.get(
             "customer_name"
         )
@@ -686,3 +716,35 @@ class ProofIntakeService:
         if dispute_id is not None:
             pieces.append(f"Dispute remboursement liee: {dispute_id}.")
         return " ".join(pieces)
+
+
+def first_order_number(candidates: set[str], preferred: str | None) -> str | None:
+    if preferred and likely_order_candidate(preferred):
+        return preferred.strip()
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda value: (len(value), value), reverse=True)[0]
+
+
+def likely_order_candidate(value: object) -> bool:
+    if value is None:
+        return False
+    text = str(value).strip()
+    if len(text) < 4 or len(text) > 64:
+        return False
+    normalized = "".join(char for char in text.upper() if char.isalnum())
+    if len(normalized) < 4:
+        return False
+    blocked = {
+        "CLIENT",
+        "COMMANDE",
+        "CUSTOMER",
+        "DATE",
+        "ORDER",
+        "RESTAURANT",
+        "TICKET",
+        "TOTAL",
+    }
+    if normalized in blocked:
+        return False
+    return any(char.isdigit() for char in normalized)
