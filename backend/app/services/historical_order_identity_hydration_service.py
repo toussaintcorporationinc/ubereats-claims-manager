@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models import ClaimOrder, UberReconciliationResult, UberReportingImportRow, User
+from app.models import ClaimOrder, UberCustomerRefundDispute, UberReconciliationResult, UberReportingImportRow, User
 from app.services.audit import add_audit_log
 from app.services.order_identity_resolution_service import (
     ResolvedOrderIdentity,
     clean_candidates,
     clean_customer_name,
+    identity_from_dispute,
     identity_from_import_row,
     identity_from_reconciliation_result,
     identity_score,
@@ -18,7 +20,6 @@ from app.services.order_identity_resolution_service import (
     merge_identity,
     normalize_identifier,
     normalize_payload_key,
-    resolve_identity_for_order,
 )
 
 IMPORT_ROW_HYDRATION_SCAN_LIMIT = 50000
@@ -81,7 +82,9 @@ class HistoricalOrderIdentityHydrationService:
         )
         if restaurant_id is not None:
             statement = statement.where(ClaimOrder.restaurant_id == restaurant_id)
-        statement = statement.options(selectinload(ClaimOrder.customer_refund_disputes))
+        statement = statement.options(
+            selectinload(ClaimOrder.customer_refund_disputes).selectinload(UberCustomerRefundDispute.financial_transaction)
+        )
         orders = list(db.scalars(statement.order_by(ClaimOrder.id.desc()).limit(limit)).all())
         order_ids = [order.id for order in orders]
         reconciliation_results_by_order = self.load_reconciliation_results(db, order_ids)
@@ -104,12 +107,7 @@ class HistoricalOrderIdentityHydrationService:
         sources: set[str] = set()
 
         for order in orders:
-            identity = resolve_identity_for_order(
-                db,
-                order,
-                allow_import_fallback=False,
-                allow_payload_fallback=False,
-            )
+            identity = self.base_identity_for_order(order)
             reconciliation_results = reconciliation_results_by_order.get(order.id, [])
             for result in reconciliation_results:
                 merge_identity(identity, identity_from_reconciliation_result(result), prefer_display=True)
@@ -161,6 +159,21 @@ class HistoricalOrderIdentityHydrationService:
             "sample_order_ids": updated_order_ids[:25],
             "sources": sorted(sources),
         }
+
+    def base_identity_for_order(self, order: ClaimOrder) -> ResolvedOrderIdentity:
+        identity = ResolvedOrderIdentity(
+            order_number=order.uber_order_number,
+            display_id=order.internal_reference if order.internal_reference and not is_uuid_like(order.internal_reference) else None,
+            customer_name=clean_customer_name(order.customer_name),
+            order_date=order.order_date,
+            order_time=order.order_time,
+            order_amount=Decimal(str(order.order_amount)) if order.order_amount is not None else None,
+            currency=order.currency,
+            source="claim_order",
+        )
+        for dispute in order.customer_refund_disputes:
+            merge_identity(identity, identity_from_dispute(dispute), prefer_display=True)
+        return identity
 
     def load_reconciliation_results(
         self,
