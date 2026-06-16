@@ -488,9 +488,16 @@ class GmailInboundSyncService:
         index = order_identifier_index
         if index is None:
             index = self.build_order_identifier_index(db, user)
+        normalized_text = normalize_identifier(text)
+        compact_text = normalize_identifier_with_boundaries(text)
         for order, candidates in index:
             for candidate in candidates:
-                if text_contains_identifier(text, candidate):
+                if text_contains_identifier(
+                    text,
+                    candidate,
+                    normalized_text=normalized_text,
+                    compact_text=compact_text,
+                ):
                     return order
         return None
 
@@ -580,7 +587,13 @@ def order_identifier_candidates(order: ClaimOrder) -> list[str]:
     return result
 
 
-def text_contains_identifier(text: str, candidate: str) -> bool:
+def text_contains_identifier(
+    text: str,
+    candidate: str,
+    *,
+    normalized_text: str | None = None,
+    compact_text: str | None = None,
+) -> bool:
     cleaned = candidate.strip()
     if not cleaned:
         return False
@@ -588,14 +601,14 @@ def text_contains_identifier(text: str, candidate: str) -> bool:
     if len(normalized_candidate) < 4:
         return False
     if len(normalized_candidate) >= 12:
-        return normalized_candidate in normalize_identifier(text)
+        return normalized_candidate in (normalized_text if normalized_text is not None else normalize_identifier(text))
     escaped = re.escape(cleaned.lstrip("#"))
     if not escaped:
         return False
     pattern = re.compile(rf"(?<![A-Z0-9])#?{escaped}(?![A-Z0-9])", re.IGNORECASE)
     if pattern.search(text):
         return True
-    compact_text = normalize_identifier_with_boundaries(text)
+    compact_text = compact_text if compact_text is not None else normalize_identifier_with_boundaries(text)
     compact_candidate = re.escape(normalized_candidate)
     return re.search(rf"(?<![A-Z0-9]){compact_candidate}(?![A-Z0-9])", compact_text) is not None
 
