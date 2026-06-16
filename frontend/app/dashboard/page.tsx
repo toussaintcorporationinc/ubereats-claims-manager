@@ -12,7 +12,6 @@ import StatCard from "@/components/StatCard";
 import StatusBadge from "@/components/StatusBadge";
 import { useAuth } from "@/lib/auth";
 import { buildMachineSmartImportDecisions } from "@/lib/smartImportMachine";
-import { notifyWorkspaceMachineFinished, prepareFinishNotification } from "@/lib/tennetNotifications";
 import {
   api,
   type DashboardSummary,
@@ -80,22 +79,18 @@ export default function DashboardPage() {
     }
     autoPassageStarted.current = true;
     window.sessionStorage.setItem(storageKey, String(now));
-    void runTennetPilot(false);
+    void runTennetPilot();
   }, [canRunRecoveryMachine, loading]);
 
-  async function runTennetPilot(askNotificationPermission = true) {
+  async function runTennetPilot() {
     setPilotRunning(true);
     setPilotError(null);
     setMachineResult(null);
 
     try {
-      if (askNotificationPermission) {
-        await prepareFinishNotification();
-      }
       const result = await api.runWorkspaceMachine({ trigger: "manual", sync_gmail: true, run_autopilot: true });
       setMachineResult(result);
       setNextActions(result.next_actions);
-      notifyWorkspaceMachineFinished(result);
       await loadDashboard();
     } catch (apiError) {
       setPilotError(apiError);
@@ -124,7 +119,6 @@ export default function DashboardPage() {
       });
       setMachineResult(result);
       setNextActions(result.next_actions);
-      notifyWorkspaceMachineFinished(result);
       setHomeFiles([]);
       await loadDashboard();
     } catch (apiError) {
@@ -162,7 +156,6 @@ export default function DashboardPage() {
       });
       setMachineResult(result);
       setNextActions(result.next_actions);
-      notifyWorkspaceMachineFinished(result);
       setRailFiles((current) => ({ ...current, [trigger]: [] }));
       await loadDashboard();
     } catch (apiError) {
