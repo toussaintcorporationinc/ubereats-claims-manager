@@ -3,7 +3,7 @@
 import { useState } from "react";
 import ApiError from "@/components/ApiError";
 import { buildMachineSmartImportDecisions } from "@/lib/smartImportMachine";
-import { notifyWorkspaceMachineFinished, prepareFinishNotification } from "@/lib/tennetNotifications";
+import { notifyWorkspaceMachineFinished } from "@/lib/tennetNotifications";
 import { api, type WorkspaceMachineRunResponse, type WorkspaceMachineTrigger } from "@/lib/api";
 
 const acceptedTypes = ".csv,.xlsx,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.zip,image/*,application/pdf";
@@ -39,7 +39,6 @@ export default function MachineImportHero({
     setResult(null);
     setError(null);
     try {
-      await prepareFinishNotification();
       const preview = await api.previewSmartImport(files);
       const decisions = buildMachineSmartImportDecisions(preview.files, trigger);
       await api.confirmSmartImport(preview.batch_preview_id, decisions);

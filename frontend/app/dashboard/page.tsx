@@ -113,7 +113,6 @@ export default function DashboardPage() {
     setPilotError(null);
     setMachineResult(null);
     try {
-      await prepareFinishNotification();
       const preview = await api.previewSmartImport(homeFiles);
       const decisions = buildMachineSmartImportDecisions(preview.files, "smart_import");
       await api.confirmSmartImport(preview.batch_preview_id, decisions);
@@ -152,7 +151,6 @@ export default function DashboardPage() {
     setPilotError(null);
     setMachineResult(null);
     try {
-      await prepareFinishNotification();
       const preview = await api.previewSmartImport(files);
       const decisions = buildMachineSmartImportDecisions(preview.files, trigger);
       await api.confirmSmartImport(preview.batch_preview_id, decisions);
