@@ -48,7 +48,7 @@ def recovery_summary(
     current_user: User = Depends(require_owner_or_manager),
 ) -> RecoverySummary:
     try:
-        return RecoveryCockpitService(db, current_user, filters).summary()
+        return RecoveryCockpitService(db, current_user, filters, max_source_rows=3000).summary()
     except RecoveryPermissionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
 
@@ -67,7 +67,8 @@ def recovery_cases(
     current_user: User = Depends(require_owner_or_manager),
 ) -> RecoveryCasesResponse:
     try:
-        cases = RecoveryCockpitService(db, current_user, filters).cases(limit=None, offset=0)
+        source_limit = max(1000, offset + limit * 3)
+        cases = RecoveryCockpitService(db, current_user, filters, max_source_rows=source_limit).cases(limit=None, offset=0)
     except RecoveryPermissionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     cases = filter_cases(

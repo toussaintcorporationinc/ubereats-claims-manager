@@ -31,6 +31,9 @@ from app.services.smart_import_routing_service import route_manual_review_files_
 from app.services.workspace_action_service import WorkspaceActionService
 from app.services.workspace_unclassified_service import WorkspaceUnclassifiedService
 
+MACHINE_EVIDENCE_ANALYSIS_LIMIT = 250
+MACHINE_PROOF_INTAKE_LIMIT = 250
+
 
 class WorkspaceMachineError(Exception):
     def __init__(self, message: str, status_code: int = 400) -> None:
@@ -291,7 +294,7 @@ class WorkspaceMachineService:
             self.db,
             self.current_user,
             restaurant_id=payload.restaurant_id,
-            limit=2000,
+            limit=MACHINE_EVIDENCE_ANALYSIS_LIMIT,
             batch_ids=evidence_batch_ids,
         )
         warnings = [*recalc.get("errors", []), *evidence_result.get("errors", [])]
@@ -318,7 +321,7 @@ class WorkspaceMachineService:
             trigger=payload.trigger,
             restaurant_id=payload.restaurant_id,
             smart_import_batch_id=payload.smart_import_batch_id,
-            limit=2000,
+            limit=MACHINE_PROOF_INTAKE_LIMIT,
         )
         return WorkspaceMachineStage(
             name="proof_intake",

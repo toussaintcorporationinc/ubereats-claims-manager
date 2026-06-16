@@ -17,7 +17,12 @@ class WorkspaceActionService:
         self.current_user = current_user
 
     def next_actions(self) -> WorkspaceNextActionsResponse:
-        recovery_actions = RecoveryCockpitService(self.db, self.current_user, RecoveryFilters()).actions(limit=80, offset=0)
+        recovery_actions = RecoveryCockpitService(
+            self.db,
+            self.current_user,
+            RecoveryFilters(),
+            max_source_rows=1000,
+        ).actions(limit=80, offset=0)
         workspace_actions = [self.from_recovery_action(action) for action in recovery_actions]
         workspace_actions.extend(self.unclassified_actions())
         if self.current_user.role in {"owner", "manager"}:

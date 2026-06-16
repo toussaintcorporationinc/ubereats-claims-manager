@@ -4,7 +4,7 @@ import unicodedata
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import or_, select
-from sqlalchemy.orm import Session, object_session
+from sqlalchemy.orm import Session, object_session, selectinload
 
 from app.core.auth import ensure_can_access_order, ensure_can_access_restaurant, get_accessible_restaurant_ids, get_current_user, require_owner_or_manager
 from app.core.database import get_db
@@ -16,8 +16,10 @@ from app.models import (
     EvidenceMatchCandidate,
     EvidenceRequestTask,
     EvidenceUploadLink,
+    UberCustomerRefundDispute,
     UberFinancialTransaction,
     UberOrderSnapshot,
+    UberReconciliationResult,
     User,
 )
 from app.schemas.domain import (
@@ -83,7 +85,18 @@ def list_tasks(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> EvidenceRequestTasksResponse:
-    statement = select(EvidenceRequestTask).join(ClaimOrder).order_by(EvidenceRequestTask.id.desc())
+    statement = (
+        select(EvidenceRequestTask)
+        .join(ClaimOrder)
+        .options(
+            selectinload(EvidenceRequestTask.order).selectinload(ClaimOrder.restaurant),
+            selectinload(EvidenceRequestTask.restaurant),
+            selectinload(EvidenceRequestTask.reconciliation_result).selectinload(UberReconciliationResult.matched_snapshot),
+            selectinload(EvidenceRequestTask.customer_refund_dispute).selectinload(UberCustomerRefundDispute.claim_order),
+            selectinload(EvidenceRequestTask.customer_refund_dispute).selectinload(UberCustomerRefundDispute.financial_transaction),
+        )
+        .order_by(EvidenceRequestTask.id.desc())
+    )
     accessible_ids = get_accessible_restaurant_ids(db, current_user)
     if restaurant_id is not None:
         ensure_can_access_restaurant(db, current_user, restaurant_id)
@@ -253,16 +266,23 @@ def get_task_or_404(task_id: int, db: Session) -> EvidenceRequestTask:
     return task
 
 
-def build_task_summary(task: EvidenceRequestTask) -> EvidenceRequestTaskSummary:
+def build_task_summary(task: EvidenceRequestTask, *, deep_identity: bool = True) -> EvidenceRequestTaskSummary:
     order = task.order
     db = object_session(task)
-    identity = resolve_identity_for_task(db, task) if db is not None else None
+    identity = resolve_identity_for_task(db, task) if deep_identity and db is not None else None
     customer_name = identity.customer_name if identity else order.customer_name
     order_date = identity.order_date if identity else order.order_date
     order_time = identity.order_time if identity else order.order_time
     order_label = identity.best_order_label if identity and identity.best_order_label else order.uber_order_number
     amount = identity.order_amount if identity and identity.order_amount is not None else order.order_amount
     currency = (identity.currency or order.currency) if identity else order.currency
+    if not deep_identity:
+        customer_name = customer_name or fast_task_customer_name(task)
+        order_date = order_date or fast_task_order_date(task)
+        order_time = order_time or fast_task_order_time(task)
+        order_label = fast_task_order_label(task, order_label)
+        amount = amount if amount is not None else fast_task_amount(task)
+        currency = currency or fast_task_currency(task)
     field_missing_info = build_field_missing_info(customer_name, order_date, amount)
     return EvidenceRequestTaskSummary(
         id=task.id,
@@ -305,6 +325,56 @@ def build_task_summary(task: EvidenceRequestTask) -> EvidenceRequestTaskSummary:
         created_at=task.created_at,
         updated_at=task.updated_at,
     )
+
+
+def fast_task_customer_name(task: EvidenceRequestTask) -> str | None:
+    if task.customer_refund_dispute and task.customer_refund_dispute.claim_order:
+        return task.customer_refund_dispute.claim_order.customer_name
+    if task.reconciliation_result and task.reconciliation_result.matched_snapshot:
+        return task.reconciliation_result.matched_snapshot.customer_name
+    return None
+
+
+def fast_task_order_date(task: EvidenceRequestTask):
+    if task.customer_refund_dispute and task.customer_refund_dispute.order_date:
+        return task.customer_refund_dispute.order_date
+    if task.reconciliation_result and task.reconciliation_result.matched_snapshot and task.reconciliation_result.matched_snapshot.placed_at:
+        return task.reconciliation_result.matched_snapshot.placed_at.date()
+    return None
+
+
+def fast_task_order_time(task: EvidenceRequestTask):
+    if task.reconciliation_result and task.reconciliation_result.matched_snapshot and task.reconciliation_result.matched_snapshot.placed_at:
+        return task.reconciliation_result.matched_snapshot.placed_at.time().replace(microsecond=0)
+    return None
+
+
+def fast_task_order_label(task: EvidenceRequestTask, fallback: str) -> str:
+    if task.customer_refund_dispute:
+        for value in (task.customer_refund_dispute.display_id, task.customer_refund_dispute.uber_order_id):
+            if value:
+                return value
+    if task.reconciliation_result:
+        for value in (task.reconciliation_result.display_id, task.reconciliation_result.uber_order_id):
+            if value:
+                return value
+    return fallback
+
+
+def fast_task_amount(task: EvidenceRequestTask):
+    if task.customer_refund_dispute:
+        return task.customer_refund_dispute.order_amount or task.customer_refund_dispute.customer_refund_amount
+    if task.reconciliation_result:
+        return task.reconciliation_result.order_amount or task.reconciliation_result.missing_amount
+    return None
+
+
+def fast_task_currency(task: EvidenceRequestTask) -> str | None:
+    if task.customer_refund_dispute:
+        return task.customer_refund_dispute.currency
+    if task.reconciliation_result:
+        return task.reconciliation_result.currency
+    return None
 
 
 def resolve_customer_name(
