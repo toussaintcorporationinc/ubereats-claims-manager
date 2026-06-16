@@ -1689,6 +1689,8 @@ class UberReportingImportRow(Base):
         ),
         Index("ix_uber_reporting_import_rows_batch_id", "batch_id"),
         Index("ix_uber_reporting_import_rows_status", "status"),
+        Index("ix_uber_reporting_import_rows_created_snapshot_id", "created_snapshot_id"),
+        Index("ix_uber_reporting_import_rows_created_transaction_id", "created_transaction_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
