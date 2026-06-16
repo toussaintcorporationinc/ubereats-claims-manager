@@ -1,7 +1,26 @@
 import type { ReactNode } from "react";
+import { Outfit, Public_Sans, Urbanist } from "next/font/google";
 import AppLayout from "@/components/AppLayout";
 import { AuthProvider } from "@/lib/auth";
 import "./globals.css";
+
+const headingFont = Public_Sans({
+  subsets: ["latin"],
+  variable: "--font-heading",
+  display: "swap",
+});
+
+const bodyFont = Outfit({
+  subsets: ["latin"],
+  variable: "--font-body",
+  display: "swap",
+});
+
+const mobileFont = Urbanist({
+  subsets: ["latin"],
+  variable: "--font-mobile",
+  display: "swap",
+});
 
 export const metadata = {
   title: "TENNET",
@@ -24,7 +43,7 @@ export default function RootLayout({
   children: ReactNode;
 }>) {
   return (
-    <html lang="fr">
+    <html lang="fr" className={`${headingFont.variable} ${bodyFont.variable} ${mobileFont.variable}`}>
       <body>
         <AuthProvider>
           <AppLayout>{children}</AppLayout>
