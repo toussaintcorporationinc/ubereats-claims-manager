@@ -8,6 +8,7 @@ import BrandLogo from "@/components/BrandLogo";
 import LoadingState from "@/components/LoadingState";
 import MobileHeader from "@/components/MobileHeader";
 import MobileNavDrawer, { type NavItem } from "@/components/MobileNavDrawer";
+import PaymentSuccessNotifier from "@/components/PaymentSuccessNotifier";
 import { useAuth } from "@/lib/auth";
 
 const navigation: NavItem[] = [
@@ -145,6 +146,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         </div>
       </aside>
       <main className="main-content">{children}</main>
+      <PaymentSuccessNotifier />
     </div>
   );
 }

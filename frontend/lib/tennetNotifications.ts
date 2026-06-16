@@ -1,16 +1,20 @@
-import type { WorkspaceMachineRunResponse } from "./api";
-
-const FINISH_NOTIFICATION_STORAGE_KEY = "tennet:finish-notification-enabled";
 const SERVICE_WORKER_PATH = "/tennet-sw.js";
+const PAYMENT_NOTIFICATION_STORAGE_KEY = "tennet:payment-notification-enabled";
+const PAYMENT_SUCCESS_SOUND_PATH = "/sounds/success.wav";
 
-export async function prepareFinishNotification(): Promise<void> {
+export type PaymentRecoveredNotification = {
+  recoveredAmount: string;
+  totalRecoveredAmount: string;
+};
+
+export async function preparePaymentSuccessNotification(): Promise<void> {
   if (!canUseNotifications()) {
     return;
   }
 
   try {
     if (Notification.permission === "granted") {
-      window.localStorage.setItem(FINISH_NOTIFICATION_STORAGE_KEY, "true");
+      window.localStorage.setItem(PAYMENT_NOTIFICATION_STORAGE_KEY, "true");
       await ensureServiceWorkerRegistration();
       return;
     }
@@ -18,44 +22,50 @@ export async function prepareFinishNotification(): Promise<void> {
     if (Notification.permission === "default") {
       const permission = await Notification.requestPermission();
       if (permission === "granted") {
-        window.localStorage.setItem(FINISH_NOTIFICATION_STORAGE_KEY, "true");
+        window.localStorage.setItem(PAYMENT_NOTIFICATION_STORAGE_KEY, "true");
         await ensureServiceWorkerRegistration();
       }
     }
   } catch {
-    // Notification setup must never block the recovery machine.
+    // Notification setup must never block TENNET.
   }
 }
 
-export function notifyWorkspaceMachineFinished(result: WorkspaceMachineRunResponse): void {
+export function notifyPaymentRecovered(payload: PaymentRecoveredNotification): void {
   window.setTimeout(() => {
-    void showFinishNotification(result).catch(() => {
-      // Notifications are optional. The recovery machine must never fail because of them.
+    void playPaymentSuccessSound();
+    void showPaymentRecoveredNotification(payload).catch(() => {
+      // Notifications are optional. Payment tracking must never fail because of them.
     });
   }, 0);
 }
 
-async function showFinishNotification(result: WorkspaceMachineRunResponse): Promise<void> {
+async function playPaymentSuccessSound(): Promise<void> {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    const audio = new Audio(PAYMENT_SUCCESS_SOUND_PATH);
+    audio.volume = 0.9;
+    await audio.play();
+  } catch {
+    // Browsers may block sound until the user interacts with the app.
+  }
+}
+
+async function showPaymentRecoveredNotification(payload: PaymentRecoveredNotification): Promise<void> {
   if (!canUseNotifications() || Notification.permission !== "granted") {
     return;
   }
-  if (window.localStorage.getItem(FINISH_NOTIFICATION_STORAGE_KEY) !== "true") {
+  if (window.localStorage.getItem(PAYMENT_NOTIFICATION_STORAGE_KEY) !== "true") {
     return;
   }
 
-  const sent = sumStages(result, "sent_count");
-  const created = sumStages(result, "created_count");
-  const failed = sumStages(result, "failed_count");
-  const bodyParts = [`${created} dossier(s)/brouillon(s) prepares`, `${sent} email(s) envoyes`];
-  if (failed > 0) {
-    bodyParts.push(`${failed} action(s) a verifier`);
-  }
-
   const options: NotificationOptions = {
-    body: bodyParts.join(" - "),
+    body: `TENNET a obtenu un remboursement de ${payload.recoveredAmount}. Total confirme : ${payload.totalRecoveredAmount}.`,
     icon: "/icons/icon-192.png",
     badge: "/icons/icon-192.png",
-    tag: `tennet-machine-${result.trigger}`,
+    tag: `tennet-payment-${Date.now()}`,
   };
 
   try {
@@ -63,9 +73,9 @@ async function showFinishNotification(result: WorkspaceMachineRunResponse): Prom
     if (!registration || typeof registration.showNotification !== "function") {
       return;
     }
-    await registration.showNotification("TENNET a termine son passage", options);
+    await registration.showNotification("Paiement obtenu par TENNET", options);
   } catch {
-    // Notifications are optional. The recovery machine must never fail because of them.
+    // Notifications are optional. Payment tracking must never fail because of them.
   }
 }
 
@@ -90,8 +100,4 @@ async function ensureServiceWorkerRegistration(): Promise<ServiceWorkerRegistrat
   }
 
   return navigator.serviceWorker.register(SERVICE_WORKER_PATH, { scope: "/" });
-}
-
-function sumStages(result: WorkspaceMachineRunResponse, key: "created_count" | "sent_count" | "failed_count"): number {
-  return result.stages.reduce((total, stage) => total + stage[key], 0);
 }
