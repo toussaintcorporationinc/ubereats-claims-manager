@@ -23,14 +23,17 @@ from app.services.order_identity_resolution_service import (
 
 IMPORT_ROW_HYDRATION_SCAN_LIMIT = 50000
 IMPORT_ROW_HYDRATION_STATUSES = ("created", "valid", "warning", "duplicate", "skipped", "invalid")
-IMPORT_ROW_DIRECT_KEYS = (
+IMPORT_ROW_STRONG_DIRECT_KEYS = (
     "uber_order_id",
-    "display_id",
     "order_id",
     "order_number",
+)
+IMPORT_ROW_DISPLAY_DIRECT_KEYS = (
+    "display_id",
     "numero_commande",
     "id_de_la_commande",
 )
+IMPORT_ROW_MAX_ROWS_PER_CANDIDATE = 5
 IMPORT_ROW_RAW_IDENTIFIER_KEYS = {
     "id_de_la_commande",
     "id_du_flux",
@@ -208,6 +211,7 @@ class HistoricalOrderIdentityHydrationService:
             import_row_scan_limit=import_row_scan_limit,
         )
         index: dict[str, list[IndexedImportRowIdentity]] = {}
+        indexed_counts_by_key: dict[str, int] = {}
         for row in rows:
             row_restaurant_id = self.import_row_restaurant_id(row)
             if restaurant_id is not None and row_restaurant_id is not None and row_restaurant_id != restaurant_id:
@@ -220,6 +224,13 @@ class HistoricalOrderIdentityHydrationService:
             }
             if not matching_keys:
                 continue
+            open_matching_keys = {
+                key
+                for key in matching_keys
+                if indexed_counts_by_key.get(key, 0) < IMPORT_ROW_MAX_ROWS_PER_CANDIDATE
+            }
+            if not open_matching_keys:
+                continue
             identity = identity_from_import_row(row)
             score = identity_score(identity)
             if score <= 0:
@@ -230,8 +241,9 @@ class HistoricalOrderIdentityHydrationService:
                 identity=identity,
                 score=score,
             )
-            for key in matching_keys:
+            for key in open_matching_keys:
                 index.setdefault(key, []).append(indexed)
+                indexed_counts_by_key[key] = indexed_counts_by_key.get(key, 0) + 1
         return index
 
     def load_candidate_import_rows(
@@ -243,25 +255,26 @@ class HistoricalOrderIdentityHydrationService:
         import_row_scan_limit: int,
     ) -> list[UberReportingImportRow]:
         bind = db.get_bind()
-        candidate_values = self.candidate_value_variants(wanted_candidates)
-        if bind is not None and bind.dialect.name != "sqlite" and candidate_values:
-            direct_conditions = [
-                UberReportingImportRow.normalized_data[key].as_string().in_(candidate_values)
-                for key in IMPORT_ROW_DIRECT_KEYS
-            ]
-            rows = list(
-                db.scalars(
-                    select(UberReportingImportRow)
-                    .where(
-                        UberReportingImportRow.status.in_(IMPORT_ROW_HYDRATION_STATUSES),
-                        or_(*direct_conditions),
-                    )
-                    .order_by(UberReportingImportRow.id.desc())
-                    .limit(import_row_scan_limit)
-                ).all()
-            )
-            if rows:
-                return rows
+        strong_values, display_values = self.candidate_value_variants(wanted_candidates)
+        if bind is not None and bind.dialect.name != "sqlite":
+            if strong_values:
+                rows = self.load_direct_candidate_import_rows(
+                    db,
+                    keys=IMPORT_ROW_STRONG_DIRECT_KEYS,
+                    values=strong_values,
+                    import_row_scan_limit=import_row_scan_limit,
+                )
+                if rows:
+                    return rows
+            if display_values:
+                rows = self.load_direct_candidate_import_rows(
+                    db,
+                    keys=IMPORT_ROW_DISPLAY_DIRECT_KEYS,
+                    values=display_values,
+                    import_row_scan_limit=min(import_row_scan_limit, 5000),
+                )
+                if rows:
+                    return rows
         statement = (
             select(UberReportingImportRow)
             .where(UberReportingImportRow.status.in_(IMPORT_ROW_HYDRATION_STATUSES))
@@ -270,17 +283,41 @@ class HistoricalOrderIdentityHydrationService:
         )
         return list(db.scalars(statement).all())
 
-    def candidate_value_variants(self, candidates: set[str]) -> list[str]:
-        values: set[str] = set()
+    def load_direct_candidate_import_rows(
+        self,
+        db: Session,
+        *,
+        keys: tuple[str, ...],
+        values: list[str],
+        import_row_scan_limit: int,
+    ) -> list[UberReportingImportRow]:
+        direct_conditions = [UberReportingImportRow.normalized_data[key].as_string().in_(values) for key in keys]
+        return list(
+            db.scalars(
+                select(UberReportingImportRow)
+                .where(
+                    UberReportingImportRow.status.in_(IMPORT_ROW_HYDRATION_STATUSES),
+                    or_(*direct_conditions),
+                )
+                .order_by(UberReportingImportRow.id.desc())
+                .limit(import_row_scan_limit)
+            ).all()
+        )
+
+    def candidate_value_variants(self, candidates: set[str]) -> tuple[list[str], list[str]]:
+        strong_values: set[str] = set()
+        display_values: set[str] = set()
         for candidate in candidates:
             cleaned = str(candidate or "").strip()
             if not cleaned:
                 continue
-            values.add(cleaned)
-            values.add(cleaned.lstrip("#"))
+            normalized = normalize_identifier(cleaned)
+            target = strong_values if is_uuid_like(cleaned) or len(normalized) >= 12 else display_values
+            target.add(cleaned)
+            target.add(cleaned.lstrip("#"))
             if not cleaned.startswith("#"):
-                values.add(f"#{cleaned}")
-        return list(values)
+                target.add(f"#{cleaned}")
+        return list(strong_values), list(display_values)
 
     def import_row_restaurant_id(self, row: UberReportingImportRow) -> int | None:
         value = (row.normalized_data or {}).get("restaurant_id")
