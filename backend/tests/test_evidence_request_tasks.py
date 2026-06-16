@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models import (
     AuditLog,
+    ClaimOrder,
     EvidenceAnalysisResult,
     EvidenceImportBatch,
     EvidenceImportedFile,
@@ -18,8 +19,12 @@ from app.models import (
     EvidenceUploadLink,
     UberFinancialTransaction,
     UberReconciliationResult,
+    UberReportingImportBatch,
+    UberReportingImportRow,
+    User,
 )
 from app.models.domain import utc_now
+from app.services.historical_order_identity_hydration_service import HistoricalOrderIdentityHydrationService
 
 
 @pytest.fixture()
@@ -334,6 +339,109 @@ def test_list_tasks_resolves_field_context_from_uber_transaction_payload(
     assert task_summary["field_customer_label"] == "Client Payload"
     assert task_summary["field_date_label"] == "13/06/2026 a 20:15"
     assert task_summary["field_search_hint"] == "Big Chicken Burger - UBER-PAYLOAD-123 - Client Payload - 13/06/2026 20:15"
+
+
+def test_list_tasks_resolves_field_context_from_historical_uber_import_row(
+    configured_client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = create_restaurant(configured_client, "Frit Dodo")
+    technical_order_id = "9f862f78-ee39-4be4-b5d7-6ef3b78e8613"
+    create_order(configured_client, restaurant["id"], technical_order_id, amount="43.62")
+    recalculate(configured_client)
+    batch = UberReportingImportBatch(
+        uploaded_by_user_id=1,
+        original_filename="download.csv",
+        report_type="orders_report",
+        file_type="csv",
+        status="partially_imported",
+        total_rows=1,
+    )
+    db_session.add(batch)
+    db_session.flush()
+    db_session.add(
+        UberReportingImportRow(
+            batch_id=batch.id,
+            row_number=3,
+            raw_data={
+                "UUID du processus": technical_order_id,
+                "Id. de la commande": "FRT-421",
+                "Nom du client": "Client Historique",
+                "Date de la commande": "15/06/2026",
+                "Montant total": "43,62",
+                "Nom du restaurant": "Frit Dodo",
+            },
+            normalized_data={
+                "restaurant_id": restaurant["id"],
+                "uber_order_id": technical_order_id,
+                "display_id": "FRT-421",
+            },
+            status="created",
+            errors=[],
+            warnings=[],
+        )
+    )
+    db_session.commit()
+
+    response = configured_client.get("/v1/evidence-tasks")
+
+    assert response.status_code == 200
+    task_summary = response.json()["tasks"][0]
+    assert task_summary["field_customer_label"] == "Client Historique"
+    assert task_summary["field_order_label"] == "FRT-421"
+    assert task_summary["field_date_label"] == "15/06/2026"
+    assert task_summary["field_search_hint"] == "Frit Dodo - FRT-421 - Client Historique - 15/06/2026"
+    assert "nom_client" not in task_summary["field_missing_info"]
+    assert "date_commande" not in task_summary["field_missing_info"]
+
+
+def test_historical_identity_hydration_updates_existing_claim_order(
+    configured_client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = create_restaurant(configured_client, "Frit Dodo")
+    technical_order_id = "da050e48-2635-4716-a3e5-ab22a0434a25"
+    created = create_order(configured_client, restaurant["id"], technical_order_id, amount="21.81")
+    batch = UberReportingImportBatch(
+        uploaded_by_user_id=1,
+        original_filename="historical.csv",
+        report_type="orders_report",
+        file_type="csv",
+        status="partially_imported",
+        total_rows=1,
+    )
+    db_session.add(batch)
+    db_session.flush()
+    db_session.add(
+        UberReportingImportRow(
+            batch_id=batch.id,
+            row_number=3,
+            raw_data={
+                "UUID du processus": technical_order_id,
+                "Id. de la commande": "FRT-422",
+                "Nom du client": "Client Backfill",
+                "Date de la commande": "2026-06-16",
+                "Montant total": "21.81",
+            },
+            normalized_data={"restaurant_id": restaurant["id"]},
+            status="created",
+            errors=[],
+            warnings=[],
+        )
+    )
+    db_session.commit()
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+
+    result = HistoricalOrderIdentityHydrationService().apply(db_session, owner)
+
+    order = db_session.get(ClaimOrder, created["id"])
+    assert order is not None
+    assert result["updated_orders_count"] == 1
+    assert order.customer_name == "Client Backfill"
+    assert order.order_date == date(2026, 6, 16)
+    db_session.flush()
+    assert db_session.scalar(select(AuditLog).where(AuditLog.action == "historical_order_identity.hydrated"))
 
 
 def test_manager_non_assigned_cannot_list_other_tasks(configured_client: TestClient) -> None:

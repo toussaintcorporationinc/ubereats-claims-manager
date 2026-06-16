@@ -23,6 +23,7 @@ from app.services.evidence_request_service import recalculate_evidence_tasks
 from app.services.email_provider import EmailProvider, EmailProviderError
 from app.services.followup_policy_service import FOLLOWUP_ELIGIBLE_STATUSES, FollowUpPolicyService
 from app.services.gmail_inbound_sync_service import GmailInboundSyncService
+from app.services.historical_order_identity_hydration_service import HistoricalOrderIdentityHydrationService
 from app.services.historical_restaurant_reclassification_service import HistoricalRestaurantReclassificationService
 from app.services.historical_uber_reporting_repair_service import HistoricalUberReportingRepairService
 from app.services.proof_intake_service import ProofIntakeService
@@ -53,6 +54,7 @@ class WorkspaceMachineService:
         stages = [
             self.stage("historical_reclassification", lambda: self.reclassify_historical_restaurants(payload.restaurant_id)),
             self.stage("historical_import_repair", lambda: self.repair_historical_import_rows(payload.restaurant_id)),
+            self.stage("historical_identity_hydration", lambda: self.hydrate_historical_order_identity(payload.restaurant_id)),
             self.stage("deductions", lambda: self.detect_customer_refunds(payload.restaurant_id)),
             self.stage("claim_orders", lambda: self.create_customer_refund_claim_orders(payload.restaurant_id)),
             self.stage("evidence", lambda: self.process_evidence_queue(payload.restaurant_id)),
@@ -166,6 +168,28 @@ class WorkspaceMachineService:
             created_count=repaired_count,
             skipped_count=int(result.get("skipped_count", 0)) + blocked_count,
             warnings=warnings,
+        )
+
+    def hydrate_historical_order_identity(self, restaurant_id: int | None) -> WorkspaceMachineStage:
+        if self.current_user.role != "owner":
+            return WorkspaceMachineStage(
+                name="historical_identity_hydration",
+                status="skipped",
+                warnings=["owner_required_for_identity_hydration"],
+            )
+        result = HistoricalOrderIdentityHydrationService().apply(
+            self.db,
+            self.current_user,
+            restaurant_id=restaurant_id,
+            limit=10000,
+        )
+        return WorkspaceMachineStage(
+            name="historical_identity_hydration",
+            status="completed",
+            processed_count=int(result.get("scanned_count", 0)),
+            created_count=int(result.get("updated_orders_count", 0)),
+            skipped_count=int(result.get("skipped_count", 0)),
+            warnings=[f"sources:{','.join(result.get('sources', []))}"] if result.get("sources") else [],
         )
 
     def create_customer_refund_claim_orders(self, restaurant_id: int | None) -> WorkspaceMachineStage:

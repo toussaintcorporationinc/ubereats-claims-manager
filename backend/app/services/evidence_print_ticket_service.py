@@ -8,12 +8,13 @@ from io import BytesIO
 
 import qrcode
 from qrcode.image.svg import SvgPathImage
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.models import EvidenceRequestTask, EvidenceUploadLink, User
 from app.schemas.domain import EvidenceUploadLinkRead
 from app.services.audit import add_audit_log
 from app.services.evidence_request_service import create_upload_link
+from app.services.order_identity_resolution_service import resolve_identity_for_task
 
 EVIDENCE_LABELS = {
     "receipt": "Ticket de caisse",
@@ -119,19 +120,24 @@ def create_print_ticket(
         },
     )
     order = task.order
+    identity = resolve_identity_for_task(db, task)
+    order_label = (identity.best_order_label if identity else None) or order.uber_order_number
+    customer_name = identity.customer_name or order.customer_name
+    order_amount = identity.order_amount if identity.order_amount is not None else order.order_amount
+    currency = identity.currency or order.currency
     return EvidencePrintTicket(
         task_id=task.id,
         order_id=order.id,
         restaurant_id=order.restaurant_id,
         restaurant_name=order.restaurant.name,
-        uber_order_number=order.uber_order_number,
-        customer_name=order.customer_name,
+        uber_order_number=order_label,
+        customer_name=customer_name,
         required_evidence_type=task.required_evidence_type,
         required_evidence_label=evidence_label,
         title=task.title,
         description=task.description,
-        order_amount=order.order_amount,
-        currency=order.currency,
+        order_amount=order_amount,
+        currency=currency,
         due_at=task.due_at,
         ticket_reference=ticket_reference,
         upload_link=upload_link,
@@ -163,10 +169,18 @@ def build_ticket_html(
     evidence_label: str,
 ) -> str:
     order = task.order
-    amount = format_amount(order.order_amount, order.currency)
-    customer_name = order.customer_name or "-"
-    order_date = order.order_date.strftime("%Y-%m-%d") if order.order_date else "-"
-    order_time = order.order_time.strftime("%H:%M") if order.order_time else "-"
+    db = object_session(task)
+    identity = resolve_identity_for_task(db, task) if db is not None else None
+    order_label = (identity.best_order_label if identity else None) or order.uber_order_number
+    amount = format_amount(
+        identity.order_amount if identity and identity.order_amount is not None else order.order_amount,
+        (identity.currency or order.currency) if identity else order.currency,
+    )
+    customer_name = (identity.customer_name if identity else None) or order.customer_name or "-"
+    order_date_value = (identity.order_date if identity else None) or order.order_date
+    order_time_value = (identity.order_time if identity else None) or order.order_time
+    order_date = order_date_value.strftime("%Y-%m-%d") if order_date_value else "-"
+    order_time = order_time_value.strftime("%H:%M") if order_time_value else "-"
     due_at = format_datetime(task.due_at)
     expires_at = format_datetime(upload_link.expires_at)
     description = escape(task.description or "Prenez la photo demandee et envoyez-la avec ce QR code.")
@@ -175,7 +189,7 @@ def build_ticket_html(
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{escape(order.restaurant.name)} - preuve commande {escape(order.uber_order_number)}</title>
+  <title>{escape(order.restaurant.name)} - preuve commande {escape(order_label)}</title>
   <style>
     body {{ margin: 0; background: #fff; color: #111; font-family: Arial, sans-serif; }}
     .ticket {{ width: 72mm; padding: 5mm; }}
@@ -198,7 +212,7 @@ def build_ticket_html(
       <div class="muted">COMMANDE UBER - FICHE TERRAIN</div>
     </div>
     <div class="line"></div>
-    <div class="row"><span>Commande Uber</span><strong>{escape(order.uber_order_number)}</strong></div>
+    <div class="row"><span>Commande Uber</span><strong>{escape(order_label)}</strong></div>
     <div class="row"><span>Client</span><strong>{escape(customer_name)}</strong></div>
     <div class="row"><span>Date commande</span><strong>{escape(order_date)}</strong></div>
     <div class="row"><span>Heure commande</span><strong>{escape(order_time)}</strong></div>
