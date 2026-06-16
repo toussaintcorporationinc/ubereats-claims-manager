@@ -1315,6 +1315,7 @@ export type WorkspaceMachineRunPayload = {
   smart_import_batch_id?: number | null;
   sync_gmail?: boolean;
   run_autopilot?: boolean;
+  run_historical_cleanup?: boolean;
 };
 
 export type WorkspaceMachineStage = {
