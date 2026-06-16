@@ -607,6 +607,29 @@ def test_smart_import_preview_ignores_file_already_seen_in_previous_batch(client
     assert "exact_duplicate_ignored" in duplicate["warnings"]
 
 
+def test_smart_import_preview_does_not_ignore_previous_file_that_was_never_routed(client: TestClient) -> None:
+    csv_content = (
+        "Id. du restaurant,Nom du restaurant,Id. de la commande,Date de la commande,Statut de la commande,Ventes (TVA incluse),Devise\n"
+        "store-dup-stuck,Restaurant Dup Stuck,UBER-DUP-STUCK-001,01/05/2026,canceled,31,EUR\n"
+    )
+    first_preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("download.csv", csv_content.encode("utf-8"), "text/csv"))],
+    )
+    assert first_preview.status_code == 201
+
+    second_response = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("download-again.csv", csv_content.encode("utf-8"), "text/csv"))],
+    )
+
+    assert second_response.status_code == 201
+    duplicate = second_response.json()["files"][0]
+    assert duplicate["recommended_action"] == "import_uber_reporting"
+    assert duplicate["status"] == "previewed"
+    assert duplicate["destination_type"] is None
+
+
 def test_smart_confirm_does_not_route_exact_duplicate_even_if_forced(client: TestClient, db_session: Session) -> None:
     csv_content = (
         "Id. du restaurant,Nom du restaurant,Id. de la commande,Date de la commande,Statut de la commande,Ventes (TVA incluse),Devise\n"
@@ -1067,6 +1090,67 @@ def test_workspace_machine_creates_refund_case_from_ocr_image_text(
     dispute = db_session.scalar(select(UberCustomerRefundDispute).where(UberCustomerRefundDispute.claim_order_id == order.id))
     assert dispute is not None
     assert dispute.dispute_type == "order_not_received"
+
+
+def test_workspace_machine_reanalyzes_weak_current_batch_evidence_before_proof_intake(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    restaurant = Restaurant(name="Frit Dodo", sender_email="frit@example.com")
+    db_session.add(restaurant)
+    db_session.commit()
+    ocr_passes = iter(
+        [
+            "Ticket agrafe illisible\nRemboursement client\n",
+            (
+                "Restaurant: Frit Dodo\n"
+                "Client: Client Reanalyse\n"
+                "Commande: REOCR123\n"
+                "Date: 15/06/2026\n"
+                "Montant total: 21,80 EUR\n"
+                "Demande de remboursement - commande non recue\n"
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        evidence_analysis_service,
+        "extract_image_ocr_text",
+        lambda _content: next(ocr_passes),
+    )
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("preuve-faible.jpg", b"\xff\xd8\xff\xe0binary-image", "image/jpeg"))],
+    ).json()
+    confirm_response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [{"file_id": preview["files"][0]["id"], "action": "import_evidence_bulk"}],
+        },
+    )
+    assert confirm_response.status_code == 200
+    assert db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "REOCR123")) is None
+
+    response = client.post(
+        "/v1/workspace/machine/run",
+        json={
+            "trigger": "refunds",
+            "smart_import_batch_id": preview["batch_preview_id"],
+            "sync_gmail": False,
+            "run_autopilot": False,
+        },
+    )
+
+    assert response.status_code == 200
+    stages = {stage["name"]: stage for stage in response.json()["stages"]}
+    assert stages["evidence"]["processed_count"] >= 1
+    assert stages["proof_intake"]["created_count"] == 1, " | ".join(stages["proof_intake"]["warnings"])
+    order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "REOCR123"))
+    assert order is not None
+    assert order.restaurant_id == restaurant.id
+    assert order.customer_name == "Client Reanalyse"
+    assert str(order.order_amount) == "21.80"
 
 
 def test_workspace_machine_processes_targeted_smart_import_batch_even_when_not_recent(

@@ -891,6 +891,47 @@ def test_message_with_order_number_in_subject_is_linked(
     assert inbound_message.match_reason == "subject_match"
 
 
+def test_message_with_visible_internal_reference_is_linked(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="9f34dabf-15b6-45f9-9495-8f60330aef87",
+        thread_id="thread-visible-ref",
+    )
+    order.internal_reference = "#AEF87"
+    db_session.commit()
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-visible-ref",
+            thread_id="thread-unknown-visible-ref",
+            subject="Re: Contestation d'annulation de commande #AEF87",
+            body_text="Nous ne pouvons pas rembourser la commande #AEF87.",
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    inbound_message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-visible-ref")
+    )
+    assert inbound_message is not None
+    assert inbound_message.order_id == order.id
+    assert inbound_message.match_reason == "subject_match"
+    analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
+    assert analysis is not None
+    assert analysis.recommended_review_type == "refused"
+
+
 def test_message_without_match_stays_unlinked(
     client: TestClient,
     db_session: Session,
@@ -909,6 +950,63 @@ def test_message_without_match_stays_unlinked(
     assert inbound_message is not None
     assert inbound_message.order_id is None
     assert inbound_message.match_status == "unlinked"
+    analysis = db_session.scalar(
+        select(GmailResponseAnalysis).where(GmailResponseAnalysis.inbound_message_id == inbound_message.id)
+    )
+    assert analysis is not None
+    assert analysis.status == "manual_review"
+    assert analysis.reason.startswith("message_not_linked_to_order")
+
+
+def test_existing_unlinked_uber_message_is_relinked_on_next_sync(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-EXISTING-RELINK",
+        thread_id="thread-existing-relink",
+    )
+    order.internal_reference = "#4B8A2"
+    account = db_session.scalar(select(EmailAccount).where(EmailAccount.user_id == owner.id))
+    assert account is not None
+    message = InboundEmailMessage(
+        email_account_id=account.id,
+        provider="gmail",
+        provider_message_id="msg-existing-unlinked",
+        provider_thread_id="thread-not-known-yet",
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject="Re: Contestation commande #4B8A2",
+        snippet="We cannot reimburse order #4B8A2.",
+        body_text="We cannot reimburse order #4B8A2. No compensation is available.",
+        received_at=utc_now(),
+        raw_headers_json={},
+        match_status="unlinked",
+        match_reason="no_match",
+    )
+    db_session.add(message)
+    db_session.commit()
+    fake_gmail_provider.messages = []
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    db_session.refresh(message)
+    assert message.order_id == order.id
+    assert message.match_status == "linked"
+    assert message.match_reason in {"subject_match", "order_number_match"}
+    analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
+    assert analysis is not None
+    assert analysis.status == "applied"
+    assert analysis.recommended_review_type == "refused"
 
 
 def test_message_from_own_gmail_account_is_ignored(

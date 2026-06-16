@@ -1,7 +1,8 @@
+import re
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.auth import can_access_restaurant, get_accessible_restaurant_ids
 from app.core.config import get_settings
@@ -24,6 +25,7 @@ FINAL_ORDER_STATUSES = {"accepted", "payment_confirmed", "refused", "closed"}
 RESPONSE_UPDATABLE_ORDER_STATUSES = {"sent", "waiting_uber_response"}
 MAX_BODY_TEXT_LENGTH = 20000
 ACTIONABLE_NEGATIVE_REVIEW_TYPES = {"refused"}
+MAX_EXISTING_REPROCESS_MESSAGES = 1000
 
 
 @dataclass
@@ -156,6 +158,7 @@ class GmailInboundSyncService:
 
         query = f"newer_than:{lookback_days}d"
         result = GmailInboundSyncResult(status="success")
+        created_message_ids: set[int] = set()
         try:
             sync_for_account = getattr(self.provider, "sync_inbound_replies_for_account", None)
             if callable(sync_for_account):
@@ -169,6 +172,7 @@ class GmailInboundSyncService:
                 if self.message_exists(db, account, payload.provider_message_id):
                     continue
                 inbound_message = self.create_inbound_message(db, user, account, payload)
+                created_message_ids.add(inbound_message.id)
                 result.synced_messages += 1
                 if inbound_message.match_status == "linked":
                     result.linked_messages += 1
@@ -178,6 +182,22 @@ class GmailInboundSyncService:
                     result.ignored_messages += 1
                 else:
                     result.unlinked_messages += 1
+                    if analyze_responses and sender_matches_filter(
+                        inbound_message.from_email,
+                        get_settings().gmail_support_sender_filter,
+                    ):
+                        self.analyze_unlinked_message(db, user, inbound_message, result)
+
+            if analyze_responses:
+                self.reprocess_unreviewed_messages(
+                    db,
+                    user,
+                    account,
+                    result,
+                    apply_reviews=apply_reviews,
+                    max_messages=max_messages,
+                    exclude_message_ids=created_message_ids,
+                )
 
             sync_state.status = "success"
             sync_state.last_success_at = utc_now()
@@ -230,6 +250,62 @@ class GmailInboundSyncService:
             result.errors.append(analysis.error_message or "Gmail response analysis failed")
         else:
             result.analyzed_messages += 1
+
+    def analyze_unlinked_message(
+        self,
+        db: Session,
+        user: User,
+        inbound_message: InboundEmailMessage,
+        result: GmailInboundSyncResult,
+    ) -> None:
+        analysis = GmailResponseIntelligenceService().analyze_message(
+            db,
+            user,
+            inbound_message,
+            apply_review=False,
+        )
+        if analysis.status == "manual_review":
+            result.manual_review_messages += 1
+        elif analysis.status == "failed":
+            result.errors.append(analysis.error_message or "Gmail response analysis failed")
+        else:
+            result.analyzed_messages += 1
+
+    def reprocess_unreviewed_messages(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        result: GmailInboundSyncResult,
+        *,
+        apply_reviews: bool,
+        max_messages: int,
+        exclude_message_ids: set[int],
+    ) -> None:
+        messages = db.scalars(
+            select(InboundEmailMessage)
+            .where(
+                InboundEmailMessage.email_account_id == account.id,
+                InboundEmailMessage.review_status == "unreviewed",
+                InboundEmailMessage.match_status.in_(["linked", "unlinked"]),
+            )
+            .order_by(InboundEmailMessage.received_at.desc().nullslast(), InboundEmailMessage.id.desc())
+            .limit(max(max_messages, MAX_EXISTING_REPROCESS_MESSAGES))
+        ).all()
+        for message in messages:
+            if message.id in exclude_message_ids:
+                continue
+            if message.match_status == "unlinked":
+                match = self.match_message(db, user, account, inbound_payload_from_message(message))
+                if match.order is not None and match.match_status == "linked":
+                    self.record_linked_message(db, user, message, match.order, match_reason=match.match_reason)
+                    result.linked_messages += 1
+                    self.analyze_linked_message(db, user, message, result, apply_reviews=apply_reviews)
+                elif sender_matches_filter(message.from_email, get_settings().gmail_support_sender_filter):
+                    self.analyze_unlinked_message(db, user, message, result)
+                continue
+            if message.match_status == "linked" and message.order_id is not None:
+                self.analyze_linked_message(db, user, message, result, apply_reviews=apply_reviews)
 
     def run_autopilot_for_negative_responses(
         self,
@@ -368,8 +444,7 @@ class GmailInboundSyncService:
     def match_by_order_number(self, db: Session, user: User, text: str) -> ClaimOrder | None:
         if not text:
             return None
-        normalized_text = text.casefold()
-        query = select(ClaimOrder)
+        query = select(ClaimOrder).options(selectinload(ClaimOrder.customer_refund_disputes))
         accessible_restaurant_ids = get_accessible_restaurant_ids(db, user)
         if accessible_restaurant_ids is not None:
             if not accessible_restaurant_ids:
@@ -377,8 +452,9 @@ class GmailInboundSyncService:
             query = query.where(ClaimOrder.restaurant_id.in_(accessible_restaurant_ids))
 
         for order in db.scalars(query).all():
-            if order.uber_order_number and order.uber_order_number.casefold() in normalized_text:
-                return order
+            for candidate in order_identifier_candidates(order):
+                if text_contains_identifier(text, candidate):
+                    return order
         return None
 
     def record_linked_message(
@@ -431,6 +507,68 @@ class GmailInboundSyncService:
                 "match_reason": match_reason,
             },
         )
+
+
+def inbound_payload_from_message(message: InboundEmailMessage) -> InboundEmailPayload:
+    return InboundEmailPayload(
+        provider_message_id=message.provider_message_id,
+        provider_thread_id=message.provider_thread_id,
+        gmail_history_id=message.gmail_history_id,
+        from_email=message.from_email,
+        to_email=message.to_email,
+        subject=message.subject,
+        snippet=message.snippet,
+        body_text=message.body_text,
+        received_at=message.received_at,
+        raw_headers=message.raw_headers_json or {},
+    )
+
+
+def order_identifier_candidates(order: ClaimOrder) -> list[str]:
+    values = [order.uber_order_number, order.internal_reference]
+    if order.internal_reference and order.internal_reference.startswith("PROOF-"):
+        values.append(order.internal_reference.removeprefix("PROOF-"))
+    for dispute in order.customer_refund_disputes:
+        values.extend([dispute.uber_order_id, dispute.display_id, dispute.customer_refund_reference])
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            continue
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return result
+
+
+def text_contains_identifier(text: str, candidate: str) -> bool:
+    cleaned = candidate.strip()
+    if not cleaned:
+        return False
+    normalized_candidate = normalize_identifier(cleaned)
+    if len(normalized_candidate) < 4:
+        return False
+    if len(normalized_candidate) >= 12:
+        return normalized_candidate in normalize_identifier(text)
+    escaped = re.escape(cleaned.lstrip("#"))
+    if not escaped:
+        return False
+    pattern = re.compile(rf"(?<![A-Z0-9])#?{escaped}(?![A-Z0-9])", re.IGNORECASE)
+    if pattern.search(text):
+        return True
+    compact_text = normalize_identifier_with_boundaries(text)
+    compact_candidate = re.escape(normalized_candidate)
+    return re.search(rf"(?<![A-Z0-9]){compact_candidate}(?![A-Z0-9])", compact_text) is not None
+
+
+def normalize_identifier(value: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", value.upper())
+
+
+def normalize_identifier_with_boundaries(value: str) -> str:
+    return re.sub(r"[^A-Z0-9#]+", " ", value.upper())
 
 
 def same_email(left: str | None, right: str | None) -> bool:

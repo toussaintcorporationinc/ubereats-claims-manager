@@ -88,7 +88,12 @@ export default function DashboardPage() {
     setMachineResult(null);
 
     try {
-      const result = await api.runWorkspaceMachine({ trigger: "manual", sync_gmail: true, run_autopilot: true });
+      const result = await api.runWorkspaceMachine({
+        trigger: "manual",
+        sync_gmail: true,
+        run_autopilot: true,
+        run_historical_cleanup: true,
+      });
       setMachineResult(result);
       setNextActions(result.next_actions);
       await loadDashboard();
@@ -116,6 +121,7 @@ export default function DashboardPage() {
         smart_import_batch_id: preview.batch_preview_id,
         sync_gmail: true,
         run_autopilot: true,
+        run_historical_cleanup: true,
       });
       setMachineResult(result);
       setNextActions(result.next_actions);
@@ -153,6 +159,7 @@ export default function DashboardPage() {
         smart_import_batch_id: preview.batch_preview_id,
         sync_gmail: true,
         run_autopilot: true,
+        run_historical_cleanup: true,
       });
       setMachineResult(result);
       setNextActions(result.next_actions);

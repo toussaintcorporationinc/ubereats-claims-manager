@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
 from openpyxl import load_workbook
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -377,13 +377,10 @@ def mark_historical_exact_duplicate_preview_files(
                 SmartImportPreviewFile.id != preview_file.id,
                 SmartImportPreviewFile.batch_id != preview_file.batch_id,
                 SmartImportPreviewFile.checksum_sha256 == preview_file.checksum_sha256,
-                SmartImportPreviewFile.status.in_(("previewed", "confirmed", "routed", "manual_review")),
+                SmartImportPreviewFile.status == "routed",
                 SmartImportPreviewBatch.status.notin_(("cancelled", "expired")),
-                or_(
-                    SmartImportPreviewFile.status.in_(("confirmed", "routed", "manual_review")),
-                    SmartImportPreviewBatch.expires_at.is_(None),
-                    SmartImportPreviewBatch.expires_at > utc_now(),
-                ),
+                SmartImportPreviewFile.destination_type.in_(("uber_reporting_batch", "evidence_import_batch")),
+                SmartImportPreviewFile.destination_id.is_not(None),
             )
             .order_by(SmartImportPreviewFile.id)
         ).all()

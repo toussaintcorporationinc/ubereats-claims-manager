@@ -45,6 +45,7 @@ CONTEXTUAL_DISPLAY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 DISPLAY_PATTERN = re.compile(r"\b([A-Z0-9]{5,10})\b")
+HASH_DISPLAY_PATTERN = re.compile(r"(?<![A-Z0-9])#\s*([A-Z0-9]{4,10})(?![A-Z0-9])", re.IGNORECASE)
 AMOUNT_PATTERN = re.compile(r"(?<!\d)(\d{1,4}(?:[.,]\d{1,2}))(?!\d)")
 LABELED_AMOUNT_PATTERN = re.compile(
     r"(?:montant\s*(?:total)?|total|amount|ventes|prix|remboursement|deduction|deduit)"
@@ -52,12 +53,65 @@ LABELED_AMOUNT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 DATE_PATTERN = re.compile(r"\b(\d{4}[-/]\d{2}[-/]\d{2}|\d{2}[/-]\d{2}[/-]\d{4})\b")
-CUSTOMER_LABEL_PATTERN = re.compile(
-    r"(?:nom\s*(?:du)?\s*client|client|customer\s*(?:name)?|eater)\s*[:=-]\s*([^\n\r,;|]{2,80})",
-    re.IGNORECASE,
+CUSTOMER_LABEL_PATTERNS = (
+    re.compile(
+        r"(?:nom\s*(?:du)?\s*client|client|customer\s*(?:name)?|eater)\s*[:=-]\s*([^\n\r,;|]{2,80})",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:a|à)\s*pr[eé]par(?:er|e|é)?\s*pour\s+([^\n\r,;|]{2,80})",
+        re.IGNORECASE,
+    ),
+    re.compile(r"prepared\s+for\s+([^\n\r,;|]{2,80})", re.IGNORECASE),
 )
 RESTAURANT_LABEL_PATTERN = re.compile(
     r"(?:nom\s*(?:du)?\s*restaurant|restaurant|store|merchant)\s*[:=-]\s*([^\n\r,;|]{2,100})",
+    re.IGNORECASE,
+)
+MONTH_NAMES = {
+    "janvier": 1,
+    "jan": 1,
+    "january": 1,
+    "february": 2,
+    "fevrier": 2,
+    "février": 2,
+    "feb": 2,
+    "mars": 3,
+    "march": 3,
+    "mar": 3,
+    "avril": 4,
+    "april": 4,
+    "apr": 4,
+    "mai": 5,
+    "may": 5,
+    "juin": 6,
+    "june": 6,
+    "jun": 6,
+    "juillet": 7,
+    "july": 7,
+    "jul": 7,
+    "aout": 8,
+    "août": 8,
+    "august": 8,
+    "aug": 8,
+    "septembre": 9,
+    "september": 9,
+    "sep": 9,
+    "octobre": 10,
+    "october": 10,
+    "oct": 10,
+    "novembre": 11,
+    "november": 11,
+    "nov": 11,
+    "decembre": 12,
+    "décembre": 12,
+    "december": 12,
+    "dec": 12,
+}
+MONTH_NAME_PATTERN = re.compile(
+    r"\b(?:(?:effectu[eé]e|pass[eé]e|created|ordered|date)\s*(?:le|on)?\s*)?"
+    r"(?:(\d{1,2})\s+([A-Za-zÀ-ÿ]+)|([A-Za-zÀ-ÿ]+)\s+(\d{1,2}))"
+    r"(?:[\s,]+(\d{4}))?\b",
     re.IGNORECASE,
 )
 
@@ -89,6 +143,7 @@ class EvidenceAIAnalysisService:
         restaurant_id: int | None,
         limit: int,
         batch_ids: list[int] | None = None,
+        reanalyze_weak: bool = False,
     ) -> dict[str, object]:
         from app.services.evidence_matching_service import EvidenceMatchingService
 
@@ -126,6 +181,27 @@ class EvidenceAIAnalysisService:
                 remaining_limit -= len(pending_files)
 
             matching_service = EvidenceMatchingService()
+            if reanalyze_weak and remaining_limit > 0:
+                weak_files = [
+                    imported_file
+                    for imported_file in batch.files
+                    if imported_file.status == "analyzed"
+                    and not has_attached_decision(imported_file)
+                    and should_reanalyze_weak_file(imported_file)
+                ]
+                for imported_file in weak_files[:remaining_limit]:
+                    try:
+                        improved = self.reanalyze_file_if_improved(db, current_user, imported_file, matching_service)
+                        if improved:
+                            analyzed_files_count += 1
+                            latest = latest_analysis_result(imported_file)
+                            if latest is not None and latest.status == "manual_review":
+                                needs_review_count += 1
+                    except Exception as exc:  # noqa: BLE001 - one bad file must not stop the whole GO run.
+                        failed_files_count += 1
+                        errors.append(f"file {imported_file.id}: {exc}")
+                    remaining_limit -= 1
+
             for imported_file in batch.files:
                 if remaining_limit <= 0:
                     break
@@ -150,6 +226,44 @@ class EvidenceAIAnalysisService:
             "failed_files_count": failed_files_count,
             "errors": errors,
         }
+
+    def reanalyze_file_if_improved(
+        self,
+        db: Session,
+        current_user: User,
+        imported_file: EvidenceImportedFile,
+        matching_service,
+    ) -> bool:
+        previous = latest_analysis_result(imported_file)
+        if previous is None:
+            return False
+        payload = self.analyze_file(db, imported_file, provider="fake")
+        if analysis_payload_score(payload) <= analysis_result_score(previous):
+            return False
+        result = build_analysis_result(imported_file, "fake", payload)
+        db.add(result)
+        db.flush()
+        db.expire(imported_file, ["analysis_results"])
+        candidates = matching_service.create_candidates(db, current_user, imported_file, result)
+        result.matching_confidence = max((candidate.match_score for candidate in candidates), default=Decimal("0"))
+        imported_file.status = "analyzed"
+        imported_file.updated_at = utc_now()
+        db.expire(imported_file, ["analysis_results", "match_candidates", "attachment_decisions"])
+        add_audit_log(
+            db,
+            entity_type="evidence_imported_file",
+            entity_id=imported_file.id,
+            action="evidence_import_file.reanalyzed_with_stronger_identity",
+            user_id=current_user.id,
+            new_value={
+                "previous_score": analysis_result_score(previous),
+                "new_score": analysis_payload_score(payload),
+                "detected_order": payload.uber_order_number or payload.display_id,
+                "detected_restaurant": payload.restaurant_name,
+                "detected_customer": payload.customer_name,
+            },
+        )
+        return True
 
     def analyze_batch(
         self,
@@ -183,40 +297,7 @@ class EvidenceAIAnalysisService:
         for imported_file in files:
             try:
                 payload = self.analyze_file(db, imported_file, provider)
-                result = EvidenceAnalysisResult(
-                    imported_file_id=imported_file.id,
-                    provider=provider,
-                    model_name=get_settings().openai_evidence_model if provider == "openai_vision" else None,
-                    status="manual_review" if payload.needs_manual_review else "success",
-                    extracted_text=payload.extracted_text,
-                    detected_evidence_type=payload.detected_evidence_type,
-                    detected_restaurant_name=payload.restaurant_name,
-                    detected_uber_order_number=payload.uber_order_number,
-                    detected_display_id=payload.display_id,
-                    detected_order_date=payload.order_date,
-                    detected_order_amount=payload.order_amount,
-                    detected_currency=payload.currency,
-                    detected_keywords_json=payload.keywords,
-                    classification_confidence=payload.classification_confidence,
-                    extraction_confidence=payload.extraction_confidence,
-                    matching_confidence=Decimal("0"),
-                    raw_result_json={
-                        "detected_evidence_type": payload.detected_evidence_type,
-                        "restaurant_name": payload.restaurant_name,
-                        "uber_order_number": payload.uber_order_number,
-                        "display_id": payload.display_id,
-                        "order_date": payload.order_date.isoformat() if payload.order_date else None,
-                        "order_amount": str(payload.order_amount) if payload.order_amount is not None else None,
-                        "currency": payload.currency,
-                        "customer_name": payload.customer_name,
-                        "keywords": payload.keywords,
-                        "classification_confidence": str(payload.classification_confidence),
-                        "extraction_confidence": str(payload.extraction_confidence),
-                        "needs_manual_review": payload.needs_manual_review,
-                        "notes": payload.notes,
-                        "unified_order_proof": looks_like_unified_order_proof(payload.extracted_text.lower()),
-                    },
-                )
+                result = build_analysis_result(imported_file, provider, payload)
                 db.add(result)
                 db.flush()
                 candidates = matching_service.create_candidates(db, current_user, imported_file, result)
@@ -264,7 +345,8 @@ class EvidenceAIAnalysisService:
         order_number = extract_order_number(text)
         display_id = extract_display_id(text, order_number)
         amount = extract_amount(text)
-        detected_date = extract_date(text)
+        fallback_year = imported_file.created_at.year if imported_file.created_at else None
+        detected_date = extract_date(text, fallback_year=fallback_year)
         restaurant_name = detect_restaurant_name(db, text, imported_file.batch.restaurant_id)
         customer_name = detect_customer_name(db, text, imported_file.batch.restaurant_id, restaurant_name)
         identity_score = sum(1 for value in (order_number, display_id, restaurant_name, customer_name, amount, detected_date) if value)
@@ -304,6 +386,47 @@ def build_local_text(imported_file: EvidenceImportedFile) -> str:
     except (BulkEvidenceImportError, UnicodeDecodeError):
         decoded = ""
     return f"{filename_text}\n{batch_context}\n{decoded}".strip()
+
+
+def build_analysis_result(
+    imported_file: EvidenceImportedFile,
+    provider: str,
+    payload: EvidenceAnalysisPayload,
+) -> EvidenceAnalysisResult:
+    return EvidenceAnalysisResult(
+        imported_file_id=imported_file.id,
+        provider=provider,
+        model_name=get_settings().openai_evidence_model if provider == "openai_vision" else None,
+        status="manual_review" if payload.needs_manual_review else "success",
+        extracted_text=payload.extracted_text,
+        detected_evidence_type=payload.detected_evidence_type,
+        detected_restaurant_name=payload.restaurant_name,
+        detected_uber_order_number=payload.uber_order_number,
+        detected_display_id=payload.display_id,
+        detected_order_date=payload.order_date,
+        detected_order_amount=payload.order_amount,
+        detected_currency=payload.currency,
+        detected_keywords_json=payload.keywords,
+        classification_confidence=payload.classification_confidence,
+        extraction_confidence=payload.extraction_confidence,
+        matching_confidence=Decimal("0"),
+        raw_result_json={
+            "detected_evidence_type": payload.detected_evidence_type,
+            "restaurant_name": payload.restaurant_name,
+            "uber_order_number": payload.uber_order_number,
+            "display_id": payload.display_id,
+            "order_date": payload.order_date.isoformat() if payload.order_date else None,
+            "order_amount": str(payload.order_amount) if payload.order_amount is not None else None,
+            "currency": payload.currency,
+            "customer_name": payload.customer_name,
+            "keywords": payload.keywords,
+            "classification_confidence": str(payload.classification_confidence),
+            "extraction_confidence": str(payload.extraction_confidence),
+            "needs_manual_review": payload.needs_manual_review,
+            "notes": payload.notes,
+            "unified_order_proof": looks_like_unified_order_proof(payload.extracted_text.lower()),
+        },
+    )
 
 
 def extract_document_text(suffix: str, content: bytes) -> str:
@@ -392,14 +515,113 @@ def extract_image_ocr_text(content: bytes) -> str:
 
         with Image.open(BytesIO(content)) as image:
             normalized = ImageOps.exif_transpose(image)
-            if normalized.mode not in {"L", "RGB"}:
-                normalized = normalized.convert("RGB")
-            try:
-                return pytesseract.image_to_string(normalized, lang="fra+eng").strip()
-            except pytesseract.TesseractError:
-                return pytesseract.image_to_string(normalized).strip()
+            variants = build_ocr_image_variants(normalized)
+            candidates: list[str] = []
+            for variant in variants:
+                for config in ("--psm 6", "--psm 4", "--psm 11", "--psm 12", ""):
+                    try:
+                        text = pytesseract.image_to_string(variant, lang="fra+eng", config=config).strip()
+                    except pytesseract.TesseractError:
+                        text = pytesseract.image_to_string(variant, config=config).strip()
+                    if text:
+                        candidates.append(text)
+            return best_ocr_text(candidates)
     except Exception:
         return ""
+
+
+def build_ocr_image_variants(image) -> list:
+    from PIL import ImageFilter, ImageOps
+
+    if image.mode not in {"L", "RGB"}:
+        image = image.convert("RGB")
+    base = image.convert("RGB")
+    crops = [base]
+    width, height = base.size
+    if width >= 400 and height >= 400:
+        crops.extend(
+            [
+                base.crop((0, 0, width, int(height * 0.42))),
+                base.crop((0, int(height * 0.25), width, int(height * 0.75))),
+                base.crop((0, int(height * 0.58), width, height)),
+            ]
+        )
+        if width > height:
+            crops.extend(
+                [
+                    base.crop((0, 0, int(width * 0.55), height)),
+                    base.crop((int(width * 0.45), 0, width, height)),
+                ]
+            )
+    variants = []
+    for crop in crops:
+        variants.extend(build_single_crop_ocr_variants(crop, ImageFilter, ImageOps))
+    return variants
+
+
+def build_single_crop_ocr_variants(image, image_filter, image_ops) -> list:
+    grayscale = image_ops.grayscale(image)
+    max_side = max(grayscale.size)
+    scale = 2 if max_side < 2600 else 1
+    if scale > 1:
+        grayscale = grayscale.resize((grayscale.width * scale, grayscale.height * scale))
+    contrasted = image_ops.autocontrast(grayscale)
+    sharpened = contrasted.filter(image_filter.SHARPEN)
+    sharpened_twice = sharpened.filter(image_filter.SHARPEN)
+    threshold = contrasted.point(lambda pixel: 255 if pixel > 178 else 0)
+    soft_threshold = contrasted.point(lambda pixel: 255 if pixel > 145 else 0)
+    return [image, grayscale, contrasted, sharpened, sharpened_twice, threshold, soft_threshold]
+
+
+def best_ocr_text(candidates: list[str]) -> str:
+    if not candidates:
+        return ""
+    unique: dict[str, str] = {}
+    for candidate in candidates:
+        normalized = normalize_for_match(candidate)
+        if normalized:
+            unique.setdefault(normalized, candidate)
+    if not unique:
+        return max(candidates, key=len)
+
+    def score(text: str) -> tuple[int, int]:
+        normalized = normalize_for_match(text)
+        business_hits = sum(
+            1
+            for token in (
+                "commande",
+                "order",
+                "client",
+                "restaurant",
+                "total",
+                "montant",
+                "uber",
+                "prepare",
+                "remboursement",
+                "annulation",
+            )
+            if token in normalized
+        )
+        return (business_hits, len(text))
+
+    ranked = sorted(unique.values(), key=score, reverse=True)
+    return merge_ocr_candidates(ranked[:4])
+
+
+def merge_ocr_candidates(candidates: list[str]) -> str:
+    lines: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        for line in candidate.splitlines():
+            cleaned = re.sub(r"\s+", " ", line).strip()
+            if not cleaned:
+                continue
+            normalized = normalize_for_match(cleaned)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            lines.append(cleaned)
+    return "\n".join(lines)
 
 
 def classify_evidence_type(text: str, filename: str) -> tuple[str, list[str], Decimal]:
@@ -468,6 +690,11 @@ def extract_display_id(text: str, order_number: str | None) -> str | None:
     if order_number:
         return None
     normalized_text = normalize_identifier_text(text)
+    hash_match = HASH_DISPLAY_PATTERN.search(normalized_text)
+    if hash_match:
+        cleaned = clean_display_id(hash_match.group(1))
+        if valid_display_id(cleaned):
+            return f"#{cleaned}"
     match = CONTEXTUAL_DISPLAY_PATTERN.search(normalized_text)
     if match:
         cleaned = clean_display_id(match.group(1))
@@ -508,18 +735,34 @@ def is_percent_match(text: str, match: re.Match[str]) -> bool:
     return "%" in before or "%" in after
 
 
-def extract_date(text: str) -> date | None:
+def extract_date(text: str, *, fallback_year: int | None = None) -> date | None:
     match = DATE_PATTERN.search(text)
-    if not match:
-        return None
-    raw = match.group(1)
-    try:
-        if raw[4:5] in {"-", "/"}:
-            return date.fromisoformat(raw.replace("/", "-"))
-        day, month, year = re.split(r"[/-]", raw)
-        return date(int(year), int(month), int(day))
-    except (ValueError, IndexError):
-        return None
+    if match:
+        raw = match.group(1)
+        try:
+            if raw[4:5] in {"-", "/"}:
+                return date.fromisoformat(raw.replace("/", "-"))
+            day, month, year = re.split(r"[/-]", raw)
+            return date(int(year), int(month), int(day))
+        except (ValueError, IndexError):
+            pass
+    for month_match in MONTH_NAME_PATTERN.finditer(text):
+        if month_match.group(2):
+            day_raw = month_match.group(1)
+            month_raw = month_match.group(2)
+        else:
+            month_raw = month_match.group(3)
+            day_raw = month_match.group(4)
+        year_raw = month_match.group(5)
+        month_number = MONTH_NAMES.get(month_raw.lower())
+        year = int(year_raw) if year_raw else fallback_year
+        if month_number is None or year is None:
+            continue
+        try:
+            return date(year, month_number, int(day_raw))
+        except ValueError:
+            continue
+    return None
 
 
 def detect_restaurant_name(db: Session, text: str, batch_restaurant_id: int | None) -> str | None:
@@ -593,14 +836,23 @@ def valid_display_id(value: str | None) -> bool:
         return False
     if value in {"TICKET", "CLIENT", "ORDER", "COMMANDE", "RECEIPT"}:
         return False
+    if value.isdigit():
+        return False
+    if re.fullmatch(r"20\d{6}", value):
+        return False
     return any(char.isdigit() for char in value)
 
 
 def extract_labeled_customer_name(text: str) -> str | None:
-    match = CUSTOMER_LABEL_PATTERN.search(text)
-    if not match:
-        return None
-    return clean_customer_name(match.group(1))
+    for pattern in CUSTOMER_LABEL_PATTERNS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        for value in match.groups():
+            cleaned = clean_customer_name(value)
+            if cleaned:
+                return cleaned
+    return None
 
 
 def extract_labeled_restaurant_name(text: str) -> str | None:
@@ -631,7 +883,23 @@ def clean_customer_name(value: str) -> str | None:
         return None
     if re.fullmatch(r"\d+(?:[.,]\d+)?\s*(eur|euro|euros|percent|pourcent|%)?", normalized):
         return None
-    if normalized in {"tva", "ht", "ttc", "eur", "euro", "euros"}:
+    blocked_labels = {
+        "tva",
+        "ht",
+        "ttc",
+        "eur",
+        "euro",
+        "euros",
+        "nouveau client",
+        "client rembourse",
+        "client rembourse",
+        "couverts jetables",
+        "couverts jet",
+        "montant total",
+        "sous total",
+        "frais de livraison",
+    }
+    if normalized in blocked_labels:
         return None
     letters = [char for char in cleaned if char.isalpha()]
     if len(letters) < 2:
@@ -711,6 +979,48 @@ def latest_analysis_result(imported_file: EvidenceImportedFile) -> EvidenceAnaly
     if not imported_file.analysis_results:
         return None
     return sorted(imported_file.analysis_results, key=lambda item: item.id)[-1]
+
+
+def should_reanalyze_weak_file(imported_file: EvidenceImportedFile) -> bool:
+    latest = latest_analysis_result(imported_file)
+    if latest is None:
+        return False
+    if latest.status not in {"manual_review", "success"}:
+        return False
+    if latest.raw_result_json and latest.raw_result_json.get("reanalysis_locked"):
+        return False
+    return analysis_result_score(latest) < 5
+
+
+def analysis_payload_score(payload: EvidenceAnalysisPayload) -> int:
+    return sum(
+        1
+        for value in (
+            payload.uber_order_number or payload.display_id,
+            payload.restaurant_name,
+            payload.customer_name,
+            payload.order_amount,
+            payload.order_date,
+            payload.detected_evidence_type != "unknown",
+        )
+        if value
+    )
+
+
+def analysis_result_score(result: EvidenceAnalysisResult) -> int:
+    raw = result.raw_result_json or {}
+    return sum(
+        1
+        for value in (
+            result.detected_uber_order_number or result.detected_display_id,
+            result.detected_restaurant_name,
+            raw.get("customer_name"),
+            result.detected_order_amount,
+            result.detected_order_date,
+            result.detected_evidence_type != "unknown",
+        )
+        if value
+    )
 
 
 def has_attached_decision(imported_file: EvidenceImportedFile) -> bool:
