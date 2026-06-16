@@ -58,7 +58,7 @@ class GmailResponseIntelligenceService:
         limit: int = 100,
         only_unreviewed: bool = True,
     ) -> tuple[GmailResponseAnalyzeSummary, list[GmailResponseAnalysis]]:
-        query = self.visible_messages_query(db, user).where(InboundEmailMessage.match_status == "linked")
+        query = self.visible_messages_query(db, user).where(InboundEmailMessage.match_status.in_(["linked", "unlinked"]))
         if only_unreviewed:
             query = query.where(InboundEmailMessage.review_status == "unreviewed")
         messages = db.scalars(
@@ -116,7 +116,7 @@ class GmailResponseIntelligenceService:
 
         if message.match_status != "linked" or order is None:
             analysis.status = "manual_review"
-            analysis.reason = "message_not_linked_to_order"
+            analysis.reason = f"message_not_linked_to_order:{classification.reason}"
             analysis.error_message = None
             db.flush()
             return analysis

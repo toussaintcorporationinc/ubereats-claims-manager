@@ -31,8 +31,8 @@ from app.services.smart_import_routing_service import route_manual_review_files_
 from app.services.workspace_action_service import WorkspaceActionService
 from app.services.workspace_unclassified_service import WorkspaceUnclassifiedService
 
-MACHINE_EVIDENCE_ANALYSIS_LIMIT = 250
-MACHINE_PROOF_INTAKE_LIMIT = 250
+MACHINE_EVIDENCE_ANALYSIS_LIMIT = 2000
+MACHINE_PROOF_INTAKE_LIMIT = 2000
 MACHINE_FULL_IDENTITY_HYDRATION_LIMIT = 10000
 
 
@@ -315,6 +315,7 @@ class WorkspaceMachineService:
             restaurant_id=payload.restaurant_id,
             limit=MACHINE_EVIDENCE_ANALYSIS_LIMIT,
             batch_ids=evidence_batch_ids,
+            reanalyze_weak=payload.smart_import_batch_id is not None,
         )
         warnings = [*recalc.get("errors", []), *evidence_result.get("errors", [])]
         processed_count = (

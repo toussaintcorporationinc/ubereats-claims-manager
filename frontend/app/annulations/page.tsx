@@ -8,7 +8,7 @@ export default function AnnulationsPage() {
         title="Annulations"
         description="Tickets, exports, photos ou ZIP : depose les preuves de commandes annulees en masse, TENNET rapproche les annulations, verifie les paiements et garde les blocages visibles."
         instruction="IMPORTEZ LES PREUVES DE DEMANDE D'ANNULATION"
-        fileButtonLabel="Deposer preuves annulation"
+        fileButtonLabel="Deposer preuves d'annulation"
         trigger="cancellations"
       />
 

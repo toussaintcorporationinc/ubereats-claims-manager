@@ -1,7 +1,8 @@
+import re
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.auth import can_access_restaurant, get_accessible_restaurant_ids
 from app.core.config import get_settings
@@ -23,7 +24,10 @@ from app.services.gmail_response_intelligence_service import GmailResponseIntell
 FINAL_ORDER_STATUSES = {"accepted", "payment_confirmed", "refused", "closed"}
 RESPONSE_UPDATABLE_ORDER_STATUSES = {"sent", "waiting_uber_response"}
 MAX_BODY_TEXT_LENGTH = 20000
+MAX_DB_STRING_LENGTH = 255
 ACTIONABLE_NEGATIVE_REVIEW_TYPES = {"refused"}
+MAX_EXISTING_REPROCESS_MESSAGES = 1000
+OrderIdentifierIndex = list[tuple[ClaimOrder, list[str]]]
 
 
 @dataclass
@@ -156,6 +160,7 @@ class GmailInboundSyncService:
 
         query = f"newer_than:{lookback_days}d"
         result = GmailInboundSyncResult(status="success")
+        created_message_ids: set[int] = set()
         try:
             sync_for_account = getattr(self.provider, "sync_inbound_replies_for_account", None)
             if callable(sync_for_account):
@@ -169,6 +174,7 @@ class GmailInboundSyncService:
                 if self.message_exists(db, account, payload.provider_message_id):
                     continue
                 inbound_message = self.create_inbound_message(db, user, account, payload)
+                created_message_ids.add(inbound_message.id)
                 result.synced_messages += 1
                 if inbound_message.match_status == "linked":
                     result.linked_messages += 1
@@ -178,6 +184,22 @@ class GmailInboundSyncService:
                     result.ignored_messages += 1
                 else:
                     result.unlinked_messages += 1
+                    if analyze_responses and sender_matches_filter(
+                        inbound_message.from_email,
+                        get_settings().gmail_support_sender_filter,
+                    ):
+                        self.analyze_unlinked_message(db, user, inbound_message, result)
+
+            if analyze_responses:
+                self.reprocess_unreviewed_messages(
+                    db,
+                    user,
+                    account,
+                    result,
+                    apply_reviews=apply_reviews,
+                    max_messages=max_messages,
+                    exclude_message_ids=created_message_ids,
+                )
 
             sync_state.status = "success"
             sync_state.last_success_at = utc_now()
@@ -231,6 +253,69 @@ class GmailInboundSyncService:
         else:
             result.analyzed_messages += 1
 
+    def analyze_unlinked_message(
+        self,
+        db: Session,
+        user: User,
+        inbound_message: InboundEmailMessage,
+        result: GmailInboundSyncResult,
+    ) -> None:
+        analysis = GmailResponseIntelligenceService().analyze_message(
+            db,
+            user,
+            inbound_message,
+            apply_review=False,
+        )
+        if analysis.status == "manual_review":
+            result.manual_review_messages += 1
+        elif analysis.status == "failed":
+            result.errors.append(analysis.error_message or "Gmail response analysis failed")
+        else:
+            result.analyzed_messages += 1
+
+    def reprocess_unreviewed_messages(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        result: GmailInboundSyncResult,
+        *,
+        apply_reviews: bool,
+        max_messages: int,
+        exclude_message_ids: set[int],
+    ) -> None:
+        order_identifier_index = self.build_order_identifier_index(db, user)
+        messages = db.scalars(
+            select(InboundEmailMessage)
+            .where(
+                InboundEmailMessage.email_account_id == account.id,
+                InboundEmailMessage.review_status == "unreviewed",
+                InboundEmailMessage.match_status.in_(["linked", "unlinked"]),
+            )
+            .order_by(InboundEmailMessage.received_at.desc().nullslast(), InboundEmailMessage.id.desc())
+            .limit(max(0, min(max_messages, MAX_EXISTING_REPROCESS_MESSAGES)))
+        ).all()
+        for message in messages:
+            if message.id in exclude_message_ids:
+                continue
+            if message.match_status == "unlinked":
+                match = self.match_message(
+                    db,
+                    user,
+                    account,
+                    inbound_payload_from_message(message),
+                    order_identifier_index=order_identifier_index,
+                )
+                if match.order is not None and match.match_status == "linked":
+                    self.record_linked_message(db, user, message, match.order, match_reason=match.match_reason)
+                    result.linked_messages += 1
+                    self.analyze_linked_message(db, user, message, result, apply_reviews=apply_reviews)
+                elif sender_matches_filter(message.from_email, get_settings().gmail_support_sender_filter):
+                    self.analyze_unlinked_message(db, user, message, result)
+                continue
+            if message.match_status == "linked" and message.order_id is not None:
+                self.analyze_linked_message(db, user, message, result, apply_reviews=apply_reviews)
+
     def run_autopilot_for_negative_responses(
         self,
         db: Session,
@@ -281,12 +366,12 @@ class GmailInboundSyncService:
             email_account_id=account.id,
             order_id=match.order.id if match.order else None,
             provider="gmail",
-            provider_message_id=payload.provider_message_id,
-            provider_thread_id=payload.provider_thread_id,
-            gmail_history_id=payload.gmail_history_id,
-            from_email=payload.from_email,
-            to_email=payload.to_email,
-            subject=payload.subject,
+            provider_message_id=truncate_db_string(payload.provider_message_id),
+            provider_thread_id=truncate_db_string(payload.provider_thread_id),
+            gmail_history_id=truncate_db_string(payload.gmail_history_id),
+            from_email=truncate_db_string(payload.from_email),
+            to_email=truncate_db_string(payload.to_email),
+            subject=truncate_db_string(payload.subject),
             snippet=payload.snippet,
             body_text=(payload.body_text or "")[:MAX_BODY_TEXT_LENGTH] if payload.body_text else None,
             received_at=payload.received_at,
@@ -320,6 +405,8 @@ class GmailInboundSyncService:
         user: User,
         account: EmailAccount,
         payload: InboundEmailPayload,
+        *,
+        order_identifier_index: OrderIdentifierIndex | None = None,
     ) -> MatchResult:
         if same_email(payload.from_email, account.email_address):
             return MatchResult(None, "ignored", "ignored_sender")
@@ -331,11 +418,21 @@ class GmailInboundSyncService:
         if not sender_matches_filter(payload.from_email, get_settings().gmail_support_sender_filter):
             return MatchResult(None, "ignored", "ignored_sender")
 
-        order_from_subject = self.match_by_order_number(db, user, payload.subject or "")
+        order_from_subject = self.match_by_order_number(
+            db,
+            user,
+            payload.subject or "",
+            order_identifier_index=order_identifier_index,
+        )
         if order_from_subject is not None:
             return MatchResult(order_from_subject, "linked", "subject_match")
 
-        order_from_body = self.match_by_order_number(db, user, payload.body_text or "")
+        order_from_body = self.match_by_order_number(
+            db,
+            user,
+            payload.body_text or "",
+            order_identifier_index=order_identifier_index,
+        )
         if order_from_body is not None:
             return MatchResult(order_from_body, "linked", "order_number_match")
 
@@ -365,20 +462,36 @@ class GmailInboundSyncService:
             return provider_draft.email_draft.order
         return None
 
-    def match_by_order_number(self, db: Session, user: User, text: str) -> ClaimOrder | None:
-        if not text:
-            return None
-        normalized_text = text.casefold()
-        query = select(ClaimOrder)
+    def build_order_identifier_index(self, db: Session, user: User) -> OrderIdentifierIndex:
+        query = select(ClaimOrder).options(selectinload(ClaimOrder.customer_refund_disputes))
         accessible_restaurant_ids = get_accessible_restaurant_ids(db, user)
         if accessible_restaurant_ids is not None:
             if not accessible_restaurant_ids:
-                return None
+                return []
             query = query.where(ClaimOrder.restaurant_id.in_(accessible_restaurant_ids))
+        return [
+            (order, candidates)
+            for order in db.scalars(query).all()
+            if (candidates := order_identifier_candidates(order))
+        ]
 
-        for order in db.scalars(query).all():
-            if order.uber_order_number and order.uber_order_number.casefold() in normalized_text:
-                return order
+    def match_by_order_number(
+        self,
+        db: Session,
+        user: User,
+        text: str,
+        *,
+        order_identifier_index: OrderIdentifierIndex | None = None,
+    ) -> ClaimOrder | None:
+        if not text:
+            return None
+        index = order_identifier_index
+        if index is None:
+            index = self.build_order_identifier_index(db, user)
+        for order, candidates in index:
+            for candidate in candidates:
+                if text_contains_identifier(text, candidate):
+                    return order
         return None
 
     def record_linked_message(
@@ -431,6 +544,74 @@ class GmailInboundSyncService:
                 "match_reason": match_reason,
             },
         )
+
+
+def inbound_payload_from_message(message: InboundEmailMessage) -> InboundEmailPayload:
+    return InboundEmailPayload(
+        provider_message_id=message.provider_message_id,
+        provider_thread_id=message.provider_thread_id,
+        gmail_history_id=message.gmail_history_id,
+        from_email=message.from_email,
+        to_email=message.to_email,
+        subject=message.subject,
+        snippet=message.snippet,
+        body_text=message.body_text,
+        received_at=message.received_at,
+        raw_headers=message.raw_headers_json or {},
+    )
+
+
+def order_identifier_candidates(order: ClaimOrder) -> list[str]:
+    values = [order.uber_order_number, order.internal_reference]
+    if order.internal_reference and order.internal_reference.startswith("PROOF-"):
+        values.append(order.internal_reference.removeprefix("PROOF-"))
+    for dispute in order.customer_refund_disputes:
+        values.extend([dispute.uber_order_id, dispute.display_id, dispute.customer_refund_reference])
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            continue
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return result
+
+
+def text_contains_identifier(text: str, candidate: str) -> bool:
+    cleaned = candidate.strip()
+    if not cleaned:
+        return False
+    normalized_candidate = normalize_identifier(cleaned)
+    if len(normalized_candidate) < 4:
+        return False
+    if len(normalized_candidate) >= 12:
+        return normalized_candidate in normalize_identifier(text)
+    escaped = re.escape(cleaned.lstrip("#"))
+    if not escaped:
+        return False
+    pattern = re.compile(rf"(?<![A-Z0-9])#?{escaped}(?![A-Z0-9])", re.IGNORECASE)
+    if pattern.search(text):
+        return True
+    compact_text = normalize_identifier_with_boundaries(text)
+    compact_candidate = re.escape(normalized_candidate)
+    return re.search(rf"(?<![A-Z0-9]){compact_candidate}(?![A-Z0-9])", compact_text) is not None
+
+
+def normalize_identifier(value: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", value.upper())
+
+
+def normalize_identifier_with_boundaries(value: str) -> str:
+    return re.sub(r"[^A-Z0-9#]+", " ", value.upper())
+
+
+def truncate_db_string(value: str | None, max_length: int = MAX_DB_STRING_LENGTH) -> str | None:
+    if value is None:
+        return None
+    return value[:max_length]
 
 
 def same_email(left: str | None, right: str | None) -> bool:

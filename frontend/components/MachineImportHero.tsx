@@ -46,6 +46,7 @@ export default function MachineImportHero({
         smart_import_batch_id: preview.batch_preview_id,
         sync_gmail: true,
         run_autopilot: true,
+        run_historical_cleanup: true,
       });
       setResult(machineResult);
       setFiles([]);

@@ -406,7 +406,7 @@ def analyze_evidence_batch_safely(db: Session, current_user: User, batch: Any) -
     if batch.stored_files_count <= 0:
         return None
     try:
-        return EvidenceAIAnalysisService().analyze_batch(db, current_user, batch, provider="fake", limit=500)
+        return EvidenceAIAnalysisService().analyze_batch(db, current_user, batch, provider="fake", limit=2000)
     except HTTPException as exc:
         batch.error_message = f"Analyse locale non lancee: {exc.detail}"
         add_audit_log(
