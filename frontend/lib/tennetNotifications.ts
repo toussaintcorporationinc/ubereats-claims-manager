@@ -28,7 +28,11 @@ export async function prepareFinishNotification(): Promise<void> {
 }
 
 export function notifyWorkspaceMachineFinished(result: WorkspaceMachineRunResponse): void {
-  void showFinishNotification(result);
+  window.setTimeout(() => {
+    void showFinishNotification(result).catch(() => {
+      // Notifications are optional. The recovery machine must never fail because of them.
+    });
+  }, 0);
 }
 
 async function showFinishNotification(result: WorkspaceMachineRunResponse): Promise<void> {
@@ -56,14 +60,23 @@ async function showFinishNotification(result: WorkspaceMachineRunResponse): Prom
 
   try {
     const registration = await ensureServiceWorkerRegistration();
-    await registration?.showNotification("TENNET a termine son passage", options);
+    if (!registration || typeof registration.showNotification !== "function") {
+      return;
+    }
+    await registration.showNotification("TENNET a termine son passage", options);
   } catch {
     // Notifications are optional. The recovery machine must never fail because of them.
   }
 }
 
 function canUseNotifications(): boolean {
-  return typeof window !== "undefined" && "Notification" in window;
+  return (
+    typeof window !== "undefined" &&
+    "Notification" in window &&
+    typeof navigator !== "undefined" &&
+    "serviceWorker" in navigator &&
+    window.isSecureContext
+  );
 }
 
 async function ensureServiceWorkerRegistration(): Promise<ServiceWorkerRegistration | null> {

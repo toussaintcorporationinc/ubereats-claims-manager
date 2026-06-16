@@ -1519,7 +1519,7 @@ def test_workspace_machine_fast_go_skips_historical_cleanup_by_default(client: T
     stages = {stage["name"]: stage for stage in response.json()["stages"]}
     assert stages["historical_reclassification"]["status"] == "skipped"
     assert stages["historical_import_repair"]["status"] == "skipped"
-    assert stages["historical_identity_hydration"]["status"] == "completed"
+    assert stages["historical_identity_hydration"]["status"] == "skipped"
 
 
 def test_staff_cannot_run_workspace_machine(client: TestClient, db_session: Session) -> None:
