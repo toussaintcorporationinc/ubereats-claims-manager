@@ -116,7 +116,10 @@ def list_tasks(
 
     tasks = db.scalars(statement.offset(offset).limit(limit)).all()
     return EvidenceRequestTasksResponse(
-        tasks=[build_task_summary(task, allow_import_fallback=False) for task in tasks],
+        tasks=[
+            build_task_summary(task, allow_import_fallback=False, allow_payload_fallback=False)
+            for task in tasks
+        ],
         limit=limit,
         offset=offset,
     )
@@ -275,11 +278,17 @@ def build_task_summary(
     *,
     deep_identity: bool = True,
     allow_import_fallback: bool = True,
+    allow_payload_fallback: bool = True,
 ) -> EvidenceRequestTaskSummary:
     order = task.order
     db = object_session(task)
     identity = (
-        resolve_identity_for_task(db, task, allow_import_fallback=allow_import_fallback)
+        resolve_identity_for_task(
+            db,
+            task,
+            allow_import_fallback=allow_import_fallback,
+            allow_payload_fallback=allow_payload_fallback,
+        )
         if deep_identity and db is not None
         else None
     )

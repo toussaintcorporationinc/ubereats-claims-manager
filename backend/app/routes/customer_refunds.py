@@ -348,7 +348,10 @@ def build_dispute_detail(db: Session, dispute: UberCustomerRefundDispute) -> Cus
         )
         from app.routes.evidence_tasks import build_task_summary
 
-        evidence_tasks = [build_task_summary(task) for task in tasks]
+        evidence_tasks = [
+            build_task_summary(task, allow_import_fallback=False, allow_payload_fallback=False)
+            for task in tasks
+        ]
     return CustomerRefundDisputeDetail(
         dispute=UberCustomerRefundDisputeRead.model_validate(dispute),
         restaurant_name=restaurant_name,
