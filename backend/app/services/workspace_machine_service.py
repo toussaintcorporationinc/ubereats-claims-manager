@@ -34,6 +34,7 @@ from app.services.workspace_unclassified_service import WorkspaceUnclassifiedSer
 MACHINE_EVIDENCE_ANALYSIS_LIMIT = 2000
 MACHINE_PROOF_INTAKE_LIMIT = 2000
 MACHINE_FULL_IDENTITY_HYDRATION_LIMIT = 10000
+MACHINE_INTERACTIVE_GMAIL_SYNC_LIMIT = 20
 
 
 class WorkspaceMachineError(Exception):
@@ -400,7 +401,7 @@ class WorkspaceMachineService:
                 self.db,
                 self.current_user,
                 lookback_days=self.settings.gmail_inbound_sync_lookback_days,
-                max_messages=self.settings.gmail_inbound_max_messages_per_sync,
+                max_messages=min(self.settings.gmail_inbound_max_messages_per_sync, MACHINE_INTERACTIVE_GMAIL_SYNC_LIMIT),
                 analyze_responses=True,
                 apply_reviews=True,
                 run_autopilot_after_sync=run_autopilot_after_sync,
