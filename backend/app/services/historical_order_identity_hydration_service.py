@@ -266,6 +266,7 @@ class HistoricalOrderIdentityHydrationService:
                 )
                 if rows:
                     return rows
+                return []
             if display_values:
                 rows = self.load_direct_candidate_import_rows(
                     db,
@@ -275,6 +276,7 @@ class HistoricalOrderIdentityHydrationService:
                 )
                 if rows:
                     return rows
+                return []
         statement = (
             select(UberReportingImportRow)
             .where(UberReportingImportRow.status.in_(IMPORT_ROW_HYDRATION_STATUSES))
