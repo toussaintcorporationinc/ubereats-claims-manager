@@ -52,9 +52,7 @@ class WorkspaceMachineService:
             raise WorkspaceMachineError("Restaurant access denied", 403)
 
         stages = [
-            self.stage("historical_reclassification", lambda: self.reclassify_historical_restaurants(payload.restaurant_id)),
-            self.stage("historical_import_repair", lambda: self.repair_historical_import_rows(payload.restaurant_id)),
-            self.stage("historical_identity_hydration", lambda: self.hydrate_historical_order_identity(payload.restaurant_id)),
+            *self.historical_cleanup_stages(payload),
             self.stage("deductions", lambda: self.detect_customer_refunds(payload.restaurant_id)),
             self.stage("claim_orders", lambda: self.create_customer_refund_claim_orders(payload.restaurant_id)),
             self.stage("evidence", lambda: self.process_evidence_queue(payload)),
@@ -83,6 +81,7 @@ class WorkspaceMachineService:
                 "trigger": payload.trigger,
                 "restaurant_id": payload.restaurant_id,
                 "smart_import_batch_id": payload.smart_import_batch_id,
+                "run_historical_cleanup": payload.run_historical_cleanup,
                 "stages": [stage.model_dump() for stage in stages],
             },
         )
@@ -96,6 +95,31 @@ class WorkspaceMachineService:
             stages=stages,
             next_actions=WorkspaceActionService(self.db, self.current_user).next_actions(),
         )
+
+    def historical_cleanup_stages(self, payload: WorkspaceMachineRunRequest) -> list[WorkspaceMachineStage]:
+        if not payload.run_historical_cleanup:
+            return [
+                WorkspaceMachineStage(
+                    name="historical_reclassification",
+                    status="skipped",
+                    warnings=["historical_cleanup_not_requested_for_fast_go"],
+                ),
+                WorkspaceMachineStage(
+                    name="historical_import_repair",
+                    status="skipped",
+                    warnings=["historical_cleanup_not_requested_for_fast_go"],
+                ),
+                WorkspaceMachineStage(
+                    name="historical_identity_hydration",
+                    status="skipped",
+                    warnings=["historical_cleanup_not_requested_for_fast_go"],
+                ),
+            ]
+        return [
+            self.stage("historical_reclassification", lambda: self.reclassify_historical_restaurants(payload.restaurant_id)),
+            self.stage("historical_import_repair", lambda: self.repair_historical_import_rows(payload.restaurant_id)),
+            self.stage("historical_identity_hydration", lambda: self.hydrate_historical_order_identity(payload.restaurant_id)),
+        ]
 
     def stage(self, name: str, callback: Callable[[], WorkspaceMachineStage]) -> WorkspaceMachineStage:
         try:

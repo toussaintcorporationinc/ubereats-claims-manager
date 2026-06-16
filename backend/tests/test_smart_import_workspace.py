@@ -1420,7 +1420,12 @@ def test_workspace_machine_repairs_historical_restaurant_misclassification(
 
     response = client.post(
         "/v1/workspace/machine/run",
-        json={"trigger": "manual", "sync_gmail": False, "run_autopilot": False},
+        json={
+            "trigger": "manual",
+            "sync_gmail": False,
+            "run_autopilot": False,
+            "run_historical_cleanup": True,
+        },
     )
 
     assert response.status_code == 200
@@ -1442,6 +1447,19 @@ def test_workspace_machine_reports_autopilot_disabled_without_failure(client: Te
     stages = {stage["name"]: stage for stage in payload["stages"]}
     assert stages["autopilot"]["status"] == "skipped"
     assert "autopilot_disabled" in stages["autopilot"]["warnings"]
+
+
+def test_workspace_machine_fast_go_skips_historical_cleanup_by_default(client: TestClient) -> None:
+    response = client.post(
+        "/v1/workspace/machine/run",
+        json={"trigger": "manual", "sync_gmail": False, "run_autopilot": False},
+    )
+
+    assert response.status_code == 200
+    stages = {stage["name"]: stage for stage in response.json()["stages"]}
+    assert stages["historical_reclassification"]["status"] == "skipped"
+    assert stages["historical_import_repair"]["status"] == "skipped"
+    assert stages["historical_identity_hydration"]["status"] == "skipped"
 
 
 def test_staff_cannot_run_workspace_machine(client: TestClient, db_session: Session) -> None:
