@@ -32,8 +32,16 @@ UUID_SEARCH_PATTERN = re.compile(
     r"\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b",
     re.IGNORECASE,
 )
-PAYLOAD_FALLBACK_SCAN_LIMIT = 250
-IMPORT_ROW_IDENTITY_SCAN_LIMIT = 1000
+PAYLOAD_FALLBACK_SCAN_LIMIT = 100
+IMPORT_ROW_IDENTITY_SCAN_LIMIT = 100
+IMPORT_ROW_DIRECT_KEYS = (
+    "uber_order_id",
+    "display_id",
+    "order_id",
+    "order_number",
+    "numero_commande",
+    "id_de_la_commande",
+)
 
 ORDER_ID_KEYS = {
     "uber_order_id",
@@ -384,6 +392,27 @@ def find_import_row_identity(
     candidates = clean_candidates(candidate_numbers)
     if not candidates:
         return None
+    bind = db.get_bind()
+    best: ResolvedOrderIdentity | None = None
+    if bind is not None and bind.dialect.name != "sqlite":
+        direct_conditions = [
+            UberReportingImportRow.normalized_data[key].as_string().in_(candidates)
+            for key in IMPORT_ROW_DIRECT_KEYS
+        ]
+        direct_rows = db.execute(
+            select(UberReportingImportRow, UberReportingImportBatch)
+            .join(UberReportingImportBatch, UberReportingImportRow.batch_id == UberReportingImportBatch.id)
+            .where(
+                UberReportingImportRow.status.in_(("created", "valid", "warning", "duplicate", "skipped", "invalid")),
+                or_(*direct_conditions),
+            )
+            .order_by(UberReportingImportRow.id.desc())
+            .limit(25)
+        ).all()
+        best = best_import_row_identity(direct_rows, candidates, restaurant_id)
+        if best is not None and identity_score(best) >= 3:
+            return best
+
     rows = db.execute(
         select(UberReportingImportRow, UberReportingImportBatch)
         .join(UberReportingImportBatch, UberReportingImportRow.batch_id == UberReportingImportBatch.id)
@@ -391,6 +420,10 @@ def find_import_row_identity(
         .order_by(UberReportingImportRow.id.desc())
         .limit(IMPORT_ROW_IDENTITY_SCAN_LIMIT)
     ).all()
+    return best_import_row_identity(rows, candidates, restaurant_id) or best
+
+
+def best_import_row_identity(rows, candidates: set[str], restaurant_id: int) -> ResolvedOrderIdentity | None:
     best: ResolvedOrderIdentity | None = None
     best_score = -1
     for row, _batch in rows:
