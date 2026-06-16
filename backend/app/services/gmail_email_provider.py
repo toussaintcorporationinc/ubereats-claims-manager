@@ -506,6 +506,7 @@ class GmailEmailProvider:
             body_text=body_text[:20000] if body_text else None,
             received_at=received_at,
             raw_headers=headers,
+            provider_labels=[str(label) for label in payload.get("labelIds", []) if label],
         )
 
 

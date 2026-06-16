@@ -34,6 +34,7 @@ class FakeInboundGmailProvider:
 
     def __init__(self) -> None:
         self.messages: list[InboundEmailPayload] = []
+        self.queries: list[str] = []
 
     def get_connection_status(self, db: Session, user: User) -> EmailConnectionStatus:
         if not get_settings().email_provider_enabled:
@@ -81,7 +82,11 @@ class FakeInboundGmailProvider:
         )
 
     def list_messages(self, db: Session, user: User, query: str, max_results: int) -> list[str]:
-        return [message.provider_message_id for message in self.messages[:max_results]]
+        self.queries.append(query)
+        messages = self.messages
+        if "is:starred" in query:
+            messages = [message for message in messages if "STARRED" in message.provider_labels]
+        return [message.provider_message_id for message in messages[:max_results]]
 
     def get_message(self, db: Session, user: User, message_id: str) -> InboundEmailPayload:
         for message in self.messages:
@@ -303,6 +308,7 @@ def inbound_payload(
     from_email: str = "support@uber.com",
     subject: str = "Re: réclamation Uber Eats",
     body_text: str = "Nous revenons vers vous.",
+    provider_labels: list[str] | None = None,
 ) -> InboundEmailPayload:
     return InboundEmailPayload(
         provider_message_id=message_id,
@@ -315,6 +321,7 @@ def inbound_payload(
         body_text=body_text,
         received_at=utc_now(),
         raw_headers={"from": from_email, "to": "claims-owner@example.com", "subject": subject},
+        provider_labels=provider_labels or [],
     )
 
 
@@ -592,6 +599,54 @@ def test_sync_refused_response_creates_review_and_appeal(
     assert workflow.status == "appeal_needed"
 
 
+def test_sync_starred_gmail_message_is_urgent_refusal_to_follow_up(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-INBOUND-STARRED",
+        thread_id="thread-starred",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-starred",
+            thread_id="thread-starred",
+            body_text="Nous revenons vers vous.",
+            provider_labels=["STARRED"],
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    assert "is:starred" in fake_gmail_provider.queries
+    payload = response.json()
+    assert payload["applied_reviews"] == 1
+    assert payload["negative_responses_detected"] == 1
+    db_session.refresh(order)
+    assert order.status == "refused"
+    inbound_message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-starred")
+    )
+    assert inbound_message is not None
+    assert inbound_message.provider_labels_json == ["STARRED"]
+    analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
+    assert analysis is not None
+    assert analysis.recommended_review_type == "refused"
+    assert analysis.reason == "gmail_starred_urgent_followup"
+    workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
+    assert workflow is not None
+    assert workflow.status == "appeal_needed"
+
+
 def test_sync_refused_response_can_run_autopilot_appeal(
     client: TestClient,
     db_session: Session,
@@ -770,6 +825,46 @@ def test_sync_payment_confirmed_response_updates_recovered_amount(
     assert analysis is not None
     assert analysis.recommended_review_type == "payment_confirmed"
     assert str(analysis.detected_amount) == "24.90"
+
+
+def test_sync_payment_signal_wins_over_starred_gmail_label(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-INBOUND-STARRED-PAID",
+        thread_id="thread-starred-paid",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-starred-paid",
+            thread_id="thread-starred-paid",
+            body_text="Payment has been issued for 19,99 EUR and credited to your account.",
+            provider_labels=["STARRED"],
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["applied_reviews"] == 1
+    assert payload["negative_responses_detected"] == 0
+    db_session.refresh(order)
+    assert order.status == "payment_confirmed"
+    assert str(order.recovered_amount) == "19.99"
+    analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
+    assert analysis is not None
+    assert analysis.recommended_review_type == "payment_confirmed"
+    assert analysis.reason == "payment_confirmed_with_amount"
 
 
 def test_sync_payment_without_amount_requires_verification(
@@ -1022,6 +1117,44 @@ def test_message_without_match_stays_unlinked(
     assert analysis is not None
     assert analysis.status == "manual_review"
     assert analysis.reason.startswith("message_not_linked_to_order")
+
+
+def test_starred_message_without_match_is_visible_manual_review(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-starred-unlinked",
+            subject="Re: refus Uber sans numero commande",
+            body_text="Nous revenons vers vous.",
+            provider_labels=["STARRED"],
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["unlinked_messages"] == 1
+    assert payload["manual_review_messages"] == 1
+    inbound_message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-starred-unlinked")
+    )
+    assert inbound_message is not None
+    assert inbound_message.order_id is None
+    assert inbound_message.provider_labels_json == ["STARRED"]
+    analysis = db_session.scalar(
+        select(GmailResponseAnalysis).where(GmailResponseAnalysis.inbound_message_id == inbound_message.id)
+    )
+    assert analysis is not None
+    assert analysis.status == "manual_review"
+    assert analysis.recommended_review_type == "refused"
+    assert analysis.reason == "message_not_linked_to_order:gmail_starred_urgent_followup"
 
 
 def test_existing_unlinked_uber_message_is_relinked_on_next_sync(

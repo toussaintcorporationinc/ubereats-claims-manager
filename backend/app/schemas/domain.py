@@ -843,6 +843,7 @@ class InboundEmailMessageRead(BaseModel):
     snippet: str | None
     body_text: str | None
     received_at: datetime | None
+    provider_labels_json: list[str] | None = None
     match_status: InboundEmailMatchStatus
     match_reason: InboundEmailMatchReason
     review_status: InboundEmailReviewStatus

@@ -41,6 +41,7 @@ class InboundEmailPayload:
     body_text: str | None
     received_at: datetime | None
     raw_headers: dict[str, Any]
+    provider_labels: list[str]
 
 
 class EmailProvider(Protocol):

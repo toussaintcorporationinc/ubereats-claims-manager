@@ -40,6 +40,8 @@ TENNET can recommend or apply these outcomes:
 
 If signals conflict, TENNET keeps the email in manual review.
 
+Gmail starred messages are a business override: when an Uber email is marked `STARRED`, TENNET treats it as an urgent refused case to follow up, unless the same email contains a clear positive acceptance or payment signal. This keeps owner-marked refusals in the appeal/relance workflow while avoiding duplicate relances after a real payment confirmation.
+
 ## Amount Rules
 
 TENNET never invents a recovered amount.
