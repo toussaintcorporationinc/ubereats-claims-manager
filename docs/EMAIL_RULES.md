@@ -140,6 +140,7 @@ Regles :
 - les messages non rattaches ou ambigus restent en revue manuelle ;
 - `payment_confirmed` exige un indice fort de paiement et un montant detecte dans l'email ;
 - si un paiement est annonce sans montant, TENNET utilise `payment_to_verify` ;
+- un email Gmail marque avec une etoile (`STARRED`) est traite comme un refus Uber urgent a relancer, sauf si l'email contient un signal positif clair de paiement ou d'acceptation ;
 - un refus cree un `ClaimResponseReview` refuse et garde le dossier ouvert via le workflow d'appel ;
 - aucun refus ne cloture definitivement un dossier ;
 - aucune promesse de remboursement n'est faite par TENNET ;

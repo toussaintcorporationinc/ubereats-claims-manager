@@ -702,6 +702,7 @@ class InboundEmailMessage(TimestampMixin, Base):
     body_text: Mapped[str | None] = mapped_column(Text)
     received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     raw_headers_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    provider_labels_json: Mapped[list[str] | None] = mapped_column(JSON)
     match_status: Mapped[str] = mapped_column(String(50), nullable=False, default="unlinked")
     match_reason: Mapped[str] = mapped_column(String(50), nullable=False, default="no_match")
     review_status: Mapped[str] = mapped_column(String(50), nullable=False, default="unreviewed")

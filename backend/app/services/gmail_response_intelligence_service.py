@@ -179,28 +179,20 @@ class GmailResponseIntelligenceService:
                 if value
             )
         )
+        is_starred = message_has_provider_label(message, "STARRED")
         amount = detect_amount(text)
         matches = {key: matching_keywords(text, keywords) for key, keywords in KEYWORDS.items()}
+        if is_starred:
+            matches["gmail_labels"] = ["STARRED"]
         strong_groups = {key for key, values in matches.items() if values}
 
-        if not text.strip():
+        if not text.strip() and not is_starred:
             return GmailResponseClassification(
                 review_type="manual_review",
                 confidence_score=Decimal("0.20"),
                 reason="empty_message",
                 matched_keywords=matches,
                 notes="Email vide ou non lisible. Revue humaine requise.",
-            )
-
-        if "evidence_requested" in strong_groups:
-            return GmailResponseClassification(
-                review_type="evidence_requested",
-                confidence_score=Decimal("0.86"),
-                reason="evidence_requested_keywords",
-                detected_amount=amount,
-                evidence_requested=True,
-                matched_keywords=matches,
-                notes=build_notes("Uber demande des preuves ou informations justificatives.", message, matches),
             )
 
         positive_groups = strong_groups.intersection({"payment_confirmed", "payment_to_verify", "accepted"})
@@ -251,6 +243,26 @@ class GmailResponseIntelligenceService:
                 detected_amount=amount,
                 matched_keywords=matches,
                 notes=build_notes("Uber semble accepter la demande.", message, matches),
+            )
+
+        if is_starred:
+            return GmailResponseClassification(
+                review_type="refused",
+                confidence_score=Decimal("0.95"),
+                reason="gmail_starred_urgent_followup",
+                matched_keywords=matches,
+                notes=build_notes("Email marque avec une etoile Gmail: refus Uber a relancer en urgence.", message, matches),
+            )
+
+        if "evidence_requested" in strong_groups:
+            return GmailResponseClassification(
+                review_type="evidence_requested",
+                confidence_score=Decimal("0.86"),
+                reason="evidence_requested_keywords",
+                detected_amount=amount,
+                evidence_requested=True,
+                matched_keywords=matches,
+                notes=build_notes("Uber demande des preuves ou informations justificatives.", message, matches),
             )
 
         if "refused" in strong_groups:
@@ -493,6 +505,11 @@ def normalize_text(value: str) -> str:
 
 def matching_keywords(text: str, keywords: tuple[str, ...]) -> list[str]:
     return [keyword for keyword in keywords if normalize_text(keyword) in text]
+
+
+def message_has_provider_label(message: InboundEmailMessage, label: str) -> bool:
+    wanted = label.strip().casefold()
+    return any(str(value).strip().casefold() == wanted for value in (message.provider_labels_json or []))
 
 
 def detect_amount(text: str) -> Decimal | None:
