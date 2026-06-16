@@ -22,6 +22,10 @@ PDF_EXTENSION = ".pdf"
 EXCEL_EXTENSIONS = {".xlsx", ".xlsm"}
 
 ORDER_PATTERN = re.compile(r"\b(UBER(?:[-_\s]?[A-Z0-9]+){1,5})\b", re.IGNORECASE)
+UUID_TEXT_PATTERN = re.compile(
+    r"\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b",
+    re.IGNORECASE,
+)
 INVALID_ORDER_TOKENS = {
     "A",
     "AU",
@@ -41,7 +45,7 @@ INVALID_ORDER_TOKENS = {
 CONTEXTUAL_DISPLAY_PATTERN = re.compile(
     r"(?:n(?:umero)?\s*(?:de)?\s*commande|id\s*(?:de)?\s*(?:la)?\s*commande|"
     r"commande|cmd|order\s*(?:id)?|ticket|receipt|uber\s*(?:order)?\s*(?:id)?|id)[\s:_#-]{0,12}"
-    r"([A-Z0-9][A-Z0-9-]{3,24})",
+    r"([A-Z0-9][A-Z0-9-]{3,40})",
     re.IGNORECASE,
 )
 DISPLAY_PATTERN = re.compile(r"\b([A-Z0-9]{5,10})\b")
@@ -63,6 +67,16 @@ CUSTOMER_LABEL_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(r"prepared\s+for\s+([^\n\r,;|]{2,80})", re.IGNORECASE),
+)
+ADDITIONAL_CUSTOMER_LABEL_PATTERNS = (
+    re.compile(
+        r"(?:nom|name)\s*[:=-]\s*([^\n\r,;|]{2,120})",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:commande|order)\s+(?:pour|for)\s+([^\n\r,;|]{2,120})",
+        re.IGNORECASE,
+    ),
 )
 RESTAURANT_LABEL_PATTERN = re.compile(
     r"(?:nom\s*(?:du)?\s*restaurant|restaurant|store|merchant)\s*[:=-]\s*([^\n\r,;|]{2,100})",
@@ -674,6 +688,19 @@ def extract_order_number(text: str) -> str | None:
         candidate = re.sub(r"[-_\s]+", "-", match.group(1)).strip("-").upper()
         if valid_order_number(candidate):
             return candidate
+    normalized_text = normalize_identifier_text(text)
+    contextual_uuid = re.search(
+        r"(?:commande|cmd|order|ticket|receipt|id)\s*[:#=-]{0,8}\s*"
+        r"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})",
+        normalized_text,
+        flags=re.IGNORECASE,
+    )
+    if contextual_uuid:
+        return contextual_uuid.group(1).lower()
+    if any(token in normalize_for_match(text) for token in ("commande", "order", "ticket uber", "receipt")):
+        uuid_match = UUID_TEXT_PATTERN.search(text)
+        if uuid_match:
+            return uuid_match.group(0).lower()
     return None
 
 
@@ -823,7 +850,7 @@ def normalize_for_match(value: str) -> str:
 
 def normalize_identifier_text(value: str) -> str:
     without_accents = "".join(char for char in unicodedata.normalize("NFKD", value) if not unicodedata.combining(char))
-    return without_accents.replace("_", " ").replace("-", " ")
+    return without_accents.replace("_", " ")
 
 
 def clean_display_id(value: str) -> str:
@@ -844,7 +871,7 @@ def valid_display_id(value: str | None) -> bool:
 
 
 def extract_labeled_customer_name(text: str) -> str | None:
-    for pattern in CUSTOMER_LABEL_PATTERNS:
+    for pattern in (*CUSTOMER_LABEL_PATTERNS, *ADDITIONAL_CUSTOMER_LABEL_PATTERNS):
         match = pattern.search(text)
         if not match:
             continue
@@ -863,13 +890,24 @@ def extract_labeled_restaurant_name(text: str) -> str | None:
 
 
 def clean_human_label(value: str, *, max_length: int) -> str | None:
-    cleaned = re.sub(r"\s+", " ", value).strip(" -_:;,.")
+    cleaned = trim_following_ocr_labels(re.sub(r"\s+", " ", value)).strip(" -_:;,.")
     if not cleaned or len(cleaned) < 2:
         return None
     blocked = {"commande", "order", "ticket", "receipt", "montant", "total"}
     if normalize_for_match(cleaned) in blocked:
         return None
     return cleaned[:max_length]
+
+
+def trim_following_ocr_labels(value: str) -> str:
+    parts = re.split(
+        r"\s+(?=(?:restaurant|client|customer|eater|commande|cmd|order|date|montant|total|ticket|"
+        r"receipt|remboursement|annulation|refund|cancel)\s*[:#=-])",
+        value,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )
+    return parts[0] if parts else value
 
 
 def clean_customer_name(value: str) -> str | None:

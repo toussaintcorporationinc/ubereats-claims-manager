@@ -24,7 +24,10 @@ from app.models import (
     User,
 )
 from app.models.domain import utc_now
-from app.services.historical_order_identity_hydration_service import HistoricalOrderIdentityHydrationService
+from app.services.historical_order_identity_hydration_service import (
+    IMPORT_ROW_STRONG_DIRECT_KEYS,
+    HistoricalOrderIdentityHydrationService,
+)
 
 
 @pytest.fixture()
@@ -468,6 +471,12 @@ def test_historical_identity_hydration_updates_existing_claim_order(
     assert task_summary["field_date_label"] == "16/06/2026"
     db_session.flush()
     assert db_session.scalar(select(AuditLog).where(AuditLog.action == "historical_order_identity.hydrated"))
+
+
+def test_historical_identity_hydration_indexes_raw_uber_uuid_columns() -> None:
+    assert "uuid_du_processus" in IMPORT_ROW_STRONG_DIRECT_KEYS
+    assert "id_du_flux" in IMPORT_ROW_STRONG_DIRECT_KEYS
+    assert "workflow_uuid" in IMPORT_ROW_STRONG_DIRECT_KEYS
 
 
 def test_historical_identity_hydration_bulk_indexes_import_rows(

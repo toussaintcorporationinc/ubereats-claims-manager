@@ -1422,6 +1422,19 @@ def test_evidence_analysis_ignores_uber_report_definition_as_order_or_amount() -
     assert evidence_analysis_service.extract_amount("Montant total: 24,90 EUR") == Decimal("24.90")
 
 
+def test_evidence_analysis_extracts_compact_single_proof_identity() -> None:
+    text = (
+        "Restaurant: Frit Dodo Client: Marie Test Commande: "
+        "9f862f78-ee39-4be4-b5d7-6ef3b78e8613 Date: 15/06/2026 "
+        "Montant total: 43.62 EUR Remboursement client"
+    )
+
+    assert evidence_analysis_service.extract_order_number(text) == "9f862f78-ee39-4be4-b5d7-6ef3b78e8613"
+    assert evidence_analysis_service.extract_labeled_customer_name(text) == "Marie Test"
+    assert evidence_analysis_service.extract_date(text).isoformat() == "2026-06-15"
+    assert evidence_analysis_service.extract_amount(text) == Decimal("43.62")
+
+
 def test_workspace_machine_creates_cancellation_case_from_single_stapled_ticket_proof(
     client: TestClient,
     db_session: Session,
@@ -1593,7 +1606,7 @@ def test_workspace_machine_reports_autopilot_disabled_without_failure(client: Te
     assert "autopilot_disabled" in stages["autopilot"]["warnings"]
 
 
-def test_workspace_machine_fast_go_skips_historical_cleanup_by_default(client: TestClient) -> None:
+def test_workspace_machine_runs_historical_cleanup_by_default(client: TestClient) -> None:
     response = client.post(
         "/v1/workspace/machine/run",
         json={"trigger": "manual", "sync_gmail": False, "run_autopilot": False},
@@ -1601,9 +1614,9 @@ def test_workspace_machine_fast_go_skips_historical_cleanup_by_default(client: T
 
     assert response.status_code == 200
     stages = {stage["name"]: stage for stage in response.json()["stages"]}
-    assert stages["historical_reclassification"]["status"] == "skipped"
-    assert stages["historical_import_repair"]["status"] == "skipped"
-    assert stages["historical_identity_hydration"]["status"] == "skipped"
+    assert stages["historical_reclassification"]["status"] in {"completed", "warning"}
+    assert stages["historical_import_repair"]["status"] in {"completed", "warning"}
+    assert stages["historical_identity_hydration"]["status"] in {"completed", "warning"}
 
 
 def test_staff_cannot_run_workspace_machine(client: TestClient, db_session: Session) -> None:
