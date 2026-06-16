@@ -437,6 +437,29 @@ def test_sync_deduplicates_provider_message_id(
     assert db_session.scalar(select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-dedup"))
 
 
+def test_sync_truncates_long_gmail_subject(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    long_subject = "Contestation Uber " + ("commande preparee " * 40)
+    fake_gmail_provider.messages = [inbound_payload("msg-long-subject", subject=long_subject)]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    inbound_message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-long-subject")
+    )
+    assert inbound_message is not None
+    assert inbound_message.subject is not None
+    assert len(inbound_message.subject) == 255
+    assert inbound_message.body_text == "Nous revenons vers vous."
+
+
 def test_message_with_known_thread_id_is_linked_and_audited(
     client: TestClient,
     db_session: Session,

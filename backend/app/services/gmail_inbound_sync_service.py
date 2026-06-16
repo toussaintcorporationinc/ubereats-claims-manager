@@ -24,6 +24,7 @@ from app.services.gmail_response_intelligence_service import GmailResponseIntell
 FINAL_ORDER_STATUSES = {"accepted", "payment_confirmed", "refused", "closed"}
 RESPONSE_UPDATABLE_ORDER_STATUSES = {"sent", "waiting_uber_response"}
 MAX_BODY_TEXT_LENGTH = 20000
+MAX_DB_STRING_LENGTH = 255
 ACTIONABLE_NEGATIVE_REVIEW_TYPES = {"refused"}
 MAX_EXISTING_REPROCESS_MESSAGES = 1000
 OrderIdentifierIndex = list[tuple[ClaimOrder, list[str]]]
@@ -365,12 +366,12 @@ class GmailInboundSyncService:
             email_account_id=account.id,
             order_id=match.order.id if match.order else None,
             provider="gmail",
-            provider_message_id=payload.provider_message_id,
-            provider_thread_id=payload.provider_thread_id,
-            gmail_history_id=payload.gmail_history_id,
-            from_email=payload.from_email,
-            to_email=payload.to_email,
-            subject=payload.subject,
+            provider_message_id=truncate_db_string(payload.provider_message_id),
+            provider_thread_id=truncate_db_string(payload.provider_thread_id),
+            gmail_history_id=truncate_db_string(payload.gmail_history_id),
+            from_email=truncate_db_string(payload.from_email),
+            to_email=truncate_db_string(payload.to_email),
+            subject=truncate_db_string(payload.subject),
             snippet=payload.snippet,
             body_text=(payload.body_text or "")[:MAX_BODY_TEXT_LENGTH] if payload.body_text else None,
             received_at=payload.received_at,
@@ -605,6 +606,12 @@ def normalize_identifier(value: str) -> str:
 
 def normalize_identifier_with_boundaries(value: str) -> str:
     return re.sub(r"[^A-Z0-9#]+", " ", value.upper())
+
+
+def truncate_db_string(value: str | None, max_length: int = MAX_DB_STRING_LENGTH) -> str | None:
+    if value is None:
+        return None
+    return value[:max_length]
 
 
 def same_email(left: str | None, right: str | None) -> bool:
