@@ -89,6 +89,8 @@ class HistoricalOrderIdentityHydrationService:
             if import_identity is not None:
                 merge_identity(identity, import_identity, prefer_display=True)
                 bulk_import_matches_count += 1
+                if import_identity.source:
+                    sources.add(import_identity.source.split(":", 1)[0])
             order_changed = self.apply_identity_to_order(order, identity)
             disputes_changed = self.apply_identity_to_disputes(order, identity)
             results_changed = self.apply_identity_to_reconciliation_results(reconciliation_results, identity)
@@ -187,7 +189,8 @@ class HistoricalOrderIdentityHydrationService:
             row_restaurant_id = self.import_row_restaurant_id(row)
             if restaurant_id is not None and row_restaurant_id is not None and row_restaurant_id != restaurant_id:
                 continue
-            row_candidates = self.candidates_for_import_row(row)
+            identity = identity_from_import_row(row)
+            row_candidates = self.candidates_for_import_row_identity(identity)
             matching_keys = {
                 normalize_identifier(candidate)
                 for candidate in row_candidates
@@ -195,7 +198,6 @@ class HistoricalOrderIdentityHydrationService:
             }
             if not matching_keys:
                 continue
-            identity = identity_from_import_row(row)
             score = identity_score(identity)
             if score <= 0:
                 continue
@@ -213,11 +215,8 @@ class HistoricalOrderIdentityHydrationService:
         value = (row.normalized_data or {}).get("restaurant_id")
         return int(value) if str(value or "").isdigit() else None
 
-    def candidates_for_import_row(self, row: UberReportingImportRow) -> set[str]:
+    def candidates_for_import_row_identity(self, identity: ResolvedOrderIdentity) -> set[str]:
         values: set[str] = set()
-        values.update(candidate_numbers_from_payload(row.normalized_data))
-        values.update(candidate_numbers_from_payload(row.raw_data))
-        identity = identity_from_import_row(row)
         values.update({identity.order_number, identity.display_id})
         return clean_candidates(values)
 
@@ -250,7 +249,7 @@ class HistoricalOrderIdentityHydrationService:
     def apply_identity_to_order(self, order: ClaimOrder, identity: ResolvedOrderIdentity) -> bool:
         changed = False
         display_id = identity.best_order_label if identity.best_order_label and not is_uuid_like(identity.best_order_label) else None
-        if display_id and (not order.internal_reference or is_uuid_like(order.internal_reference)):
+        if display_id and self.should_replace_internal_reference(order.internal_reference):
             order.internal_reference = display_id
             changed = True
         customer_name = clean_customer_name(identity.customer_name)
@@ -270,6 +269,12 @@ class HistoricalOrderIdentityHydrationService:
             order.currency = identity.currency
             changed = True
         return changed
+
+    def should_replace_internal_reference(self, value: str | None) -> bool:
+        if not value:
+            return True
+        cleaned = value.strip().upper()
+        return is_uuid_like(cleaned) or cleaned.startswith(("CUST-REFUND-", "REFUND-", "AUTO-", "CLAIM-"))
 
     def apply_identity_to_disputes(self, order: ClaimOrder, identity: ResolvedOrderIdentity) -> int:
         changed_count = 0

@@ -416,6 +416,9 @@ def test_historical_identity_hydration_updates_existing_claim_order(
     restaurant = create_restaurant(configured_client, "Frit Dodo")
     technical_order_id = "da050e48-2635-4716-a3e5-ab22a0434a25"
     created = create_order(configured_client, restaurant["id"], technical_order_id, amount="21.81")
+    created_order = db_session.get(ClaimOrder, created["id"])
+    assert created_order is not None
+    created_order.internal_reference = "CUST-REFUND-1034"
     batch = UberReportingImportBatch(
         uploaded_by_user_id=1,
         original_filename="historical.csv",
