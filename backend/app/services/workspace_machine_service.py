@@ -34,6 +34,7 @@ from app.services.workspace_unclassified_service import WorkspaceUnclassifiedSer
 MACHINE_EVIDENCE_ANALYSIS_LIMIT = 2000
 MACHINE_PROOF_INTAKE_LIMIT = 2000
 MACHINE_FULL_IDENTITY_HYDRATION_LIMIT = 10000
+MACHINE_INTERACTIVE_GMAIL_SYNC_LIMIT = 20
 
 
 class WorkspaceMachineError(Exception):
@@ -69,7 +70,7 @@ class WorkspaceMachineService:
             self.stage("appeals", lambda: self.recalculate_appeals(payload.restaurant_id)),
         ]
         if payload.sync_gmail:
-            stages.append(self.stage("gmail_sync", self.sync_gmail))
+            stages.append(self.stage("gmail_sync", lambda: self.sync_gmail(run_autopilot_after_sync=payload.run_autopilot)))
         else:
             stages.append(WorkspaceMachineStage(name="gmail_sync", status="skipped", warnings=["sync_gmail_disabled_for_run"]))
         if payload.run_autopilot:
@@ -391,7 +392,7 @@ class WorkspaceMachineService:
             warnings=result.errors,
         )
 
-    def sync_gmail(self) -> WorkspaceMachineStage:
+    def sync_gmail(self, *, run_autopilot_after_sync: bool) -> WorkspaceMachineStage:
         if not self.settings.email_provider_enabled or not self.settings.gmail_inbound_sync_enabled:
             return WorkspaceMachineStage(name="gmail_sync", status="skipped", warnings=["gmail_sync_disabled"])
         service = GmailInboundSyncService(self.provider)
@@ -400,10 +401,10 @@ class WorkspaceMachineService:
                 self.db,
                 self.current_user,
                 lookback_days=self.settings.gmail_inbound_sync_lookback_days,
-                max_messages=self.settings.gmail_inbound_max_messages_per_sync,
+                max_messages=min(self.settings.gmail_inbound_max_messages_per_sync, MACHINE_INTERACTIVE_GMAIL_SYNC_LIMIT),
                 analyze_responses=True,
                 apply_reviews=True,
-                run_autopilot_after_sync=True,
+                run_autopilot_after_sync=run_autopilot_after_sync,
             )
         except EmailProviderError as exc:
             self.db.commit()
