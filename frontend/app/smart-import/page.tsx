@@ -69,6 +69,7 @@ export default function SmartImportPage() {
         smart_import_batch_id: result.batch_preview_id,
         sync_gmail: true,
         run_autopilot: true,
+        run_historical_cleanup: true,
       });
       setMachineResult(machineResponse);
       setPreview((current) => (current ? { ...current, status: confirmResponse.status } : current));
@@ -96,6 +97,7 @@ export default function SmartImportPage() {
         smart_import_batch_id: preview.batch_preview_id,
         sync_gmail: true,
         run_autopilot: true,
+        run_historical_cleanup: true,
       });
       setMachineResult(machineResponse);
       setSuccess(`Smart Import confirme : ${result.routed_files.length} fichier(s) route(s).`);

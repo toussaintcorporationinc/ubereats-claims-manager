@@ -20,6 +20,7 @@ from app.models import (
     UberFinancialTransaction,
     UberOrderSnapshot,
     UberReconciliationResult,
+    UberReportingImportRow,
     User,
 )
 from app.models.domain import utc_now
@@ -35,6 +36,9 @@ from app.services.order_identity_resolution_service import (
     clean_candidates,
     find_import_row_identity,
     identity_from_analysis,
+    identity_from_import_row,
+    identity_score,
+    normalize_identifier,
 )
 from app.services.uber_reporting_import_service import resolve_mapping_by_store_name, resolve_restaurant_by_store_name
 
@@ -243,10 +247,17 @@ class ProofIntakeService:
         )
         order_number = first_order_number(candidate_numbers, analysis.detected_uber_order_number or analysis.detected_display_id)
         order_context = self.resolve_order_context(db, order_number) if order_number else {}
+        detected_restaurant_id = self.resolve_restaurant_id(db, analysis.detected_restaurant_name, text)
+        import_row_context = self.resolve_import_row_context(
+            db,
+            candidate_numbers,
+            preferred_restaurant_id=detected_restaurant_id or order_context.get("restaurant_id"),
+        )
         restaurant_id = (
-            imported_file.batch.restaurant_id
-            or self.resolve_restaurant_id(db, analysis.detected_restaurant_name, text)
-            or order_context.get("restaurant_id")
+            order_context.get("restaurant_id")
+            or import_row_context.get("restaurant_id")
+            or detected_restaurant_id
+            or imported_file.batch.restaurant_id
         )
         if restaurant_id is not None and candidate_numbers:
             row_identity = find_import_row_identity(db, int(restaurant_id), candidate_numbers)
@@ -261,16 +272,16 @@ class ProofIntakeService:
                 order_number = order_number or row_identity.best_order_label
         customer_name = (str(raw.get("customer_name")).strip() if raw.get("customer_name") else None) or order_context.get(
             "customer_name"
-        )
+        ) or import_row_context.get("customer_name")
         evidence_type = analysis.detected_evidence_type if analysis.detected_evidence_type != "unknown" else "receipt"
         case_type = self.case_type_for_trigger(trigger, text, evidence_type)
         return ProofIdentity(
             restaurant_id=restaurant_id,
             order_number=order_number,
             customer_name=customer_name,
-            order_amount=analysis.detected_order_amount or order_context.get("order_amount"),
-            currency=analysis.detected_currency or order_context.get("currency") or "EUR",
-            order_date=analysis.detected_order_date or order_context.get("order_date"),
+            order_amount=analysis.detected_order_amount or order_context.get("order_amount") or import_row_context.get("order_amount"),
+            currency=analysis.detected_currency or order_context.get("currency") or import_row_context.get("currency") or "EUR",
+            order_date=analysis.detected_order_date or order_context.get("order_date") or import_row_context.get("order_date"),
             evidence_type=evidence_type,
             text=text,
             case_type=case_type,
@@ -385,6 +396,67 @@ class ProofIntakeService:
             if isinstance(value, str) and value.strip():
                 return value.strip()
         return None
+
+    def resolve_import_row_context(
+        self,
+        db: Session,
+        candidate_numbers: set[str],
+        *,
+        preferred_restaurant_id: object | None,
+    ) -> dict[str, object]:
+        candidates = clean_candidates(candidate_numbers)
+        if not candidates:
+            return {}
+        normalized_candidates = {normalize_identifier(candidate) for candidate in candidates}
+        preferred_id = int(preferred_restaurant_id) if str(preferred_restaurant_id or "").isdigit() else None
+        rows = self.cached_import_rows_for_context(db)
+        best: tuple[int, int | None, object] | None = None
+        for row in rows:
+            row_candidates = candidate_numbers_from_payload(row.normalized_data or {}) | candidate_numbers_from_payload(
+                row.raw_data or {}
+            )
+            if not {normalize_identifier(candidate) for candidate in row_candidates} & normalized_candidates:
+                continue
+            row_restaurant_id = self.import_row_restaurant_id(row)
+            if preferred_id is not None and row_restaurant_id not in {None, preferred_id}:
+                continue
+            identity = identity_from_import_row(row)
+            score = identity_score(identity)
+            if row_restaurant_id is not None:
+                score += 1
+            if preferred_id is not None and row_restaurant_id == preferred_id:
+                score += 1
+            if best is None or score > best[0]:
+                best = (score, row_restaurant_id, identity)
+        if best is None:
+            return {}
+        _score, row_restaurant_id, identity = best
+        return {
+            "restaurant_id": row_restaurant_id,
+            "customer_name": identity.customer_name,
+            "order_amount": identity.order_amount,
+            "currency": identity.currency,
+            "order_date": identity.order_date,
+        }
+
+    def import_row_restaurant_id(self, row: UberReportingImportRow) -> int | None:
+        value = (row.normalized_data or {}).get("restaurant_id")
+        return int(value) if str(value or "").isdigit() else None
+
+    def cached_import_rows_for_context(self, db: Session) -> list[UberReportingImportRow]:
+        cached = getattr(self, "_import_rows_context_cache", None)
+        if cached is not None:
+            return cached
+        rows = list(
+            db.scalars(
+                select(UberReportingImportRow)
+                .where(UberReportingImportRow.status.in_(("created", "valid", "warning", "duplicate", "skipped", "invalid")))
+                .order_by(UberReportingImportRow.id.desc())
+                .limit(5000)
+            ).all()
+        )
+        self._import_rows_context_cache = rows
+        return rows
 
     def resolve_restaurant_id(self, db: Session, detected_restaurant_name: str | None, text: str) -> int | None:
         candidates = [detected_restaurant_name]

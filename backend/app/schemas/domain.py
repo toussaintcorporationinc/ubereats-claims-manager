@@ -2005,7 +2005,7 @@ class WorkspaceMachineRunRequest(BaseModel):
     smart_import_batch_id: int | None = None
     sync_gmail: bool = True
     run_autopilot: bool = True
-    run_historical_cleanup: bool = False
+    run_historical_cleanup: bool = True
 
 
 class WorkspaceMachineStage(BaseModel):

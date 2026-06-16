@@ -28,6 +28,14 @@ IMPORT_ROW_STRONG_DIRECT_KEYS = (
     "uber_order_id",
     "order_id",
     "order_number",
+    "order_uuid",
+    "workflow_uuid",
+    "workflow_id",
+    "uuid_du_processus",
+    "uuid_de_la_commande",
+    "uuid_du_workflow",
+    "id_du_workflow",
+    "id_du_flux",
 )
 IMPORT_ROW_DISPLAY_DIRECT_KEYS = (
     "display_id",
@@ -287,7 +295,6 @@ class HistoricalOrderIdentityHydrationService:
                 )
                 if rows:
                     return rows
-                return []
             if display_values:
                 rows = self.load_direct_candidate_import_rows(
                     db,
@@ -297,7 +304,6 @@ class HistoricalOrderIdentityHydrationService:
                 )
                 if rows:
                     return rows
-                return []
         statement = (
             select(UberReportingImportRow)
             .where(UberReportingImportRow.status.in_(IMPORT_ROW_HYDRATION_STATUSES))

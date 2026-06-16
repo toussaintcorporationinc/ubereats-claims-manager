@@ -101,6 +101,13 @@ DATE_KEYS = {
     "date_remboursement",
     "date_du_remboursement",
     "transaction_date",
+    "heure_commande",
+    "heure_de_commande",
+    "heure_de_la_commande",
+    "heure_acceptation_commande",
+    "heure_d_acceptation_de_la_commande",
+    "heure_dacceptation_de_la_commande",
+    "heure_du_remboursement",
 }
 TIME_KEYS = {
     "order_time",
@@ -126,6 +133,20 @@ AMOUNT_KEYS = {
     "refund_amount",
     "customer_refund_amount",
     "montant_remboursement",
+    "montant_du_remboursement",
+    "montant_rembourse",
+    "montant_facture_au_commercant",
+    "montant_deduit",
+    "montant_debit",
+    "client_rembourse",
+    "remboursements",
+    "remboursements_du_client",
+    "remboursement_pris_en_charge_par_le_commercant",
+    "remboursement_non_pris_en_charge_par_le_commercant",
+    "ajustements_lies_a_des_erreurs_de_commande_tva_incluse",
+    "ajustements_lies_a_des_erreurs_de_commande_hors_tva",
+    "montant_moyen_des_commandes",
+    "montant_moyen_de_la_commande",
 }
 
 
