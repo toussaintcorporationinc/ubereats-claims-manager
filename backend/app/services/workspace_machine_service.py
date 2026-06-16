@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import can_access_restaurant, get_accessible_restaurant_ids
 from app.core.config import get_settings
-from app.models import ClaimOrder, UberCustomerRefundDispute, User
+from app.models import ClaimOrder, SmartImportPreviewBatch, UberCustomerRefundDispute, User
 from app.schemas.domain import (
     WorkspaceMachineRunRequest,
     WorkspaceMachineRunResponse,
@@ -27,6 +27,7 @@ from app.services.historical_order_identity_hydration_service import HistoricalO
 from app.services.historical_restaurant_reclassification_service import HistoricalRestaurantReclassificationService
 from app.services.historical_uber_reporting_repair_service import HistoricalUberReportingRepairService
 from app.services.proof_intake_service import ProofIntakeService
+from app.services.smart_import_routing_service import route_manual_review_files_as_evidence
 from app.services.workspace_action_service import WorkspaceActionService
 from app.services.workspace_unclassified_service import WorkspaceUnclassifiedService
 
@@ -55,6 +56,7 @@ class WorkspaceMachineService:
             *self.historical_cleanup_stages(payload),
             self.stage("deductions", lambda: self.detect_customer_refunds(payload.restaurant_id)),
             self.stage("claim_orders", lambda: self.create_customer_refund_claim_orders(payload.restaurant_id)),
+            self.stage("smart_import_recovery", lambda: self.recover_manual_review_smart_import_files(payload)),
             self.stage("evidence", lambda: self.process_evidence_queue(payload)),
             self.stage("proof_intake", lambda: self.process_proof_intake(payload)),
             self.stage("unclassified", self.inspect_unclassified),
@@ -243,6 +245,32 @@ class WorkspaceMachineService:
             processed_count=len(dispute_ids),
             created_count=int(result.get("created_count", 0)),
             skipped_count=int(result.get("skipped_count", 0)),
+            warnings=errors,
+        )
+
+    def recover_manual_review_smart_import_files(self, payload: WorkspaceMachineRunRequest) -> WorkspaceMachineStage:
+        if payload.smart_import_batch_id is None:
+            return WorkspaceMachineStage(name="smart_import_recovery", status="skipped", warnings=["no_smart_import_batch"])
+        batch = self.db.get(SmartImportPreviewBatch, payload.smart_import_batch_id)
+        if batch is None:
+            return WorkspaceMachineStage(name="smart_import_recovery", status="skipped", warnings=["smart_import_batch_not_found"])
+        result = route_manual_review_files_as_evidence(
+            self.db,
+            self.current_user,
+            batch,
+            restaurant_id=payload.restaurant_id,
+        )
+        errors = [str(item.get("error", item)) for item in result.get("errors", [])]
+        routed_count = len(result.get("routed_files", []))
+        if routed_count == 0 and not errors:
+            return WorkspaceMachineStage(name="smart_import_recovery", status="skipped", warnings=["no_blocked_files_to_recover"])
+        return WorkspaceMachineStage(
+            name="smart_import_recovery",
+            status="warning" if errors else "completed",
+            processed_count=routed_count + int(result.get("skipped_count", 0)) + len(errors),
+            created_count=routed_count,
+            skipped_count=int(result.get("skipped_count", 0)),
+            failed_count=len(errors),
             warnings=errors,
         )
 

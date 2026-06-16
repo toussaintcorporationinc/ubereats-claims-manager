@@ -56,18 +56,9 @@ async function showFinishNotification(result: WorkspaceMachineRunResponse): Prom
 
   try {
     const registration = await ensureServiceWorkerRegistration();
-    if (registration) {
-      await registration.showNotification("TENNET a termine son passage", options);
-      return;
-    }
+    await registration?.showNotification("TENNET a termine son passage", options);
   } catch {
-    // Fall back below when the browser has no usable service worker.
-  }
-
-  try {
-    new Notification("TENNET a termine son passage", options);
-  } catch {
-    // Some mobile/PWA browsers forbid the Notification constructor.
+    // Notifications are optional. The recovery machine must never fail because of them.
   }
 }
 

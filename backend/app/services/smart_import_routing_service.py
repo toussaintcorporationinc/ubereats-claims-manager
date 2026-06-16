@@ -123,6 +123,76 @@ def route_smart_import_preview(
     }
 
 
+def route_manual_review_files_as_evidence(
+    db: Session,
+    current_user: User,
+    batch: SmartImportPreviewBatch,
+    *,
+    restaurant_id: int | None = None,
+    limit: int = 500,
+) -> dict[str, Any]:
+    if batch.uploaded_by_user_id != current_user.id and current_user.role != "owner":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Smart import preview access denied")
+    if restaurant_id is not None:
+        ensure_can_access_restaurant(db, current_user, restaurant_id)
+
+    candidates = [
+        preview_file
+        for preview_file in sorted(batch.files, key=lambda item: item.id)
+        if preview_file.status == "manual_review"
+        and preview_file.destination_type == "manual_review"
+        and preview_file.file_type in {"csv", "xlsx", "pdf", "jpg", "jpeg", "png", "webp", "heic", "heif", "zip"}
+    ][:limit]
+    if not candidates:
+        return {
+            "routed_files": [],
+            "errors": [],
+            "skipped_count": 0,
+        }
+
+    routed_files: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    evidence_group: list[tuple[SmartImportPreviewFile, SmartImportDecision]] = []
+    for preview_file in candidates:
+        decision = SmartImportDecision(file_id=preview_file.id, action="import_evidence_bulk", restaurant_id=restaurant_id)
+        if preview_file.file_type == "zip":
+            try:
+                routed_files.append(route_evidence_zip_file(db, current_user, preview_file, decision))
+            except HTTPException as exc:
+                preview_file.status = "failed"
+                preview_file.error_message = str(exc.detail)
+                errors.append({"file_id": preview_file.id, "original_filename": preview_file.original_filename, "error": exc.detail})
+        else:
+            evidence_group.append((preview_file, decision))
+
+    if evidence_group:
+        try:
+            routed_files.extend(route_evidence_files_group(db, current_user, evidence_group, restaurant_id))
+        except HTTPException as exc:
+            for preview_file, _decision in evidence_group:
+                preview_file.status = "failed"
+                preview_file.error_message = str(exc.detail)
+                errors.append({"file_id": preview_file.id, "original_filename": preview_file.original_filename, "error": exc.detail})
+
+    add_audit_log(
+        db,
+        entity_type="smart_import_preview_batch",
+        entity_id=batch.id,
+        action="smart_import_manual_review_recovered_to_evidence",
+        user_id=current_user.id,
+        new_value={
+            "routed_files": len(routed_files),
+            "errors": len(errors),
+            "restaurant_id": restaurant_id,
+        },
+    )
+    return {
+        "routed_files": routed_files,
+        "errors": errors,
+        "skipped_count": len(candidates) - len(routed_files) - len(errors),
+    }
+
+
 def is_exact_duplicate_ignored(preview_file: SmartImportPreviewFile) -> bool:
     return (
         preview_file.status == "ignored"

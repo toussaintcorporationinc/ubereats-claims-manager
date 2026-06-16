@@ -799,6 +799,66 @@ def test_smart_confirm_manual_review_and_ignore_keep_audit_state(client: TestCli
     assert {file.status for file in batch.files} == {"manual_review", "ignored"}
 
 
+def test_workspace_machine_recovers_manual_review_smart_import_file_into_proof_pipeline(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = Restaurant(name="Krousty Bat", sender_email="tiramisumaisonfrance@example.com")
+    db_session.add(restaurant)
+    db_session.commit()
+    proof_text = (
+        "Restaurant: Krousty Bat\n"
+        "Client: Client Repris\n"
+        "Commande: GO-RECOVER-123\n"
+        "Date: 15/06/2026\n"
+        "Montant total: 27,40 EUR\n"
+        "Remboursement client - article manquant\n"
+    )
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("source-a-verifier.csv", proof_text.encode("utf-8"), "text/csv"))],
+    ).json()
+    confirm_response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [{"file_id": preview["files"][0]["id"], "action": "manual_review"}],
+        },
+    )
+    assert confirm_response.status_code == 200
+    assert confirm_response.json()["manual_review_files"][0]["destination_type"] == "manual_review"
+
+    response = client.post(
+        "/v1/workspace/machine/run",
+        json={
+            "trigger": "refunds",
+            "smart_import_batch_id": preview["batch_preview_id"],
+            "sync_gmail": False,
+            "run_autopilot": False,
+        },
+    )
+
+    assert response.status_code == 200
+    stages = {stage["name"]: stage for stage in response.json()["stages"]}
+    assert stages["smart_import_recovery"]["created_count"] == 1
+    assert stages["evidence"]["processed_count"] >= 1
+    assert stages["proof_intake"]["created_count"] == 1
+    batch = db_session.get(SmartImportPreviewBatch, preview["batch_preview_id"])
+    assert batch is not None
+    preview_file = batch.files[0]
+    assert preview_file.status == "routed"
+    assert preview_file.destination_type == "evidence_import_batch"
+    evidence_batch = db_session.get(EvidenceImportBatch, preview_file.destination_id)
+    assert evidence_batch is not None
+    assert evidence_batch.status == "analyzed"
+    order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "GO-RECOVER-123"))
+    assert order is not None
+    assert order.restaurant_id == restaurant.id
+    assert order.customer_name == "Client Repris"
+    assert order.order_date.isoformat() == "2026-06-15"
+    assert str(order.order_amount) == "27.40"
+
+
 def test_smart_confirm_expired_preview_refused(client: TestClient, db_session: Session) -> None:
     preview = client.post(
         "/v1/smart-import/preview",
