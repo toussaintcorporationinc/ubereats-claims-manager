@@ -27,6 +27,7 @@ MAX_BODY_TEXT_LENGTH = 20000
 MAX_DB_STRING_LENGTH = 255
 ACTIONABLE_NEGATIVE_REVIEW_TYPES = {"refused"}
 MAX_EXISTING_REPROCESS_MESSAGES = 1000
+GMAIL_STARRED_URGENT_QUERY = "is:starred"
 OrderIdentifierIndex = list[tuple[ClaimOrder, list[str]]]
 
 
@@ -162,11 +163,16 @@ class GmailInboundSyncService:
         result = GmailInboundSyncResult(status="success")
         created_message_ids: set[int] = set()
         try:
-            sync_for_account = getattr(self.provider, "sync_inbound_replies_for_account", None)
-            if callable(sync_for_account):
-                payloads = sync_for_account(db, account, query=query, max_results=max_messages)
-            else:
-                payloads = self.provider.sync_inbound_replies(db, user, query=query, max_results=max_messages)
+            payloads = merge_unique_payloads(
+                self.fetch_payloads(db, user, account, query=query, max_messages=max_messages),
+                self.fetch_payloads(
+                    db,
+                    user,
+                    account,
+                    query=GMAIL_STARRED_URGENT_QUERY,
+                    max_messages=max_messages,
+                ),
+            )
             for payload in payloads:
                 if not payload.provider_message_id:
                     result.errors.append("Skipped Gmail message without provider_message_id")
@@ -226,6 +232,20 @@ class GmailInboundSyncService:
             raise
 
         return result
+
+    def fetch_payloads(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        *,
+        query: str,
+        max_messages: int,
+    ) -> list[InboundEmailPayload]:
+        sync_for_account = getattr(self.provider, "sync_inbound_replies_for_account", None)
+        if callable(sync_for_account):
+            return sync_for_account(db, account, query=query, max_results=max_messages)
+        return self.provider.sync_inbound_replies(db, user, query=query, max_results=max_messages)
 
     def analyze_linked_message(
         self,
@@ -376,6 +396,7 @@ class GmailInboundSyncService:
             body_text=(payload.body_text or "")[:MAX_BODY_TEXT_LENGTH] if payload.body_text else None,
             received_at=payload.received_at,
             raw_headers_json=payload.raw_headers,
+            provider_labels_json=payload.provider_labels,
             match_status=match.match_status,
             match_reason=match.match_reason,
         )
@@ -567,7 +588,22 @@ def inbound_payload_from_message(message: InboundEmailMessage) -> InboundEmailPa
         body_text=message.body_text,
         received_at=message.received_at,
         raw_headers=message.raw_headers_json or {},
+        provider_labels=message.provider_labels_json or [],
     )
+
+
+def merge_unique_payloads(*payload_groups: list[InboundEmailPayload]) -> list[InboundEmailPayload]:
+    merged: list[InboundEmailPayload] = []
+    seen: set[str] = set()
+    for payloads in payload_groups:
+        for payload in payloads:
+            message_id = payload.provider_message_id
+            if message_id and message_id in seen:
+                continue
+            if message_id:
+                seen.add(message_id)
+            merged.append(payload)
+    return merged
 
 
 def order_identifier_candidates(order: ClaimOrder) -> list[str]:
