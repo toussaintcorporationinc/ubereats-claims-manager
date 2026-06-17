@@ -9,10 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.auth import can_access_restaurant, get_accessible_restaurant_ids
+from app.core.config import get_settings
 from app.models import ClaimOrder, GmailResponseAnalysis, InboundEmailMessage, User
 from app.models.domain import utc_now
 from app.schemas.domain import ClaimResponseReviewCreate
 from app.services.audit import add_audit_log
+from app.services.openai_structured_analysis_service import AIGmailClassification, OpenAIStructuredAnalysisService
 from app.services.response_review_service import ResponseReviewError, create_response_review
 
 AUTO_APPLY_REVIEW_TYPES = {
@@ -292,12 +294,107 @@ class GmailResponseIntelligenceService:
                 notes=build_notes("Uber indique que le dossier est en cours de traitement.", message, matches),
             )
 
+        ai_classification = self.classify_message_with_ai(message, text, matches)
+        if ai_classification is not None:
+            return ai_classification
+
         return GmailResponseClassification(
             review_type="manual_review",
             confidence_score=Decimal("0.35"),
             reason="no_reliable_decision_detected",
             matched_keywords=matches,
             notes=build_notes("Aucune decision Uber fiable detectee.", message, matches),
+        )
+
+    def classify_message_with_ai(
+        self,
+        message: InboundEmailMessage,
+        normalized_text: str,
+        matches: dict[str, list[str]],
+    ) -> GmailResponseClassification | None:
+        order_context = None
+        if message.order is not None:
+            order_context = {
+                "order_id": message.order.id,
+                "restaurant_id": message.order.restaurant_id,
+                "uber_order_number": message.order.uber_order_number,
+                "customer_name": message.order.customer_name,
+                "order_amount": str(message.order.order_amount) if message.order.order_amount is not None else None,
+                "status": message.order.status,
+            }
+        ai = OpenAIStructuredAnalysisService().analyze_gmail_message(
+            subject=message.subject,
+            snippet=message.snippet,
+            body_text=message.body_text,
+            labels=message.provider_labels_json or [],
+            order_context=order_context,
+        )
+        if ai is None:
+            return None
+        return self.guard_ai_classification(ai, normalized_text, matches, message)
+
+    def guard_ai_classification(
+        self,
+        ai: AIGmailClassification,
+        normalized_text: str,
+        matches: dict[str, list[str]],
+        message: InboundEmailMessage,
+    ) -> GmailResponseClassification | None:
+        settings = get_settings()
+        min_confidence = Decimal(str(settings.ai_gmail_min_confidence))
+        if ai.confidence < min_confidence:
+            return None
+        allowed = {
+            "accepted",
+            "payment_to_verify",
+            "payment_confirmed",
+            "refused",
+            "evidence_requested",
+            "information_requested",
+            "followup_needed",
+            "manual_review",
+        }
+        if ai.review_type not in allowed:
+            return None
+        positive_groups = {key for key in ("payment_confirmed", "payment_to_verify", "accepted") if matches.get(key)}
+        negative_groups = {key for key in ("refused",) if matches.get(key)}
+        if positive_groups and negative_groups:
+            return GmailResponseClassification(
+                review_type="manual_review",
+                confidence_score=Decimal("0.45"),
+                reason="ai_blocked_conflicting_positive_negative_keywords",
+                detected_amount=ai.detected_amount,
+                matched_keywords={**matches, "ai": [ai.reason]},
+                notes=build_notes("IA bloquee: signaux positifs et negatifs contradictoires.", message, matches),
+            )
+        if ai.review_type == "payment_confirmed" and ai.detected_amount is None:
+            return GmailResponseClassification(
+                review_type="payment_to_verify",
+                confidence_score=min(ai.confidence, Decimal("0.78")),
+                reason="ai_payment_without_amount",
+                matched_keywords={**matches, "ai": [ai.reason]},
+                notes=limited_note("IA detecte un paiement mais aucun montant explicite exploitable.", ai.notes),
+            )
+        if ai.review_type == "refused" and any(token in normalized_text for token in ("payment has been issued", "paiement effectue", "montant verse")):
+            return None
+        if ai.review_type == "manual_review":
+            return GmailResponseClassification(
+                review_type="manual_review",
+                confidence_score=ai.confidence,
+                reason=f"ai:{ai.reason}"[:100],
+                detected_amount=ai.detected_amount,
+                evidence_requested=ai.evidence_requested,
+                matched_keywords={**matches, "ai": [ai.reason]},
+                notes=limited_note("IA demande revue humaine.", ai.notes),
+            )
+        return GmailResponseClassification(
+            review_type=ai.review_type,
+            confidence_score=min(ai.confidence, Decimal("0.95")),
+            reason=f"ai:{ai.reason}"[:100],
+            detected_amount=ai.detected_amount,
+            evidence_requested=ai.evidence_requested,
+            matched_keywords={**matches, "ai": [ai.reason]},
+            notes=limited_note("IA Gmail appliquee avec garde-fous.", ai.notes),
         )
 
     def upsert_analysis(
@@ -546,3 +643,7 @@ def build_notes(prefix: str, message: InboundEmailMessage, matches: dict[str, li
     snippet = normalize_text(message.snippet or message.subject or "")[:240]
     notes = f"{prefix} Mots cles: {matched}. Extrait: {snippet}"
     return notes[:MAX_NOTES_LENGTH]
+
+
+def limited_note(prefix: str, note: str | None) -> str:
+    return f"{prefix} {note or ''}".strip()[:MAX_NOTES_LENGTH]

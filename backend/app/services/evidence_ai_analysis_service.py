@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
+from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
@@ -16,6 +17,7 @@ from app.models import ClaimOrder, EvidenceAnalysisResult, EvidenceImportBatch, 
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.bulk_evidence_import_service import BulkEvidenceImportError, resolve_imported_file_path
+from app.services.openai_structured_analysis_service import AIProofExtraction, OpenAIStructuredAnalysisService
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp"}
 PDF_EXTENSION = ".pdf"
@@ -147,6 +149,7 @@ class EvidenceAnalysisPayload:
     needs_manual_review: bool
     notes: str
     extracted_text: str
+    ai_result_json: dict[str, Any] | None = None
 
 
 class EvidenceAIAnalysisService:
@@ -356,6 +359,7 @@ class EvidenceAIAnalysisService:
             if not settings.ai_evidence_analysis_enabled or not settings.openai_api_key:
                 raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="OpenAI evidence analysis is disabled")
         text = build_local_text(imported_file)
+        image_bytes = build_image_bytes(imported_file)
         evidence_type, keywords, classification_confidence = classify_evidence_type(text, imported_file.original_filename)
         order_number = extract_order_number(text)
         display_id = extract_display_id(text, order_number)
@@ -364,12 +368,47 @@ class EvidenceAIAnalysisService:
         detected_date = extract_date(text, fallback_year=fallback_year)
         restaurant_name = detect_restaurant_name(db, text, imported_file.batch.restaurant_id)
         customer_name = detect_customer_name(db, text, imported_file.batch.restaurant_id, restaurant_name)
+        ai_result_json: dict[str, Any] | None = None
+        ai = OpenAIStructuredAnalysisService().analyze_proof(
+            extracted_text=text,
+            filename=imported_file.original_filename,
+            restaurant_names=restaurant_names_for_ai(db),
+            mime_type=imported_file.mime_type,
+            image_bytes=image_bytes,
+        )
+        if ai is not None:
+            (
+                evidence_type,
+                keywords,
+                classification_confidence,
+                order_number,
+                display_id,
+                amount,
+                detected_date,
+                restaurant_name,
+                customer_name,
+                ai_result_json,
+            ) = merge_ai_proof_extraction(
+                db,
+                ai,
+                evidence_type=evidence_type,
+                keywords=keywords,
+                classification_confidence=classification_confidence,
+                order_number=order_number,
+                display_id=display_id,
+                amount=amount,
+                detected_date=detected_date,
+                restaurant_name=restaurant_name,
+                customer_name=customer_name,
+            )
         identity_score = sum(1 for value in (order_number, display_id, restaurant_name, customer_name, amount, detected_date) if value)
         extraction_confidence = Decimal("0.88") if order_number else Decimal("0.72") if display_id else Decimal("0.55")
         if restaurant_name and (order_number or display_id or customer_name):
             extraction_confidence = max(extraction_confidence, Decimal("0.82"))
         if restaurant_name and (order_number or display_id) and amount is not None:
             extraction_confidence = max(extraction_confidence, Decimal("0.90"))
+        if ai_result_json is not None:
+            extraction_confidence = max(extraction_confidence, Decimal(str(ai_result_json.get("confidence", "0"))))
         needs_manual_review = evidence_type == "unknown" or identity_score < 2
         return EvidenceAnalysisPayload(
             detected_evidence_type=evidence_type,
@@ -386,6 +425,7 @@ class EvidenceAIAnalysisService:
             needs_manual_review=needs_manual_review,
             notes=analysis_notes(evidence_type, order_number, display_id, restaurant_name, customer_name, amount),
             extracted_text=text,
+            ai_result_json=ai_result_json,
         )
 
 
@@ -401,6 +441,15 @@ def build_local_text(imported_file: EvidenceImportedFile) -> str:
     except (BulkEvidenceImportError, UnicodeDecodeError):
         decoded = ""
     return f"{filename_text}\n{batch_context}\n{decoded}".strip()
+
+
+def build_image_bytes(imported_file: EvidenceImportedFile) -> bytes | None:
+    if not imported_file.mime_type or not imported_file.mime_type.startswith("image/"):
+        return None
+    try:
+        return resolve_imported_file_path(imported_file).read_bytes()
+    except (BulkEvidenceImportError, OSError):
+        return None
 
 
 def build_analysis_result(
@@ -440,6 +489,8 @@ def build_analysis_result(
             "needs_manual_review": payload.needs_manual_review,
             "notes": payload.notes,
             "unified_order_proof": looks_like_unified_order_proof(payload.extracted_text.lower()),
+            "ai_assisted": payload.ai_result_json is not None,
+            "ai_result": payload.ai_result_json,
         },
     )
 
@@ -674,6 +725,152 @@ def classify_evidence_type(text: str, filename: str) -> tuple[str, list[str], De
     if looks_like_unified_order_proof(lower):
         return "receipt", ["ticket_commande_unique"], Decimal("0.80")
     return "unknown", [], Decimal("0.25")
+
+
+def restaurant_names_for_ai(db: Session) -> list[str]:
+    return list(db.scalars(select(Restaurant.name).where(Restaurant.active.is_(True)).order_by(Restaurant.name)).all())
+
+
+def merge_ai_proof_extraction(
+    db: Session,
+    ai: AIProofExtraction,
+    *,
+    evidence_type: str,
+    keywords: list[str],
+    classification_confidence: Decimal,
+    order_number: str | None,
+    display_id: str | None,
+    amount: Decimal | None,
+    detected_date: date | None,
+    restaurant_name: str | None,
+    customer_name: str | None,
+) -> tuple[
+    str,
+    list[str],
+    Decimal,
+    str | None,
+    str | None,
+    Decimal | None,
+    date | None,
+    str | None,
+    str | None,
+    dict[str, Any],
+]:
+    ai_confidence = ai.confidence
+    accepted = ai_confidence >= Decimal("0.70")
+    ai_json = {
+        "enabled": True,
+        "accepted": accepted,
+        "confidence": str(ai_confidence),
+        "case_type": ai.case_type,
+        "missing_fields": ai.missing_fields,
+        "notes": ai.notes,
+    }
+    if not accepted:
+        return (
+            evidence_type,
+            keywords,
+            classification_confidence,
+            order_number,
+            display_id,
+            amount,
+            detected_date,
+            restaurant_name,
+            customer_name,
+            ai_json,
+        )
+
+    resolved_restaurant = resolve_ai_restaurant_name(db, ai.restaurant_name)
+    if not restaurant_name and resolved_restaurant:
+        restaurant_name = resolved_restaurant
+    cleaned_customer = clean_customer_name(ai.customer_name or "") if ai.customer_name else None
+    if not customer_name and cleaned_customer:
+        customer_name = cleaned_customer
+    if amount is None and ai.order_amount is not None:
+        amount = ai.order_amount
+    if detected_date is None and ai.order_date is not None:
+        detected_date = ai.order_date
+    ai_order = ai.order_number or ai.display_id
+    if ai_order and not (order_number or display_id):
+        if UUID_TEXT_PATTERN.fullmatch(ai_order) or valid_order_number(ai_order):
+            order_number = ai_order.strip()
+        else:
+            cleaned_display = clean_display_id(ai_order)
+            if valid_display_id(cleaned_display):
+                display_id = cleaned_display
+    ai_type = normalize_ai_evidence_type(ai.detected_evidence_type, ai.case_type)
+    if evidence_type == "unknown" and ai_type:
+        evidence_type = ai_type
+        classification_confidence = max(classification_confidence, min(ai_confidence, Decimal("0.95")))
+        keywords = [*keywords, "ai_proof_identity"]
+    ai_json.update(
+        {
+            "detected_evidence_type": ai.detected_evidence_type,
+            "restaurant_name": ai.restaurant_name,
+            "resolved_restaurant_name": resolved_restaurant,
+            "customer_name": ai.customer_name,
+            "order_number": ai.order_number,
+            "display_id": ai.display_id,
+            "order_date": ai.order_date.isoformat() if ai.order_date else None,
+            "order_amount": str(ai.order_amount) if ai.order_amount is not None else None,
+        }
+    )
+    return (
+        evidence_type,
+        keywords,
+        classification_confidence,
+        order_number,
+        display_id,
+        amount,
+        detected_date,
+        restaurant_name,
+        customer_name,
+        ai_json,
+    )
+
+
+def normalize_ai_evidence_type(value: str | None, case_type: str | None) -> str | None:
+    normalized = normalize_for_match(value or "")
+    allowed = {
+        "receipt": "receipt",
+        "ticket": "receipt",
+        "ticket caisse": "receipt",
+        "cancellation proof": "cancellation_proof",
+        "annulation": "cancellation_proof",
+        "preparation proof": "preparation_proof",
+        "waste photo": "waste_photo",
+        "delivery proof": "delivery_proof",
+        "packaging photo": "packaging_photo",
+        "sealed bag photo": "sealed_bag_photo",
+        "order details screenshot": "order_details_screenshot",
+    }
+    if normalized in allowed:
+        return allowed[normalized]
+    if case_type == "cancellation":
+        return "cancellation_proof"
+    if case_type == "refund":
+        return "receipt"
+    return None
+
+
+def resolve_ai_restaurant_name(db: Session, value: str | None) -> str | None:
+    if not value:
+        return None
+    resolved = resolve_restaurant_display_name(db, value)
+    if resolved:
+        return resolved
+    normalized = normalize_for_match(value)
+    restaurants = db.scalars(select(Restaurant).where(Restaurant.active.is_(True)).order_by(Restaurant.id)).all()
+    best: tuple[int, str] | None = None
+    for restaurant in restaurants:
+        restaurant_normalized = normalize_for_match(restaurant.name)
+        if restaurant_normalized == normalized:
+            return restaurant.name
+        if restaurant_normalized and (restaurant_normalized in normalized or normalized in restaurant_normalized):
+            score = min(len(restaurant_normalized), len(normalized))
+            if best is None or score > best[0]:
+                best = (score, restaurant.name)
+    return best[1] if best and best[0] >= 5 else None
 
 
 def looks_like_unified_order_proof(normalized: str) -> bool:

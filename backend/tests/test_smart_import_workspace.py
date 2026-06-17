@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from app.models import (
     AuditLog,
     ClaimOrder,
+    EmailAccount,
+    EvidenceAnalysisResult,
     EvidenceFile,
     EvidenceImportBatch,
     EvidenceImportedFile,
@@ -26,7 +28,9 @@ from app.models import (
     User,
 )
 from app.models.domain import utc_now
+from app.services.openai_structured_analysis_service import AIProofExtraction
 import app.services.evidence_ai_analysis_service as evidence_analysis_service
+from app.core.config import get_settings
 
 
 def test_health_public_works(unauthenticated_client: TestClient) -> None:
@@ -1090,6 +1094,130 @@ def test_workspace_machine_creates_refund_case_from_ocr_image_text(
     dispute = db_session.scalar(select(UberCustomerRefundDispute).where(UberCustomerRefundDispute.claim_order_id == order.id))
     assert dispute is not None
     assert dispute.dispute_type == "order_not_received"
+
+
+def test_workspace_machine_creates_refund_case_from_ai_ticket_proof(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    get_settings.cache_clear()
+    restaurant = Restaurant(name="Asian Passion", sender_email="asian@example.com")
+    db_session.add(restaurant)
+    db_session.commit()
+    monkeypatch.setattr(evidence_analysis_service, "extract_image_ocr_text", lambda _content: "photo ticket agrafe")
+
+    def fake_ai_proof(*_args, **_kwargs):
+        return AIProofExtraction(
+            detected_evidence_type="receipt",
+            case_type="refund",
+            restaurant_name="Asian Passion",
+            customer_name="Client IA Ticket",
+            order_number="AIPROOF123",
+            display_id=None,
+            order_date=datetime(2026, 6, 16, tzinfo=timezone.utc).date(),
+            order_amount=Decimal("18.00"),
+            currency="EUR",
+            confidence=Decimal("0.93"),
+            missing_fields=[],
+            notes="Ticket agrafe lisible par IA.",
+        )
+
+    monkeypatch.setattr(evidence_analysis_service.OpenAIStructuredAnalysisService, "analyze_proof", fake_ai_proof)
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("ticket-agrafe.jpg", b"\xff\xd8\xff\xe0binary-image", "image/jpeg"))],
+    ).json()
+    confirm_response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [{"file_id": preview["files"][0]["id"], "action": "import_evidence_bulk"}],
+        },
+    )
+    assert confirm_response.status_code == 200
+
+    response = client.post(
+        "/v1/workspace/machine/run",
+        json={
+            "trigger": "refunds",
+            "smart_import_batch_id": preview["batch_preview_id"],
+            "sync_gmail": False,
+            "run_autopilot": False,
+        },
+    )
+
+    assert response.status_code == 200
+    stages = {stage["name"]: stage for stage in response.json()["stages"]}
+    assert stages["proof_intake"]["created_count"] == 1, " | ".join(stages["proof_intake"]["warnings"])
+    order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "AIPROOF123"))
+    assert order is not None
+    assert order.restaurant_id == restaurant.id
+    assert order.customer_name == "Client IA Ticket"
+    assert order.order_date.isoformat() == "2026-06-16"
+    assert str(order.order_amount) == "18.00"
+    analysis = db_session.scalar(select(EvidenceAnalysisResult).order_by(EvidenceAnalysisResult.id.desc()))
+    assert analysis is not None
+    assert analysis.raw_result_json["ai_assisted"] is True
+    get_settings.cache_clear()
+
+
+def test_owner_can_reset_business_history_without_deleting_restaurants_or_gmail(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = Restaurant(name="Reset Restaurant", sender_email="reset@example.com")
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+    db_session.add(restaurant)
+    db_session.flush()
+    db_session.add(
+        EmailAccount(
+            user_id=owner.id,
+            provider="gmail",
+            email_address="reset-gmail@example.com",
+            access_token_encrypted="encrypted-access-token",
+            refresh_token_encrypted="encrypted-refresh-token",
+        )
+    )
+    db_session.add(
+        ClaimOrder(
+            restaurant_id=restaurant.id,
+            uber_order_number="RESET123",
+            order_amount=Decimal("12.00"),
+            currency="EUR",
+            status="sent",
+        )
+    )
+    db_session.add(
+        EvidenceImportBatch(
+            uploaded_by_user_id=owner.id,
+            restaurant_id=restaurant.id,
+            original_filename="reset-proof.jpg",
+            source_type="multi_file_upload",
+            status="uploaded",
+        )
+    )
+    db_session.commit()
+
+    rejected = client.post("/v1/workspace/reset-business-history", json={"confirmation": "wrong"})
+    assert rejected.status_code == 400
+    assert db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "RESET123")) is not None
+
+    response = client.post(
+        "/v1/workspace/reset-business-history",
+        json={"confirmation": "RESET_TENNET_BUSINESS_HISTORY"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "reset"
+    assert response.json()["deleted_counts"]["claim_orders"] == 1
+    assert db_session.scalar(select(Restaurant).where(Restaurant.name == "Reset Restaurant")) is not None
+    assert db_session.scalar(select(EmailAccount).where(EmailAccount.email_address == "reset-gmail@example.com")) is not None
+    assert db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "RESET123")) is None
+    reset_log = db_session.scalar(select(AuditLog).where(AuditLog.action == "business_history.reset"))
+    assert reset_log is not None
 
 
 def test_workspace_machine_reanalyzes_weak_current_batch_evidence_before_proof_intake(

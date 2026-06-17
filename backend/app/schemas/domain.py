@@ -2028,6 +2028,16 @@ class WorkspaceMachineRunResponse(BaseModel):
     next_actions: WorkspaceNextActionsResponse
 
 
+class BusinessHistoryResetRequest(BaseModel):
+    confirmation: str
+
+
+class BusinessHistoryResetResponse(BaseModel):
+    status: str
+    deleted_counts: dict[str, int] = Field(default_factory=dict)
+    preserved: list[str] = Field(default_factory=list)
+
+
 RecoveryMachineRailKey = Literal["refunds", "cancellations"]
 RecoveryMachineStageKey = Literal[
     "smart_import",
