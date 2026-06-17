@@ -469,6 +469,9 @@ def followup_skip_reason(db: Session, task: FollowUpTask) -> str | None:
     order = task.order
     if order.status in FINAL_CLAIM_STATUSES:
         return "final_status"
+    identity_reason = order_identity_skip_reason(order)
+    if identity_reason is not None:
+        return identity_reason
     positive_signal_reason = positive_payment_signal_skip_reason(db, order.id)
     if positive_signal_reason is not None:
         return positive_signal_reason
@@ -480,6 +483,8 @@ def followup_skip_reason(db: Session, task: FollowUpTask) -> str | None:
         return "cooldown_active"
     if task.generated_provider_draft is not None and task.generated_provider_draft.status == "sent":
         return "already_sent"
+    if latest_starred_linked_inbound_message(db, order.id) is None:
+        return "starred_gmail_thread_required"
     return None
 
 
@@ -490,6 +495,9 @@ def appeal_skip_reason(db: Session, workflow: AppealWorkflow) -> str | None:
     if workflow.claim_order is not None and workflow.claim_order.status in {"accepted", "payment_confirmed"}:
         return "claim_order_resolved"
     if workflow.claim_order is not None:
+        identity_reason = order_identity_skip_reason(workflow.claim_order)
+        if identity_reason is not None:
+            return identity_reason
         positive_signal_reason = positive_payment_signal_skip_reason(db, workflow.claim_order.id)
         if positive_signal_reason is not None:
             return positive_signal_reason
@@ -510,6 +518,8 @@ def appeal_skip_reason(db: Session, workflow: AppealWorkflow) -> str | None:
         and not latest_attempt.new_evidence_summary
     ):
         return "same_template_without_new_argument"
+    if workflow.claim_order is not None and latest_starred_linked_inbound_message(db, workflow.claim_order.id) is None:
+        return "starred_gmail_thread_required"
     return None
 
 
@@ -533,6 +543,36 @@ def has_unreviewed_inbound(db: Session, order_id: int) -> bool:
         )
         is not None
     )
+
+
+def order_identity_skip_reason(order: ClaimOrder) -> str | None:
+    if not str(order.uber_order_number or "").strip():
+        return "missing_uber_order_number"
+    if not str(order.customer_name or "").strip():
+        return "missing_customer_name"
+    if order.order_date is None:
+        return "missing_order_date"
+    if order.restaurant is None or not str(order.restaurant.name or "").strip():
+        return "missing_restaurant_name"
+    return None
+
+
+def latest_starred_linked_inbound_message(db: Session, order_id: int) -> InboundEmailMessage | None:
+    messages = db.scalars(
+        select(InboundEmailMessage)
+        .where(
+            InboundEmailMessage.order_id == order_id,
+            InboundEmailMessage.provider == "gmail",
+            InboundEmailMessage.provider_thread_id.is_not(None),
+        )
+        .order_by(InboundEmailMessage.received_at.desc().nullslast(), InboundEmailMessage.id.desc())
+        .limit(25)
+    ).all()
+    for message in messages:
+        labels = {str(label).strip().casefold() for label in (message.provider_labels_json or [])}
+        if "starred" in labels:
+            return message
+    return None
 
 
 def positive_payment_signal_skip_reason(db: Session, order_id: int) -> str | None:
@@ -680,7 +720,7 @@ def send_initial_claim(
     action.status = "provider_draft_created"
     action.provider_draft_id = provider_draft.id
     db.flush()
-    send_provider_draft(db, user, provider_draft, provider, order_status_after_send="sent")
+    send_provider_draft(db, user, provider_draft, provider, order_status_after_send="sent", require_reply_thread=False)
     action.status = "sent"
     action.sent_at = provider_draft.sent_at
     action.reason = "initial_claim_sent"
@@ -813,11 +853,14 @@ def send_provider_draft(
     provider: EmailProvider,
     *,
     order_status_after_send: str | None,
+    require_reply_thread: bool = True,
 ) -> None:
     if provider_draft.status == "sent":
         raise AutopilotError("provider_draft_already_sent", 409)
     if provider_draft.status != "provider_draft_created":
         raise AutopilotError("provider_draft_not_ready", 409)
+    if require_reply_thread and not provider_draft.provider_thread_id:
+        raise AutopilotError("gmail_reply_thread_required", 409)
     old_status = provider_draft.status
     provider_draft.status = "send_requested"
     provider_draft.updated_at = utc_now()

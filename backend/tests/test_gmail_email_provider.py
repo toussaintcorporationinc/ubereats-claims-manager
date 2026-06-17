@@ -1,4 +1,7 @@
+import base64
 from collections.abc import Generator
+from email import policy
+from email.parser import BytesParser
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,6 +19,7 @@ from app.models import (
     EmailDraft,
     EmailProviderDraft,
     EmailThread,
+    InboundEmailMessage,
     User,
 )
 from app.models.domain import utc_now
@@ -475,6 +479,70 @@ def test_owner_can_create_gmail_draft(
 
     assert response.status_code == 200
     assert response.json()["provider_draft_id"] == f"fake-gmail-draft-{draft['id']}"
+
+
+def test_real_gmail_provider_replies_in_existing_uber_thread(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    account = connect_gmail_account(db_session, owner.id, "claims-thread@example.com")
+    restaurant = create_restaurant(client)
+    draft_payload = create_ready_order_and_draft(client, restaurant["id"], "UBER-GMAIL-THREAD")
+    email_draft = db_session.get(EmailDraft, draft_payload["id"])
+    assert email_draft is not None
+    db_session.add(
+        InboundEmailMessage(
+            email_account_id=account.id,
+            order_id=email_draft.order_id,
+            provider="gmail",
+            provider_message_id="gmail-msg-123",
+            provider_thread_id="gmail-thread-urgent-123",
+            from_email="restaurantsfrance@uber.com",
+            to_email=account.email_address,
+            subject="Re: contestation d'annulation de commande",
+            body_text="Nous ne pouvons pas rembourser.",
+            raw_headers_json={
+                "message-id": "<uber-reply-123@mail.gmail.com>",
+                "references": "<first-claim-123@mail.gmail.com>",
+            },
+            provider_labels_json=["STARRED"],
+            match_status="linked",
+            match_reason="thread_id_match",
+        )
+    )
+    db_session.commit()
+    captured: dict[str, str | None] = {}
+    provider = GmailEmailProvider()
+
+    monkeypatch.setattr(provider, "ensure_access_token", lambda db, account: "access-token")
+
+    def fake_create_gmail_draft(access_token: str, raw_message: str, *, thread_id: str | None = None) -> dict:
+        captured["raw_message"] = raw_message
+        captured["thread_id"] = thread_id
+        return {"id": "draft-threaded", "message": {"threadId": thread_id}}
+
+    monkeypatch.setattr(provider, "create_gmail_draft", fake_create_gmail_draft)
+
+    provider_draft = provider.create_draft(
+        db_session,
+        owner,
+        email_draft,
+        to_email="restaurantsfrance@uber.com",
+        include_evidence=False,
+    )
+
+    assert provider_draft.provider_thread_id == "gmail-thread-urgent-123"
+    assert provider_draft.subject == "Re: contestation d'annulation de commande"
+    assert captured["thread_id"] == "gmail-thread-urgent-123"
+    raw_message = str(captured["raw_message"])
+    parsed = BytesParser(policy=policy.default).parsebytes(base64.urlsafe_b64decode(raw_message))
+    assert parsed["Subject"] == "Re: contestation d'annulation de commande"
+    assert parsed["In-Reply-To"] == "<uber-reply-123@mail.gmail.com>"
+    assert "<first-claim-123@mail.gmail.com>" in parsed["References"]
+    assert "<uber-reply-123@mail.gmail.com>" in parsed["References"]
 
 
 def test_create_gmail_draft_refused_without_connected_account(

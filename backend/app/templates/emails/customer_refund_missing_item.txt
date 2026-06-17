@@ -1,14 +1,17 @@
 Bonjour,
 
-Nous contestons la deduction Uber Eats appliquee sur la commande {uber_order_number} du restaurant {restaurant_name}.
+Je souhaite contester la demande de remboursement pour article manquant concernant la commande Uber Eats {uber_order_number}.
 
-Motif conteste : article manquant.
-Montant deduit : {customer_refund_amount} {currency}.
+Restaurant : {restaurant_name}
+{customer_name_line}{order_date_line}Montant concerne : {customer_refund_amount} {currency}
 
-Selon nos elements, la commande a ete preparee complete. Les preuves disponibles sont jointes :
+La commande a ete preparee complete et les articles demandes ont ete places dans le sac avant l'envoi.
+Nous verifions les commandes avant remise au livreur.
+
+Pieces jointes :
 {evidence_list}
 
-Merci de verifier ce remboursement client et de regulariser le paiement si la deduction a ete appliquee a tort.
+Merci de verifier ce dossier et de regulariser le paiement si la deduction a ete appliquee a tort.
 
 Cordialement,
 {signature}

@@ -1,14 +1,16 @@
 Bonjour,
 
-Nous demandons le reexamen du dossier Uber Eats {uber_order_number} pour {restaurant_name}, lie a un motif de livraison ou de commande non recue.
+Je vous demande de reexaminer le refus concernant la commande Uber Eats {uber_order_number}, indiquee comme non recue.
 
-Montant concerne : {order_amount} {currency}
-Motif du refus indique : {refusal_reason}
+Restaurant : {restaurant_name}
+{customer_name_line}{order_date_line}Montant concerne : {order_amount} {currency}
 
-Preuves rattachees dans TENNET :
+{appeal_argument}
+
+Pieces jointes :
 {evidence_list}
 
-Merci de verifier les elements disponibles et d'indiquer precisement toute preuve supplementaire necessaire si le refus est maintenu.
+Merci de verifier ce dossier et d'indiquer precisement toute piece complementaire necessaire si le refus est maintenu.
 
 Cordialement,
 {signature}

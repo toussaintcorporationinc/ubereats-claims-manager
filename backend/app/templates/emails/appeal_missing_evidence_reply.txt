@@ -1,17 +1,19 @@
 Bonjour,
 
-Nous vous transmettons des elements complementaires pour le dossier Uber Eats {uber_order_number} du restaurant {restaurant_name}.
+Je vous transmets les pieces complementaires concernant la commande Uber Eats {uber_order_number}.
 
-Montant concerne : {order_amount} {currency}
-Motif du refus indique : {refusal_reason}
+Restaurant : {restaurant_name}
+{customer_name_line}{order_date_line}Montant concerne : {order_amount} {currency}
 
-Preuves demandees ou utiles selon TENNET :
+Elements demandes ou utiles :
 {required_evidence_list}
 
-Preuves rattachees dans TENNET :
+{appeal_argument}
+
+Pieces jointes :
 {evidence_list}
 
-Merci de reexaminer le dossier avec ces elements et de confirmer la regularisation si la reclamation est acceptee.
+Merci de reexaminer le dossier avec ces elements et de confirmer la regularisation si la demande est acceptee.
 
 Cordialement,
 {signature}

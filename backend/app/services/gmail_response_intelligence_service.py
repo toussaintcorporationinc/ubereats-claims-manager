@@ -639,11 +639,18 @@ def parse_decimal_amount(value: str) -> Decimal:
 
 
 def build_notes(prefix: str, message: InboundEmailMessage, matches: dict[str, list[str]]) -> str:
-    matched = {key: values for key, values in matches.items() if values}
-    snippet = normalize_text(message.snippet or message.subject or "")[:240]
-    notes = f"{prefix} Mots cles: {matched}. Extrait: {snippet}"
-    return notes[:MAX_NOTES_LENGTH]
+    snippet = clean_human_snippet(message.snippet or message.subject or message.body_text or "")
+    if snippet:
+        return f"{prefix} Resume du mail Uber: {snippet}"[:MAX_NOTES_LENGTH]
+    return prefix[:MAX_NOTES_LENGTH]
 
 
 def limited_note(prefix: str, note: str | None) -> str:
     return f"{prefix} {note or ''}".strip()[:MAX_NOTES_LENGTH]
+
+
+def clean_human_snippet(value: str) -> str:
+    cleaned = re.sub(r"(?is)please enter your reply above this line.*", "", value or "")
+    cleaned = re.sub(r"(?is)replies below this line will not be received.*", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:240]

@@ -7,18 +7,18 @@ from sqlalchemy.orm import Session
 
 from app.models import AppealWorkflow, ClaimOrder, EmailDraft, RefusalAnalysis
 from app.services.audit import add_audit_log
-from app.services.email_draft_service import format_amount
+from app.services.email_draft_service import format_amount, format_restaurant_signature
 from app.services.refusal_policy_service import template_type_for_policy
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates" / "emails"
 
 APPEAL_SUBJECTS = {
-    "appeal_generic_refusal": "Demande de reexamen - refus Uber Eats - {uber_order_number}",
-    "appeal_missing_evidence_reply": "Elements complementaires - refus Uber Eats - {uber_order_number}",
-    "appeal_order_prepared_before_cancellation": "Reexamen - commande preparee avant annulation - {uber_order_number}",
-    "appeal_order_not_received_delivery_proof": "Reexamen - preuve de livraison/preparation - {uber_order_number}",
-    "appeal_missing_item_preparation_proof": "Reexamen - article manquant conteste - {uber_order_number}",
-    "appeal_escalation": "Escalade - dossier Uber Eats refuse - {uber_order_number}",
+    "appeal_generic_refusal": "Reexamen contestation commande Uber Eats - {uber_order_number}",
+    "appeal_missing_evidence_reply": "Preuves complementaires - commande Uber Eats - {uber_order_number}",
+    "appeal_order_prepared_before_cancellation": "Reexamen annulation de commande - {uber_order_number}",
+    "appeal_order_not_received_delivery_proof": "Reexamen commande non recue - {uber_order_number}",
+    "appeal_missing_item_preparation_proof": "Reexamen article manquant conteste - {uber_order_number}",
+    "appeal_escalation": "Reexamen prioritaire commande Uber Eats - {uber_order_number}",
     "appeal_payment_verification": "Verification paiement - dossier Uber Eats - {uber_order_number}",
 }
 
@@ -92,23 +92,32 @@ def build_appeal_context(
 ) -> dict[str, Any]:
     restaurant = order.restaurant
     evidence_list = "\n".join(
-        f"- {item.evidence_type}: {item.original_filename}"
+        f"- {item.original_filename}"
         for item in sorted(order.evidence_files, key=lambda evidence: evidence.id)
     )
     if not evidence_list:
-        evidence_list = "- Aucune preuve rattachee dans TENNET a ce stade."
+        evidence_list = "- Aucune piece jointe pour le moment."
 
     required_evidence = analysis.required_evidence_types_json if analysis else []
     required_evidence_text = "\n".join(f"- {item}" for item in required_evidence or [])
     if not required_evidence_text:
-        required_evidence_text = "- Aucune nouvelle preuve obligatoire identifiee par TENNET."
+        required_evidence_text = "- Aucun element complementaire precis n'a ete demande."
 
     refusal_reason = analysis.refusal_reason if analysis else "Refus a reexaminer"
     refusal_excerpt = analysis.refusal_text_excerpt if analysis and analysis.refusal_text_excerpt else "Non renseigne"
+    appeal_argument = build_appeal_argument(
+        action=analysis.recommended_next_action if analysis else "challenge_generic_refusal",
+        appeal_type=appeal_type,
+        refusal_count=workflow.refusal_count,
+        attempt_count=workflow.appeal_attempt_count,
+        evidence_list=evidence_list,
+    )
 
     return {
         "restaurant_name": restaurant.name if restaurant else f"Restaurant #{order.restaurant_id}",
         "uber_order_number": order.uber_order_number,
+        "customer_name_line": optional_line("Client", order.customer_name),
+        "order_date_line": optional_line("Date de commande", order.order_date),
         "order_amount": format_amount(order.order_amount or 0),
         "currency": order.currency,
         "appeal_type": appeal_type,
@@ -116,10 +125,65 @@ def build_appeal_context(
         "appeal_attempt_count": workflow.appeal_attempt_count,
         "refusal_reason": refusal_reason,
         "refusal_excerpt": refusal_excerpt,
+        "appeal_argument": appeal_argument,
         "evidence_list": evidence_list,
         "required_evidence_list": required_evidence_text,
-        "signature": restaurant.name if restaurant else "TENNET",
+        "signature": format_restaurant_signature(restaurant) if restaurant else "Restaurant",
     }
+
+
+def optional_line(label: str, value: object | None) -> str:
+    if value is None or value == "":
+        return ""
+    return f"{label} : {value}\n"
+
+
+def build_appeal_argument(
+    *,
+    action: str,
+    appeal_type: str,
+    refusal_count: int,
+    attempt_count: int,
+    evidence_list: str,
+) -> str:
+    has_evidence = "Aucune piece jointe" not in evidence_list
+    repeated = refusal_count > 1 or attempt_count > 0
+    if action == "provide_missing_evidence" or appeal_type == "evidence_reply":
+        if has_evidence:
+            return (
+                "Je vous joins les elements disponibles pour permettre une nouvelle verification du dossier. "
+                "Si une piece precise reste manquante, merci de l'indiquer clairement afin que le restaurant puisse "
+                "la fournir sans ouvrir un nouveau dossier."
+            )
+        return (
+            "Votre reponse semble demander des justificatifs complementaires. Merci d'indiquer precisement les pieces "
+            "attendues pour que le restaurant puisse completer le dossier correctement."
+        )
+    if action == "clarify_delivery_proof":
+        return (
+            "La commande a ete preparee et suivie dans le parcours habituel. Merci de verifier les elements transmis "
+            "et de preciser exactement quelle information de livraison manquerait si le refus est maintenu."
+        )
+    if action == "clarify_order_prepared":
+        return (
+            "La commande avait ete preparee avant l'annulation. Le restaurant a supporte une perte et du gaspillage; "
+            "merci de reexaminer le dossier avec les pieces jointes."
+        )
+    if action == "payment_verification":
+        return (
+            "Merci de verifier si un paiement ou une regularisation existe deja pour cette commande. Si le paiement "
+            "a ete accorde, merci de confirmer le montant et la reference de versement."
+        )
+    if action == "request_escalation" or appeal_type == "escalation" or repeated:
+        return (
+            "Le refus ne permet pas de comprendre clairement la raison du rejet. Je vous demande une nouvelle revue "
+            "du dossier et, si necessaire, une transmission a un niveau de traitement superieur avec le motif detaille."
+        )
+    return (
+        "Le refus ne donne pas d'element suffisamment precis pour justifier le maintien de la deduction. "
+        "Merci de reexaminer la commande et les pieces jointes, puis de confirmer la regularisation ou le motif exact "
+        "si le refus est maintenu."
+    )
 
 
 def render_template(draft_type: str, context: dict[str, Any]) -> str:

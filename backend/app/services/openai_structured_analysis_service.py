@@ -152,8 +152,8 @@ class OpenAIStructuredAnalysisService:
         image_bytes: bytes | None = None,
         mime_type: str | None = None,
     ) -> dict[str, Any] | None:
-        api_key = self.settings.openai_api_key
-        if not api_key:
+        credential = self.settings.openai_api_key
+        if not credential:
             return None
         content: list[dict[str, Any]] = [{"type": "input_text", "text": prompt}]
         if image_bytes and mime_type and mime_type.startswith("image/") and len(image_bytes) <= MAX_IMAGE_BYTES:
@@ -175,7 +175,7 @@ class OpenAIStructuredAnalysisService:
             with httpx.Client(timeout=self.settings.openai_request_timeout_seconds) as client:
                 response = client.post(
                     OPENAI_RESPONSES_URL,
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    headers={"Authorization": f"Bearer {credential}", "Content-Type": "application/json"},
                     json=payload,
                 )
             response.raise_for_status()

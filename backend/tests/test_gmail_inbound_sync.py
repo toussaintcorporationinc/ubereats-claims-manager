@@ -263,6 +263,8 @@ def create_sent_email_context(
     order_data = create_order(client, restaurant_id, order_number)
     order = db_session.get(ClaimOrder, order_data["id"])
     assert order is not None
+    order.customer_name = "Client Test"
+    order.order_date = utc_now().date()
     order.status = order_status
     draft = EmailDraft(
         order_id=order.id,
@@ -735,6 +737,7 @@ def test_sync_refused_response_can_run_autopilot_appeal(
             "msg-auto-appeal",
             thread_id="thread-auto-appeal",
             body_text="We cannot reimburse this order. No compensation is available.",
+            provider_labels=["STARRED"],
         )
     ]
 
@@ -781,6 +784,7 @@ def test_sync_autopilot_blocks_recipient_outside_support_filter(
             "msg-bad-recipient",
             thread_id="thread-bad-recipient",
             body_text="This order is not eligible and we cannot reimburse it.",
+            provider_labels=["STARRED"],
         )
     ]
 
@@ -838,6 +842,7 @@ def test_auto_sync_service_processes_refusals_and_runs_autopilot(
             "msg-auto-sync-refused",
             thread_id="thread-auto-sync-refused",
             body_text="We are unable to reimburse this order. No compensation is available.",
+            provider_labels=["STARRED"],
         )
     ]
 

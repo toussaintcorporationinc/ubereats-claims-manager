@@ -17,6 +17,7 @@ from app.models import (
     AuditLog,
     CustomerRefundDisputeReview,
     EmailAccount,
+    EmailDraft,
     EmailProviderDraft,
     EvidenceFile,
     EvidenceImportBatch,
@@ -26,6 +27,23 @@ from app.models import (
     User,
 )
 from app.models.domain import utc_now
+
+
+FORBIDDEN_UBER_VISIBLE_TERMS = [
+    "TENNET",
+    "Historique",
+    "Mots cles",
+    "generic_refusal",
+    "dispute_type",
+    "Raison detectee",
+    "Extrait / notes",
+]
+
+
+def assert_clean_uber_email(subject: str, body: str) -> None:
+    combined = f"{subject}\n{body}"
+    for term in FORBIDDEN_UBER_VISIBLE_TERMS:
+        assert term not in combined
 
 
 @pytest.fixture()
@@ -421,6 +439,12 @@ def test_appeal_draft_gmail_draft_and_mark_sent_are_controlled(
 
     draft_response = configured_client.post(f"/v1/appeals/{workflow.id}/create-draft", json={"appeal_type": "evidence_reply"})
     assert draft_response.status_code == 201
+    draft_payload = draft_response.json()
+    email_draft = db_session.get(EmailDraft, draft_payload["email_draft_id"])
+    assert email_draft is not None
+    assert "Reexamen" in email_draft.subject or "Preuves complementaires" in email_draft.subject
+    assert "Merci d'indiquer precisement les pieces attendues" in email_draft.body
+    assert_clean_uber_email(email_draft.subject, email_draft.body)
     gmail_response = configured_client.post(f"/v1/appeals/{workflow.id}/create-gmail-draft")
     assert gmail_response.status_code == 201
     sent_response = configured_client.post(f"/v1/appeals/{workflow.id}/mark-sent")
