@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,6 +28,8 @@ from app.routes.email import get_gmail_provider
 from app.services.email_provider import EmailConnectionStatus, EmailProviderError, EmailSendResult, InboundEmailPayload
 from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncService
 from app.services.gmail_inbound_sync_service import GmailInboundSyncResult, GmailInboundSyncService
+from app.services.openai_structured_analysis_service import AIGmailClassification
+import app.services.gmail_response_intelligence_service as gmail_intelligence_service
 
 
 class FakeInboundGmailProvider:
@@ -1216,6 +1219,119 @@ def test_starred_message_without_match_is_visible_manual_review(
     assert analysis.status == "manual_review"
     assert analysis.recommended_review_type == "refused"
     assert analysis.reason == "message_not_linked_to_order:gmail_starred_urgent_followup"
+
+
+def test_ai_gmail_analysis_applies_ambiguous_negative_response(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-AI-NEGATIVE",
+        thread_id="thread-ai-negative",
+    )
+
+    def fake_ai_gmail(*_args, **_kwargs):
+        return AIGmailClassification(
+            review_type="refused",
+            confidence=Decimal("0.91"),
+            reason="policy_denial_without_keyword",
+            detected_amount=None,
+            evidence_requested=False,
+            notes="Uber refuse la regularisation selon sa politique.",
+        )
+
+    monkeypatch.setattr(
+        gmail_intelligence_service.OpenAIStructuredAnalysisService,
+        "analyze_gmail_message",
+        fake_ai_gmail,
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-ai-negative",
+            thread_id="thread-ai-negative",
+            body_text="After another review, this request does not meet our internal adjustment policy.",
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    db_session.refresh(order)
+    assert order.status == "refused"
+    analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
+    assert analysis is not None
+    assert analysis.status == "applied"
+    assert analysis.recommended_review_type == "refused"
+    assert analysis.reason == "ai:policy_denial_without_keyword"
+    get_settings.cache_clear()
+
+
+def test_ai_gmail_payment_confirmed_requires_amount(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-AI-PAYMENT",
+        thread_id="thread-ai-payment",
+    )
+
+    def fake_ai_gmail(*_args, **_kwargs):
+        return AIGmailClassification(
+            review_type="payment_confirmed",
+            confidence=Decimal("0.92"),
+            reason="payment_signal_without_amount",
+            detected_amount=None,
+            evidence_requested=False,
+            notes="Paiement annonce mais montant absent.",
+        )
+
+    monkeypatch.setattr(
+        gmail_intelligence_service.OpenAIStructuredAnalysisService,
+        "analyze_gmail_message",
+        fake_ai_gmail,
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-ai-payment",
+            thread_id="thread-ai-payment",
+            body_text="The accounting team has reviewed this thread and left a positive note for the merchant.",
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    db_session.refresh(order)
+    assert order.status == "payment_to_verify"
+    assert order.recovered_amount is None
+    analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
+    assert analysis is not None
+    assert analysis.status == "applied"
+    assert analysis.recommended_review_type == "payment_to_verify"
+    assert analysis.reason == "ai_payment_without_amount"
+    get_settings.cache_clear()
 
 
 def test_existing_unlinked_uber_message_is_relinked_on_next_sync(

@@ -66,12 +66,17 @@ class Settings(BaseSettings):
     ai_evidence_auto_attach_enabled: bool = False
     ai_evidence_high_confidence_threshold: float = 0.90
     ai_evidence_medium_confidence_threshold: float = 0.65
+    ai_proof_identity_enabled: bool = True
+    ai_gmail_analysis_enabled: bool = True
+    ai_gmail_min_confidence: float = 0.70
     bulk_evidence_max_files_per_batch: int = 500
     bulk_evidence_max_zip_size_mb: int = 500
     bulk_evidence_max_file_size_mb: int = 20
     bulk_evidence_allowed_extensions: str = ".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif"
     openai_api_key: str | None = None
     openai_evidence_model: str | None = None
+    openai_gmail_model: str | None = None
+    openai_request_timeout_seconds: float = 30.0
     ocr_local_enabled: bool = True
     appeals_enabled: bool = True
     appeal_auto_send_enabled: bool = False
