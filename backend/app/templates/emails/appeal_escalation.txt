@@ -1,18 +1,16 @@
 Bonjour,
 
-Nous demandons une escalade du dossier Uber Eats {uber_order_number} pour le restaurant {restaurant_name}.
+Je vous demande un reexamen prioritaire de la commande Uber Eats {uber_order_number}.
 
+Restaurant : {restaurant_name}
 Montant concerne : {order_amount} {currency}
-Motif du refus indique : {refusal_reason}
 
-Historique TENNET :
-- Nombre de refus enregistres : {refusal_count}
-- Nombre d'appels deja envoyes : {appeal_attempt_count}
+{appeal_argument}
 
-Preuves rattachees dans TENNET :
+Pieces jointes :
 {evidence_list}
 
-Merci de transmettre ce dossier a un niveau de revue superieur et de communiquer le motif detaille de decision.
+Merci de transmettre ce dossier a un niveau de revue superieur et de regulariser le paiement si les elements transmis confirment la demande.
 
 Cordialement,
 {signature}

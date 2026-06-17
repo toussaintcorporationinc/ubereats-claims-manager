@@ -1,14 +1,14 @@
 Bonjour,
 
-Nous revenons vers vous concernant la commande Uber Eats {uber_order_number}, toujours en attente de regularisation.
+Je reviens vers vous concernant la commande Uber Eats {uber_order_number}, toujours en attente de reponse.
 
 Restaurant : {restaurant_name}
-Montant reclame : {order_amount} {currency}
+Montant concerne : {order_amount} {currency}
 
-Les justificatifs disponibles restent les suivants :
+Pieces jointes :
 {evidence_list}
 
-Merci de nous communiquer une reponse ou une date de traitement.
+Merci de verifier ce dossier et de nous indiquer si un paiement est prevu ou si un element supplementaire est necessaire.
 
 Cordialement,
 {signature}

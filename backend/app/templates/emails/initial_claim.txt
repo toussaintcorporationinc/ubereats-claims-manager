@@ -1,18 +1,17 @@
 Bonjour,
 
-Nous demandons la regularisation de la commande Uber Eats {uber_order_number},
-annulee apres preparation par le restaurant.
+Je souhaite contester l'annulation de la commande Uber Eats {uber_order_number}.
 
 Restaurant : {restaurant_name}
-{customer_name_line}{order_date_line}Montant reclame : {order_amount} {currency}
-{accepted_line}{prepared_line}{loss_type_line}
-Pieces disponibles :
+{customer_name_line}{order_date_line}Montant concerne : {order_amount} {currency}
+
+La commande avait ete acceptee et preparee par le restaurant avant l'annulation.
+Cette annulation genere une perte pour le restaurant et du gaspillage alimentaire.
+
+Pieces jointes :
 {evidence_list}
 
-La commande avait ete prise en charge et les elements fournis attestent l'annulation,
-la preparation ou la perte alimentaire associee.
-Merci de proceder au paiement de cette commande annulee apres preparation,
-ou de nous indiquer les elements complementaires necessaires.
+Merci de verifier ce dossier et de regulariser le paiement si les elements transmis confirment la preparation de la commande.
 
 Cordialement,
 {signature}

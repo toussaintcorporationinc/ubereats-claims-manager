@@ -15,7 +15,15 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.security import create_access_token, decode_access_token
-from app.models import EmailAccount, EmailAccountRestaurantMapping, EmailDraft, EmailProviderDraft, User
+from app.models import (
+    EmailAccount,
+    EmailAccountRestaurantMapping,
+    EmailDraft,
+    EmailProviderDraft,
+    EmailThread,
+    InboundEmailMessage,
+    User,
+)
 from app.models.domain import utc_now
 from app.services.email_provider import EmailConnectionStatus, EmailProviderError, EmailSendResult, InboundEmailPayload
 from app.services.file_storage_service import FileStorageError, resolve_evidence_path
@@ -35,6 +43,14 @@ class EvidenceAttachment:
     filename: str
     mime_type: str
     content: bytes
+
+
+@dataclass(frozen=True)
+class GmailReplyContext:
+    thread_id: str
+    message_id: str | None = None
+    references: str | None = None
+    subject: str | None = None
 
 
 class GmailEmailProvider:
@@ -130,18 +146,25 @@ class GmailEmailProvider:
             raise EmailProviderError("Gmail account is not connected", 409)
 
         attachments = self.build_evidence_attachments(email_draft, include_evidence)
-        raw_message = self.build_raw_message(account, email_draft, to_email, attachments)
+        reply_context = self.find_reply_context(db, account, email_draft)
+        gmail_subject = build_reply_subject(email_draft.subject, reply_context)
+        raw_message = self.build_raw_message(account, email_draft, to_email, attachments, reply_context)
         try:
             access_token = self.ensure_access_token(db, account)
-            response_payload = self.create_gmail_draft(access_token, raw_message)
+            response_payload = self.create_gmail_draft(
+                access_token,
+                raw_message,
+                thread_id=reply_context.thread_id if reply_context else None,
+            )
             provider_draft = EmailProviderDraft(
                 email_draft_id=email_draft.id,
                 email_account_id=account.id,
                 provider=self.provider,
                 provider_draft_id=str(response_payload.get("id") or ""),
-                provider_thread_id=response_payload.get("message", {}).get("threadId"),
+                provider_thread_id=response_payload.get("message", {}).get("threadId")
+                or (reply_context.thread_id if reply_context else None),
                 to_email=to_email,
-                subject=email_draft.subject,
+                subject=gmail_subject,
                 status="provider_draft_created",
                 created_by_user_id=user.id,
             )
@@ -288,12 +311,18 @@ class GmailEmailProvider:
         email_draft: EmailDraft,
         to_email: str,
         attachments: list[EvidenceAttachment],
+        reply_context: GmailReplyContext | None = None,
     ) -> str:
         message = EmailMessage()
         message["To"] = to_email
-        message["Subject"] = email_draft.subject
+        message["Subject"] = build_reply_subject(email_draft.subject, reply_context)
         if account.email_address:
             message["From"] = account.email_address
+        if reply_context and reply_context.message_id:
+            message["In-Reply-To"] = reply_context.message_id
+            references = build_references_header(reply_context.references, reply_context.message_id)
+            if references:
+                message["References"] = references
         message.set_content(email_draft.body)
 
         for attachment in attachments:
@@ -307,8 +336,10 @@ class GmailEmailProvider:
 
         return base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
 
-    def create_gmail_draft(self, access_token: str, raw_message: str) -> dict:
+    def create_gmail_draft(self, access_token: str, raw_message: str, *, thread_id: str | None = None) -> dict:
         payload = {"message": {"raw": raw_message}}
+        if thread_id:
+            payload["message"]["threadId"] = thread_id
         return self.post_json(
             GMAIL_DRAFTS_URL,
             payload,
@@ -480,6 +511,71 @@ class GmailEmailProvider:
                 return account
         return self.get_account_for_draft(db, user_id, provider_draft.email_draft)
 
+    def find_reply_context(
+        self,
+        db: Session,
+        account: EmailAccount,
+        email_draft: EmailDraft,
+    ) -> GmailReplyContext | None:
+        if email_draft.order_id is None:
+            return None
+
+        inbound_message = db.scalar(
+            select(InboundEmailMessage)
+            .where(
+                InboundEmailMessage.email_account_id == account.id,
+                InboundEmailMessage.order_id == email_draft.order_id,
+                InboundEmailMessage.provider == self.provider,
+                InboundEmailMessage.provider_thread_id.is_not(None),
+            )
+            .order_by(InboundEmailMessage.id.desc())
+        )
+        if inbound_message and inbound_message.provider_thread_id:
+            headers = inbound_message.raw_headers_json or {}
+            return GmailReplyContext(
+                thread_id=inbound_message.provider_thread_id,
+                message_id=extract_header_value(headers, "message-id"),
+                references=extract_header_value(headers, "references"),
+                subject=inbound_message.subject,
+            )
+
+        email_thread = db.scalar(
+            select(EmailThread)
+            .where(
+                EmailThread.order_id == email_draft.order_id,
+                EmailThread.provider == self.provider,
+                EmailThread.thread_id.is_not(None),
+            )
+            .order_by(EmailThread.id.desc())
+        )
+        if email_thread and email_thread.thread_id:
+            message_id = email_thread.message_id if looks_like_rfc_message_id(email_thread.message_id) else None
+            return GmailReplyContext(thread_id=email_thread.thread_id, message_id=message_id, subject=email_thread.subject)
+
+        provider_draft = db.scalar(
+            select(EmailProviderDraft)
+            .join(EmailDraft, EmailDraft.id == EmailProviderDraft.email_draft_id)
+            .where(
+                EmailDraft.order_id == email_draft.order_id,
+                EmailProviderDraft.provider == self.provider,
+                EmailProviderDraft.email_account_id == account.id,
+                EmailProviderDraft.provider_thread_id.is_not(None),
+            )
+            .order_by(EmailProviderDraft.id.desc())
+        )
+        if provider_draft and provider_draft.provider_thread_id:
+            message_id = (
+                provider_draft.provider_message_id
+                if looks_like_rfc_message_id(provider_draft.provider_message_id)
+                else None
+            )
+            return GmailReplyContext(
+                thread_id=provider_draft.provider_thread_id,
+                message_id=message_id,
+                subject=provider_draft.subject,
+            )
+        return None
+
     def ensure_enabled_and_configured(self, *, require_secret: bool) -> None:
         settings = get_settings()
         if not settings.email_provider_enabled:
@@ -515,6 +611,36 @@ def split_mime_type(mime_type: str) -> tuple[str, str]:
         return "application", "octet-stream"
     maintype, subtype = mime_type.split("/", 1)
     return maintype, subtype
+
+
+def extract_header_value(headers: dict[str, Any], header_name: str) -> str | None:
+    wanted = header_name.strip().casefold()
+    for key, value in headers.items():
+        if str(key).strip().casefold() == wanted and value:
+            return str(value)
+    return None
+
+
+def looks_like_rfc_message_id(value: str | None) -> bool:
+    cleaned = str(value or "").strip()
+    return cleaned.startswith("<") and cleaned.endswith(">") and "@" in cleaned
+
+
+def build_references_header(existing_references: str | None, message_id: str | None) -> str | None:
+    references = str(existing_references or "").strip()
+    message_id = str(message_id or "").strip()
+    if message_id and message_id not in references:
+        references = f"{references} {message_id}".strip()
+    return references or None
+
+
+def build_reply_subject(default_subject: str, reply_context: GmailReplyContext | None) -> str:
+    if not reply_context or not reply_context.subject:
+        return default_subject
+    subject = reply_context.subject.strip()
+    if subject.lower().startswith("re:"):
+        return subject
+    return f"Re: {subject}"
 
 
 def normalize_datetime(value: datetime | None) -> datetime | None:

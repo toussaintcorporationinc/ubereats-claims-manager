@@ -1,14 +1,14 @@
 Bonjour,
 
-Veuillez trouver les elements disponibles pour la commande Uber Eats {uber_order_number}.
+Veuillez trouver les pieces complementaires concernant la commande Uber Eats {uber_order_number}.
 
 Restaurant : {restaurant_name}
-Montant reclame : {order_amount} {currency}
+Montant concerne : {order_amount} {currency}
 
-Pieces disponibles :
+Pieces jointes :
 {evidence_list}
 
-Ces elements correspondent aux preuves rattachees au dossier interne.
+Merci de reexaminer le dossier avec ces elements.
 
 Cordialement,
 {signature}

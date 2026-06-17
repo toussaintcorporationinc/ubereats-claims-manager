@@ -1,14 +1,14 @@
 Bonjour,
 
-Nous faisons suite a notre demande de regularisation concernant la commande Uber Eats {uber_order_number}.
+Je me permets de vous relancer concernant la commande Uber Eats {uber_order_number}.
 
 Restaurant : {restaurant_name}
-Montant reclame : {order_amount} {currency}
+Montant concerne : {order_amount} {currency}
 
-Les pieces deja disponibles dans le dossier sont :
+Pieces jointes :
 {evidence_list}
 
-Merci de nous confirmer le traitement de cette demande.
+Merci de verifier ce dossier et de nous confirmer la suite donnee a la demande.
 
 Cordialement,
 {signature}

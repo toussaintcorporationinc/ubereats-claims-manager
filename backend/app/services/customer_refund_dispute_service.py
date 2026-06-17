@@ -19,6 +19,7 @@ from app.models import (
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.customer_refund_evidence_policy_service import evidence_policy_for_dispute
+from app.services.email_draft_service import format_restaurant_signature, optional_line
 from app.services.email_provider import EmailProvider, EmailProviderError
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates" / "emails"
@@ -225,7 +226,7 @@ def create_customer_refund_draft(
     draft = EmailDraft(
         order_id=order.id,
         draft_type=draft_type,
-        subject=f"Contestation deduction Uber Eats - commande {order.uber_order_number}",
+        subject=f"Contestation de remboursement de commande - {order.uber_order_number}",
         body=render_customer_refund_template(dispute, order, draft_type),
         status="created",
     )
@@ -506,20 +507,22 @@ def render_customer_refund_template(dispute: UberCustomerRefundDispute, order: C
     return template.format(
         uber_order_number=order.uber_order_number,
         restaurant_name=order.restaurant.name,
+        customer_name_line=optional_line("Client", order.customer_name),
+        order_date_line=optional_line("Date de commande", order.order_date),
         customer_refund_amount=f"{dispute.customer_refund_amount:.2f}",
         currency=dispute.currency,
         dispute_type=dispute.dispute_type,
         reason=dispute.reason,
         evidence_list=format_dispute_evidence(order),
-        signature=order.restaurant.name or order.restaurant.sender_email,
+        signature=format_restaurant_signature(order.restaurant),
     )
 
 
 def format_dispute_evidence(order: ClaimOrder) -> str:
     if not order.evidence_files:
-        return "- Aucune preuve jointe pour le moment"
+        return "- Aucune piece jointe pour le moment"
     return "\n".join(
-        f"- {evidence.evidence_type}: {evidence.original_filename}"
+        f"- {evidence.original_filename}"
         for evidence in sorted(order.evidence_files, key=lambda item: item.id)
     )
 

@@ -5,6 +5,23 @@ from sqlalchemy.orm import Session
 from app.models import AuditLog
 
 
+FORBIDDEN_UBER_VISIBLE_TERMS = [
+    "TENNET",
+    "Historique",
+    "Mots cles",
+    "generic_refusal",
+    "dispute_type",
+    "Raison detectee",
+    "Extrait / notes",
+]
+
+
+def assert_clean_uber_email(subject: str, body: str) -> None:
+    combined = f"{subject}\n{body}"
+    for term in FORBIDDEN_UBER_VISIBLE_TERMS:
+        assert term not in combined
+
+
 def create_restaurant(client: TestClient, name: str = "Restaurant Email") -> dict:
     response = client.post(
         "/v1/restaurants",
@@ -168,6 +185,8 @@ def test_initial_claim_body_contains_required_claim_data(client: TestClient) -> 
     assert "32.40 EUR" in draft["body"]
     assert "cancellation_proof.png" in draft["body"]
     assert "preparation_proof.png" in draft["body"]
+    assert_clean_uber_email(draft["subject"], draft["body"])
+    assert draft["subject"] == "Contestation d'annulation de commande - UBER-CONTENT"
 
 
 def test_initial_claim_does_not_invent_optional_missing_data(client: TestClient) -> None:

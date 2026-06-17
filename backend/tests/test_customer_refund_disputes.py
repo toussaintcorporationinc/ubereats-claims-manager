@@ -20,6 +20,23 @@ from app.models.domain import utc_now
 from app.services.customer_refund_detection_service import classify_transaction
 
 
+FORBIDDEN_UBER_VISIBLE_TERMS = [
+    "TENNET",
+    "Historique",
+    "Mots cles",
+    "generic_refusal",
+    "dispute_type",
+    "Raison detectee",
+    "Extrait / notes",
+]
+
+
+def assert_clean_uber_email(subject: str, body: str) -> None:
+    combined = f"{subject}\n{body}"
+    for term in FORBIDDEN_UBER_VISIBLE_TERMS:
+        assert term not in combined
+
+
 @pytest.fixture()
 def evidence_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[Path, None, None]:
     storage_dir = tmp_path / "evidence"
@@ -399,7 +416,11 @@ def test_create_draft_requires_complete_evidence(configured_client: TestClient, 
     draft = configured_client.post(f"/v1/customer-refunds/{dispute.id}/create-draft")
 
     assert draft.status_code == 201
-    assert draft.json()["draft_type"] == "customer_refund_missing_item"
+    draft_payload = draft.json()
+    assert draft_payload["draft_type"] == "customer_refund_missing_item"
+    assert draft_payload["subject"] == "Contestation de remboursement de commande - UBER-REFUND-1"
+    assert "ticket-agrafe-commande.png" in draft_payload["body"]
+    assert_clean_uber_email(draft_payload["subject"], draft_payload["body"])
 
 
 def test_staff_cannot_create_draft(configured_client: TestClient, db_session: Session) -> None:

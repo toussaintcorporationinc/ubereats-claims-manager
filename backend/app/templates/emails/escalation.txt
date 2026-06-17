@@ -1,15 +1,14 @@
 Bonjour,
 
-Nous sollicitons une revue du dossier de reclamation pour la commande Uber Eats {uber_order_number}.
+Je sollicite un reexamen prioritaire de la commande Uber Eats {uber_order_number}.
 
 Restaurant : {restaurant_name}
-Montant reclame : {order_amount} {currency}
+Montant concerne : {order_amount} {currency}
 
-Pieces disponibles :
+Pieces jointes :
 {evidence_list}
 
-Cette commande annulee apres preparation reste sans resolution satisfaisante dans le dossier interne.
-Merci de proceder a une verification prioritaire.
+Merci de verifier a nouveau les elements transmis et de regulariser le paiement si la demande est justifiee.
 
 Cordialement,
 {signature}

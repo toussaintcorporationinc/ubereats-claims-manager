@@ -1,15 +1,16 @@
 Bonjour,
 
-Nous demandons le reexamen du refus concernant la commande Uber Eats {uber_order_number} pour {restaurant_name}.
+Je vous demande de reexaminer le refus concernant l'annulation de la commande Uber Eats {uber_order_number}.
 
-La contestation porte sur une commande preparee avant l'annulation.
+Restaurant : {restaurant_name}
 Montant concerne : {order_amount} {currency}
-Motif du refus indique : {refusal_reason}
 
-Preuves rattachees dans TENNET :
+{appeal_argument}
+
+Pieces jointes :
 {evidence_list}
 
-Merci de verifier la preparation de la commande avant annulation et de regulariser le paiement si les conditions sont confirmees.
+Merci de verifier la preparation de la commande et de regulariser le paiement si les elements transmis confirment la demande.
 
 Cordialement,
 {signature}

@@ -11,11 +11,11 @@ from app.services.claim_validation_service import FINAL_CLAIM_STATUSES, get_clai
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates" / "emails"
 
 DRAFT_SUBJECTS = {
-    "initial_claim": "Demande de paiement - commande annulee apres preparation - {uber_order_number}",
-    "followup_1": "Relance 1 - reclamation commande Uber Eats - {uber_order_number}",
-    "followup_2": "Relance 2 - reclamation commande Uber Eats - {uber_order_number}",
-    "escalation": "Escalade - reclamation commande Uber Eats - {uber_order_number}",
-    "proof_reply": "Elements de preuve - commande Uber Eats - {uber_order_number}",
+    "initial_claim": "Contestation d'annulation de commande - {uber_order_number}",
+    "followup_1": "Relance - contestation commande Uber Eats - {uber_order_number}",
+    "followup_2": "Relance - contestation commande Uber Eats - {uber_order_number}",
+    "escalation": "Demande de reexamen - commande Uber Eats - {uber_order_number}",
+    "proof_reply": "Preuves complementaires - commande Uber Eats - {uber_order_number}",
 }
 
 FOLLOWUP_ALLOWED_STATUSES = {
@@ -193,7 +193,7 @@ def build_template_context(order: ClaimOrder) -> dict[str, Any]:
         "prepared_line": optional_bool_line("Commande preparee avant annulation", order.prepared_before_cancellation),
         "loss_type_line": optional_line("Type de perte", order.loss_type),
         "evidence_list": format_evidence_list(order),
-        "signature": restaurant.name or restaurant.sender_email,
+        "signature": format_restaurant_signature(restaurant),
     }
 
 
@@ -214,10 +214,23 @@ def format_amount(amount: object) -> str:
 
 
 def format_evidence_list(order: ClaimOrder) -> str:
+    if not order.evidence_files:
+        return "- Aucune piece jointe pour le moment"
     return "\n".join(
-        f"- {evidence.evidence_type}: {evidence.original_filename}"
+        f"- {evidence.original_filename}"
         for evidence in sorted(order.evidence_files, key=lambda item: item.id)
     )
+
+
+def format_restaurant_signature(restaurant: Any) -> str:
+    lines = [restaurant.name or restaurant.sender_email]
+    if getattr(restaurant, "address", None):
+        lines.append(restaurant.address)
+    if getattr(restaurant, "phone_number", None):
+        lines.append(restaurant.phone_number)
+    if getattr(restaurant, "sender_email", None):
+        lines.append(restaurant.sender_email)
+    return "\n".join(line for line in lines if line)
 
 
 def render_template(draft_type: str, context: dict[str, Any]) -> str:
