@@ -116,6 +116,8 @@ def build_appeal_context(
     return {
         "restaurant_name": restaurant.name if restaurant else f"Restaurant #{order.restaurant_id}",
         "uber_order_number": order.uber_order_number,
+        "customer_name_line": optional_line("Client", order.customer_name),
+        "order_date_line": optional_line("Date de commande", order.order_date),
         "order_amount": format_amount(order.order_amount or 0),
         "currency": order.currency,
         "appeal_type": appeal_type,
@@ -128,6 +130,12 @@ def build_appeal_context(
         "required_evidence_list": required_evidence_text,
         "signature": format_restaurant_signature(restaurant) if restaurant else "Restaurant",
     }
+
+
+def optional_line(label: str, value: object | None) -> str:
+    if value is None or value == "":
+        return ""
+    return f"{label} : {value}\n"
 
 
 def build_appeal_argument(

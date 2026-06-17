@@ -3,7 +3,7 @@ Bonjour,
 Je vous demande de reexaminer le refus concernant l'annulation de la commande Uber Eats {uber_order_number}.
 
 Restaurant : {restaurant_name}
-Montant concerne : {order_amount} {currency}
+{customer_name_line}{order_date_line}Montant concerne : {order_amount} {currency}
 
 {appeal_argument}
 

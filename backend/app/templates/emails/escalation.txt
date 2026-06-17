@@ -3,7 +3,7 @@ Bonjour,
 Je sollicite un reexamen prioritaire de la commande Uber Eats {uber_order_number}.
 
 Restaurant : {restaurant_name}
-Montant concerne : {order_amount} {currency}
+{customer_name_line}{order_date_line}Montant concerne : {order_amount} {currency}
 
 Pieces jointes :
 {evidence_list}

@@ -122,6 +122,8 @@ def create_ready_order(client: TestClient, restaurant_id: int, order_number: str
         json={
             "restaurant_id": restaurant_id,
             "uber_order_number": order_number,
+            "customer_name": "Client Test",
+            "order_date": "2026-06-01",
             "order_amount": "24.90",
             "currency": "EUR",
             "accepted_by_restaurant": True,
@@ -147,16 +149,39 @@ def create_ready_order(client: TestClient, restaurant_id: int, order_number: str
     return validate_response.json()
 
 
-def add_gmail_account(db_session: Session) -> None:
+def add_gmail_account(db_session: Session) -> EmailAccount:
     owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
     assert owner is not None
+    account = EmailAccount(
+        user_id=owner.id,
+        provider="gmail",
+        email_address="owner@example.com",
+        access_token_encrypted="fake",
+        refresh_token_encrypted="fake",
+    )
+    db_session.add(account)
+    db_session.commit()
+    db_session.refresh(account)
+    return account
+
+
+def add_starred_inbound_message(db_session: Session, order: ClaimOrder, account: EmailAccount) -> None:
     db_session.add(
-        EmailAccount(
-            user_id=owner.id,
+        InboundEmailMessage(
+            email_account_id=account.id,
+            order_id=order.id,
             provider="gmail",
-            email_address="owner@example.com",
-            access_token_encrypted="fake",
-            refresh_token_encrypted="fake",
+            provider_message_id=f"starred-{order.uber_order_number}",
+            provider_thread_id=f"thread-{order.uber_order_number}",
+            from_email="restaurantsfrance@uber.com",
+            to_email=account.email_address,
+            subject=f"Re: commande {order.uber_order_number}",
+            body_text="Votre demande est refusee.",
+            provider_labels_json=["STARRED"],
+            match_status="linked",
+            match_reason="thread_id_match",
+            review_status="reviewed",
+            received_at=utc_now(),
         )
     )
     db_session.commit()
@@ -453,7 +478,8 @@ def test_autopilot_appeal_after_refusal_does_not_close(
     )
     db_session.add(workflow)
     db_session.commit()
-    add_gmail_account(db_session)
+    account = add_gmail_account(db_session)
+    add_starred_inbound_message(db_session, order, account)
 
     response = client.post("/v1/autopilot/run", json={"mode": "appeals", "restaurant_id": restaurant["id"], "dry_run": False})
 
@@ -461,6 +487,39 @@ def test_autopilot_appeal_after_refusal_does_not_close(
     db_session.refresh(workflow)
     assert workflow.status != "manually_closed"
     assert workflow.appeal_attempt_count == 1
+
+
+def test_autopilot_appeal_requires_starred_gmail_thread(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client)
+    ready = create_ready_order(client, restaurant["id"], "AUTO-APPEAL-NOT-STARRED")
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    assert order is not None
+    order.status = "refused"
+    workflow = AppealWorkflow(
+        case_type="claim_order",
+        case_id=order.id,
+        restaurant_id=order.restaurant_id,
+        claim_order_id=order.id,
+        status="appeal_needed",
+        refusal_count=1,
+        next_action_type="create_appeal_draft",
+        next_action_at=utc_now() - timedelta(hours=1),
+    )
+    db_session.add(workflow)
+    db_session.commit()
+    add_gmail_account(db_session)
+
+    response = client.post("/v1/autopilot/run", json={"mode": "appeals", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["run"]["sent_count"] == 0
+    assert payload["actions"][0]["skipped_reason"] == "starred_gmail_thread_required"
 
 
 def test_autopilot_appeal_refuses_same_template_without_new_argument(

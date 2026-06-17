@@ -3,7 +3,7 @@ Bonjour,
 Je vous transmets les pieces complementaires concernant la commande Uber Eats {uber_order_number}.
 
 Restaurant : {restaurant_name}
-Montant concerne : {order_amount} {currency}
+{customer_name_line}{order_date_line}Montant concerne : {order_amount} {currency}
 
 Elements demandes ou utiles :
 {required_evidence_list}
