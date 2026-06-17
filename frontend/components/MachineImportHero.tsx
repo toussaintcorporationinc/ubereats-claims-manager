@@ -5,7 +5,7 @@ import ApiError from "@/components/ApiError";
 import { buildMachineSmartImportDecisions } from "@/lib/smartImportMachine";
 import { api, type WorkspaceMachineRunResponse, type WorkspaceMachineTrigger } from "@/lib/api";
 
-const acceptedTypes = ".csv,.xlsx,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.zip,image/*,application/pdf";
+const acceptedTypes = ".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.zip,image/*,application/pdf";
 
 type MachineImportHeroProps = {
   eyebrow: string;
@@ -97,12 +97,12 @@ export default function MachineImportHero({
             disabled={running || files.length === 0}
             onClick={() => void runMachine()}
           >
-            {running ? "TENNET travaille" : "GO"}
+            {running ? "TENNET travaille" : "Lancer TENNET"}
           </button>
           <p className="machine-action-note">
             {files.length > 0
-              ? `${files.length} fichier(s) prets. GO lance import, classement, preuves, emails et suivi autorise.`
-              : "Importe tout en masse. GO lance ensuite toute la machine automatiquement."}
+              ? `${files.length} preuve(s) prete(s). TENNET lit, classe, rattache, prepare les emails et suit Gmail.`
+              : "Importe les photos de tickets agrafes, PDF ou ZIP. TENNET lance ensuite toute la machine automatiquement."}
           </p>
         </div>
       </div>

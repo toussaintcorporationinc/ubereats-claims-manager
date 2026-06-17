@@ -69,6 +69,12 @@ Exemple :
 
 Smart Import ne confirme pas une information incertaine et n'invente jamais de montant, preuve ou numero de commande. Les preuves peuvent etre rattachees automatiquement seulement si TENNET trouve une seule tache de preuve compatible avec un signal fort : numero de commande exact, restaurant connu, client/montant/date coherents et type de preuve reconnu. Sinon le fichier reste conserve dans `Non classes` avec une raison claire. OpenAI reste desactive par defaut.
 
+## Parcours terrain photo-first
+
+Pour les ecrans `Remboursements` et `Annulations`, le parcours principal n'est plus l'import Excel/CSV. L'operateur imprime le vrai ticket du restaurant, l'agrafe sur la commande ou la preuve terrain, prend une photo nette, puis depose les photos, PDF ou ZIP. TENNET route ces fichiers comme preuves, lance l'OCR local, extrait client, numero de commande, date, restaurant et montant quand ils sont lisibles, puis cree ou rattache le dossier.
+
+Les imports CSV/XLSX restent disponibles dans les outils avances pour l'historique et les rapports, mais ils ne sont plus le chemin principal des contestations terrain.
+
 Les fichiers de preview sont conserves temporairement jusqu'a confirmation, avec expiration par defaut apres 24 heures (`SMART_IMPORT_PREVIEW_EXPIRY_HOURS=24`).
 
 Quand TENNET doute, l'action recommandee devient `manual_review` et la source reste visible dans `Non classes`. Aucune preuve, aucun montant et aucun numero de commande ne sont inventes.

@@ -25,7 +25,7 @@ import {
   formatCurrency,
 } from "@/lib/api";
 
-const acceptedTypes = ".csv,.xlsx,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.zip,image/*,application/pdf";
+const acceptedTypes = ".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.zip,image/*,application/pdf";
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -140,8 +140,8 @@ export default function DashboardPage() {
       setPilotError(
         new Error(
           trigger === "refunds"
-            ? "Depose les preuves de remboursement avant GO."
-            : "Depose les preuves d'annulation avant GO.",
+            ? "Depose les preuves de remboursement avant de lancer TENNET."
+            : "Depose les preuves d'annulation avant de lancer TENNET.",
         ),
       );
       return;
@@ -187,8 +187,8 @@ export default function DashboardPage() {
             <p className="eyebrow">TENNET</p>
             <h1>{user?.role === "staff" ? "Mes preuves a faire" : "Machine de recuperation"}</h1>
             <p>
-              Deux parcours clairs : remboursements et annulations. Tu deposes les preuves ou exports, tu cliques GO,
-              TENNET classe, rattache, repare, suit les emails et remonte les blocages reels avec une raison claire.
+              Deux parcours clairs : remboursements et annulations. Tu deposes les photos de tickets agrafes,
+              TENNET lit, rattache, prepare les demandes, suit Gmail et remonte les blocages reels avec une raison claire.
             </p>
           </div>
           {canSeeBusinessMetrics ? (
@@ -219,8 +219,8 @@ export default function DashboardPage() {
           <div className="home-machine-status">
             <strong>Passage complet automatique</strong>
             <p>
-              La synchronisation, les rapprochements et les relances autorisees tournent en arriere-plan. Le bouton GO
-              sert surtout a lancer immediatement un depot de preuves ou fichiers.
+              La synchronisation, les rapprochements et les relances autorisees tournent en arriere-plan. Le bouton
+              sert seulement a forcer tout de suite le traitement d'un depot de preuves.
             </p>
             {!canSeeBusinessMetrics ? (
               <Link href="/evidence-tasks" className="button button--hero">
@@ -266,13 +266,13 @@ export default function DashboardPage() {
                 disabled={pilotRunning || importRunning || railRunning !== null || homeFiles.length === 0}
                 onClick={() => void runSmartImportFromDashboard()}
               >
-                {importRunning ? "TENNET travaille" : "GO"}
+                {importRunning ? "TENNET travaille" : "Lancer TENNET"}
               </button>
             </div>
             <small>
               {homeFiles.length > 0
                 ? `${homeFiles.length} fichier(s) prets pour depot general.`
-                : "Option secondaire : utile si tu melanges exports Uber, photos, PDF ou ZIP."}
+                : "Option secondaire : utile si tu melanges plusieurs photos, PDF ou ZIP."}
             </small>
           </section>
         ) : null}
@@ -542,16 +542,16 @@ function RecoveryMachineLane({
       ? {
           instruction: "IMPORTEZ LES PREUVES DE DEMANDES DE REMBOURSEMENTS",
           helper:
-            "Tickets agrafes, photos, PDF, ZIP ou exports lies aux remboursements client. TENNET rattache au bon client, commande, restaurant et dossier.",
+            "Photos de ticket agrafe, PDF ou ZIP lies aux remboursements client. TENNET rattache au bon client, commande, restaurant et dossier.",
           fileButtonLabel: "Deposer preuves de remboursement",
-          goLabel: "GO",
+          goLabel: "Lancer TENNET",
         }
       : {
           instruction: "IMPORTEZ LES PREUVES DE DEMANDE D'ANNULATION",
           helper:
-            "Tickets agrafes, preuves terrain, PDF, ZIP ou exports lies aux annulations. TENNET verifie paiement, doublons et preuves avant action.",
+            "Photos de ticket agrafe, preuves terrain, PDF ou ZIP lies aux annulations. TENNET verifie paiement, doublons et preuves avant action.",
           fileButtonLabel: "Deposer preuves d'annulation",
-          goLabel: "GO",
+          goLabel: "Lancer TENNET",
         };
 
   return (
@@ -577,7 +577,7 @@ function RecoveryMachineLane({
           <small>
             {files.length > 0
               ? `${files.length} fichier(s) prets pour ce parcours.`
-              : "Depose les preuves, puis GO lance le traitement complet automatiquement."}
+              : "Depose les preuves, puis TENNET lance le traitement complet automatiquement."}
           </small>
         </div>
         <div className="machine-lane__command-actions">
