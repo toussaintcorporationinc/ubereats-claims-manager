@@ -163,6 +163,7 @@ class GmailInboundSyncService:
         result = GmailInboundSyncResult(status="success")
         created_message_ids: set[int] = set()
         try:
+            starred_max_messages = max(max_messages, get_settings().gmail_starred_max_messages_per_sync)
             payloads = merge_unique_payloads(
                 self.fetch_payloads(db, user, account, query=query, max_messages=max_messages),
                 self.fetch_payloads(
@@ -170,14 +171,19 @@ class GmailInboundSyncService:
                     user,
                     account,
                     query=GMAIL_STARRED_URGENT_QUERY,
-                    max_messages=max_messages,
+                    max_messages=starred_max_messages,
                 ),
             )
             for payload in payloads:
                 if not payload.provider_message_id:
                     result.errors.append("Skipped Gmail message without provider_message_id")
                     continue
-                if self.message_exists(db, account, payload.provider_message_id):
+                existing_message = self.get_existing_message(db, account, payload.provider_message_id)
+                if existing_message is not None:
+                    if self.refresh_existing_message_from_payload(db, user, existing_message, payload):
+                        created_message_ids.add(existing_message.id)
+                        result.synced_messages += 1
+                        self.reprocess_existing_message(db, user, account, existing_message, result, apply_reviews=apply_reviews)
                     continue
                 inbound_message = self.create_inbound_message(db, user, account, payload)
                 created_message_ids.add(inbound_message.id)
@@ -363,16 +369,92 @@ class GmailInboundSyncService:
         result.autopilot_skipped_count = autopilot_result.run.skipped_count
         result.autopilot_failed_count = autopilot_result.run.failed_count
 
-    def message_exists(self, db: Session, account: EmailAccount, provider_message_id: str) -> bool:
-        return (
-            db.scalar(
-                select(InboundEmailMessage.id).where(
-                    InboundEmailMessage.email_account_id == account.id,
-                    InboundEmailMessage.provider_message_id == provider_message_id,
-                )
+    def get_existing_message(
+        self,
+        db: Session,
+        account: EmailAccount,
+        provider_message_id: str,
+    ) -> InboundEmailMessage | None:
+        return db.scalar(
+            select(InboundEmailMessage).where(
+                InboundEmailMessage.email_account_id == account.id,
+                InboundEmailMessage.provider_message_id == provider_message_id,
             )
-            is not None
         )
+
+    def refresh_existing_message_from_payload(
+        self,
+        db: Session,
+        user: User,
+        message: InboundEmailMessage,
+        payload: InboundEmailPayload,
+    ) -> bool:
+        old_labels = normalize_gmail_labels(message.provider_labels_json)
+        new_labels = normalize_gmail_labels(payload.provider_labels)
+        newly_starred = "STARRED" in new_labels and "STARRED" not in old_labels
+        content_changed = any(
+            (
+                truncate_db_string(payload.provider_thread_id) != message.provider_thread_id,
+                truncate_db_string(payload.gmail_history_id) != message.gmail_history_id,
+                truncate_db_string(payload.subject) != message.subject,
+                payload.snippet != message.snippet,
+                (payload.body_text or "")[:MAX_BODY_TEXT_LENGTH] != (message.body_text or ""),
+                old_labels != new_labels,
+            )
+        )
+        if not content_changed:
+            return False
+
+        message.provider_thread_id = truncate_db_string(payload.provider_thread_id)
+        message.gmail_history_id = truncate_db_string(payload.gmail_history_id)
+        message.from_email = truncate_db_string(payload.from_email)
+        message.to_email = truncate_db_string(payload.to_email)
+        message.subject = truncate_db_string(payload.subject)
+        message.snippet = payload.snippet
+        message.body_text = (payload.body_text or "")[:MAX_BODY_TEXT_LENGTH] if payload.body_text else None
+        message.received_at = payload.received_at or message.received_at
+        message.raw_headers_json = payload.raw_headers
+        message.provider_labels_json = list(new_labels)
+        if newly_starred:
+            message.review_status = "unreviewed"
+            message.reviewed_at = None
+            message.reviewed_by_user_id = None
+        db.flush()
+        add_audit_log(
+            db,
+            entity_type="inbound_email_message",
+            entity_id=message.id,
+            action="gmail_inbound_message.updated_from_provider",
+            user_id=user.id,
+            new_value={
+                "provider_message_id": message.provider_message_id,
+                "newly_starred": newly_starred,
+                "labels": list(new_labels),
+            },
+        )
+        return newly_starred
+
+    def reprocess_existing_message(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        message: InboundEmailMessage,
+        result: GmailInboundSyncResult,
+        *,
+        apply_reviews: bool,
+    ) -> None:
+        if message.match_status == "unlinked":
+            match = self.match_message(db, user, account, inbound_payload_from_message(message))
+            if match.order is not None and match.match_status == "linked":
+                self.record_linked_message(db, user, message, match.order, match_reason=match.match_reason)
+                result.linked_messages += 1
+                self.analyze_linked_message(db, user, message, result, apply_reviews=apply_reviews)
+            elif sender_matches_filter(message.from_email, get_settings().gmail_support_sender_filter):
+                self.analyze_unlinked_message(db, user, message, result)
+            return
+        if message.match_status == "linked" and message.order_id is not None:
+            self.analyze_linked_message(db, user, message, result, apply_reviews=apply_reviews)
 
     def create_inbound_message(
         self,
@@ -590,6 +672,10 @@ def inbound_payload_from_message(message: InboundEmailMessage) -> InboundEmailPa
         raw_headers=message.raw_headers_json or {},
         provider_labels=message.provider_labels_json or [],
     )
+
+
+def normalize_gmail_labels(labels: list[str] | None) -> tuple[str, ...]:
+    return tuple(sorted({str(label).strip().upper() for label in labels or [] if str(label).strip()}))
 
 
 def merge_unique_payloads(*payload_groups: list[InboundEmailPayload]) -> list[InboundEmailPayload]:

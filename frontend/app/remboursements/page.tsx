@@ -5,8 +5,8 @@ export default function RemboursementsPage() {
     <section className="page-section page-section--simple">
       <MachineImportHero
         eyebrow="Remboursements Uber"
-        title="Tickets agrafes, remboursements lances"
-        description="Releve la commande en demande de remboursement dans Uber Eats, imprime le ticket, agrafe-le a la commande ou a la preuve terrain, prends la photo et importe tout en masse. GO lance le classement, les preuves, les emails et le suivi."
+        title="Preuves de remboursement"
+        description="Releve la commande en demande de remboursement dans Uber Eats, imprime le vrai ticket du restaurant, agrafe-le sur la commande, prends une photo nette et importe tout en masse. TENNET lit le ticket, retrouve client, commande, date, restaurant et lance le suivi."
         instruction="IMPORTEZ LES PREUVES DE DEMANDES DE REMBOURSEMENTS"
         fileButtonLabel="Deposer preuves de remboursement"
         trigger="refunds"
@@ -32,11 +32,11 @@ export default function RemboursementsPage() {
           </article>
           <article className="machine-stage machine-stage--warning">
             <strong>3. Importer en masse</strong>
-            <span>Photos, PDF, ZIP ou exports</span>
+            <span>Photos, PDF ou ZIP</span>
             <small>TENNET lit en profondeur, cherche nom client, numero de commande, date, restaurant et montant dans chaque source.</small>
           </article>
           <article className="machine-stage machine-stage--completed">
-            <strong>4. GO</strong>
+            <strong>4. TENNET traite</strong>
             <span>Classement, emails, relances</span>
             <small>TENNET lance le parcours remboursements, evite les doublons et bloque les cas deja payes.</small>
           </article>

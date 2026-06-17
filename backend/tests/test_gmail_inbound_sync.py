@@ -647,6 +647,67 @@ def test_sync_starred_gmail_message_is_urgent_refusal_to_follow_up(
     assert workflow.status == "appeal_needed"
 
 
+def test_sync_existing_gmail_message_marked_starred_is_reprocessed_as_urgent_refusal(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-INBOUND-STARRED-LATER",
+        thread_id="thread-starred-later",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-starred-later",
+            thread_id="thread-starred-later",
+            body_text="Nous revenons vers vous.",
+        )
+    ]
+
+    first_response = sync_inbound(client)
+
+    assert first_response.status_code == 200
+    assert first_response.json()["applied_reviews"] == 0
+    inbound_message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-starred-later")
+    )
+    assert inbound_message is not None
+    assert inbound_message.provider_labels_json == []
+
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-starred-later",
+            thread_id="thread-starred-later",
+            body_text="Nous revenons vers vous.",
+            provider_labels=["STARRED"],
+        )
+    ]
+
+    second_response = sync_inbound(client)
+
+    assert second_response.status_code == 200
+    payload = second_response.json()
+    assert payload["applied_reviews"] == 1
+    assert payload["negative_responses_detected"] == 1
+    db_session.refresh(order)
+    db_session.refresh(inbound_message)
+    assert order.status == "refused"
+    assert inbound_message.provider_labels_json == ["STARRED"]
+    analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
+    assert analysis is not None
+    assert analysis.reason == "gmail_starred_urgent_followup"
+    workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
+    assert workflow is not None
+    assert workflow.status == "appeal_needed"
+
+
 def test_sync_refused_response_can_run_autopilot_appeal(
     client: TestClient,
     db_session: Session,

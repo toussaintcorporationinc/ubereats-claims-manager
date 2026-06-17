@@ -59,7 +59,8 @@ LABELED_AMOUNT_PATTERN = re.compile(
 DATE_PATTERN = re.compile(r"\b(\d{4}[-/]\d{2}[-/]\d{2}|\d{2}[/-]\d{2}[/-]\d{4})\b")
 CUSTOMER_LABEL_PATTERNS = (
     re.compile(
-        r"(?:nom\s*(?:du)?\s*client|client|customer\s*(?:name)?|eater)\s*[:=-]\s*([^\n\r,;|]{2,80})",
+        r"(?:nom\s*(?:du)?\s*client|prenom\s*(?:du)?\s*client|pr[eÃ©]nom|client\s*name|client|"
+        r"customer\s*(?:name)?|eater)\s*[:=-]\s*([^\n\r,;|]{2,80})",
         re.IGNORECASE,
     ),
     re.compile(

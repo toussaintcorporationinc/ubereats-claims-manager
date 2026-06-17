@@ -229,7 +229,11 @@ Before production rollout, repeat the import and reconciliation scenarios with r
 
 ## Smart Import and mobile usage
 
-Open `/dashboard` or `/smart-import` to drop Uber reports, evidence images, PDFs or ZIP files without renaming them. TENNET detects the content, routes the file, applies safe Uber rows automatically, keeps doubtful rows visible, then runs the recovery machine: deductions, claim files, drafts, followups, appeals, Gmail sync and AutoPilot when the configured safety rules allow it.
+Open `/dashboard` or `/smart-import` to drop evidence images, PDFs or ZIP files without renaming them. TENNET detects the content, routes the file, keeps doubtful rows visible, then runs the recovery machine: deductions, claim files, drafts, followups, appeals, Gmail sync and AutoPilot when the configured safety rules allow it.
+
+For day-to-day refund and cancellation work, use the photo-first path on `/dashboard`, `/remboursements` or `/annulations`: print the real restaurant receipt, staple it to the prepared order or field proof, take one clear photo, then upload photos/PDF/ZIP. TENNET reads the proof, extracts the customer, order number, date, restaurant and amount when present, then routes the case. CSV/XLSX imports remain advanced tools, not the main field workflow.
+
+In Gmail, starred Uber messages are urgent refusals to follow up. TENNET syncs starred messages separately and reprocesses a message if it was already known but later marked with a star.
 
 Use `/remboursements` for customer refund disputes and `/annulations` for cancelled prepared orders. These pages are business paths; the technical screens remain available for audit and verification.
 

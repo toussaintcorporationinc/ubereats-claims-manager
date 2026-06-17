@@ -99,6 +99,7 @@ Regles :
 - une reponse `refused` fiable peut declencher AutoPilot `appeals` si les flags, Gmail et le restaurant sont actifs ;
 - la sync peut etre planifiee cote backend avec `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true` ;
 - aucune relance automatique n'est creee hors AutoPilot controle ;
+- les messages Gmail etoiles (`STARRED`, messages suivis) sont resynchronises avec `GMAIL_STARRED_MAX_MESSAGES_PER_SYNC` et un message deja connu est reanalyse si l'etoile est ajoutee apres coup ;
 - aucune classification IA n'est executee ;
 - la sync est lancee manuellement par `owner` ou `manager` ;
 - `staff` ne peut pas lancer la sync ;

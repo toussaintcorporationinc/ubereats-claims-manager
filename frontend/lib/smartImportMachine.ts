@@ -16,6 +16,9 @@ function actionForMachine(file: SmartImportFilePreview, trigger: WorkspaceMachin
   if (file.recommended_action === "ignore") {
     return "ignore";
   }
+  if (trigger === "refunds" || trigger === "cancellations") {
+    return "import_evidence_bulk";
+  }
   if (file.recommended_action === "manual_review" && shouldForceEvidenceProcessing(file, trigger)) {
     return "import_evidence_bulk";
   }

@@ -5,8 +5,8 @@ export default function AnnulationsPage() {
     <section className="page-section page-section--simple">
       <MachineImportHero
         eyebrow="Annulations Uber"
-        title="Annulations"
-        description="Tickets, exports, photos ou ZIP : depose les preuves de commandes annulees en masse, TENNET rapproche les annulations, verifie les paiements et garde les blocages visibles."
+        title="Preuves d'annulation"
+        description="Imprime le vrai ticket du restaurant pour la commande annulee, agrafe-le sur la commande, prends une photo nette et importe tout en masse. TENNET lit, classe, verifie les paiements deja accordes et suit les mails Uber."
         instruction="IMPORTEZ LES PREUVES DE DEMANDE D'ANNULATION"
         fileButtonLabel="Deposer preuves d'annulation"
         trigger="cancellations"
@@ -22,8 +22,8 @@ export default function AnnulationsPage() {
         <div className="machine-stage-list machine-stage-list--large">
           <article className="machine-stage machine-stage--completed">
             <strong>1. Importer sans renommer</strong>
-            <span>Rapports Uber + tickets</span>
-            <small>CSV, XLSX, PDF, photos ou ZIP. Les doublons exacts sont gardes une seule fois.</small>
+            <span>Photos, PDF ou ZIP</span>
+            <small>Les tickets agrafes sont lus en masse. Les doublons exacts sont gardes une seule fois.</small>
           </article>
           <article className="machine-stage machine-stage--completed">
             <strong>2. Reconciler</strong>
