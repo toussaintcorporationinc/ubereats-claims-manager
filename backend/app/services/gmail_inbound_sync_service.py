@@ -1,7 +1,7 @@
 import re
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
+from sqlalchemy import String, cast, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.auth import can_access_restaurant, get_accessible_restaurant_ids
@@ -267,6 +267,15 @@ class GmailInboundSyncService:
                     max_messages=max_messages if reprocess_existing_limit is None else reprocess_existing_limit,
                     exclude_message_ids=created_message_ids,
                 )
+                self.reprocess_starred_backlog(
+                    db,
+                    user,
+                    account,
+                    result,
+                    apply_reviews=apply_reviews,
+                    max_messages=starred_max_messages,
+                    exclude_message_ids=created_message_ids,
+                )
 
             sync_state.status = "success"
             sync_state.last_success_at = utc_now()
@@ -397,6 +406,63 @@ class GmailInboundSyncService:
             if message.match_status == "linked" and message.order_id is not None:
                 if should_analyze_message(message, account):
                     self.analyze_linked_message(db, user, message, result, apply_reviews=apply_reviews)
+
+    def reprocess_starred_backlog(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        result: GmailInboundSyncResult,
+        *,
+        apply_reviews: bool,
+        max_messages: int,
+        exclude_message_ids: set[int],
+    ) -> None:
+        labels_text = cast(InboundEmailMessage.provider_labels_json, String)
+        messages = db.scalars(
+            select(InboundEmailMessage)
+            .where(
+                InboundEmailMessage.email_account_id == account.id,
+                labels_text.ilike("%STARRED%"),
+                InboundEmailMessage.match_status.in_(["unlinked", "ignored"]),
+            )
+            .order_by(InboundEmailMessage.received_at.desc().nullslast(), InboundEmailMessage.id.desc())
+            .limit(max(0, min(max_messages, MAX_EXISTING_REPROCESS_MESSAGES)))
+        ).all()
+        for message in messages:
+            if message.id in exclude_message_ids:
+                continue
+            payload = self.fetch_single_payload(db, user, account, message.provider_message_id)
+            if payload is None:
+                continue
+            if self.refresh_existing_message_from_payload(db, user, message, payload):
+                result.synced_messages += 1
+            if self.link_or_create_from_starred_attachment(
+                db,
+                user,
+                message,
+                payload,
+                result,
+                apply_reviews=apply_reviews,
+                analyze_responses=True,
+                account=account,
+            ):
+                result.linked_messages += 1
+
+    def fetch_single_payload(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        provider_message_id: str,
+    ) -> InboundEmailPayload | None:
+        try:
+            get_for_account = getattr(self.provider, "get_message_for_account", None)
+            if callable(get_for_account):
+                return get_for_account(db, account, provider_message_id)
+            return self.provider.get_message(db, user, provider_message_id)
+        except EmailProviderError:
+            return None
 
     def run_autopilot_for_negative_responses(
         self,

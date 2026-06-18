@@ -1884,6 +1884,102 @@ def test_starred_gmail_attachment_creates_order_when_thread_is_not_linked(
     get_settings.cache_clear()
 
 
+def test_starred_backlog_reprocess_fetches_attachment_and_creates_order(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id, "claims-owner@example.com")
+    account = get_active_account(db_session, owner.id)
+    assert account is not None
+    restaurant = create_restaurant(client, name="Frit Dodo")
+    payload = inbound_payload(
+        "msg-existing-starred-proof",
+        thread_id="thread-existing-proof",
+        from_email="claims-owner@example.com",
+        subject="Contestation remboursement de commande",
+        body_text="Bonjour je veux contester cette commande.",
+        provider_labels=["STARRED"],
+        attachments=[
+            InboundEmailAttachment(
+                filename="preuve-ticket.jpg",
+                mime_type="image/jpeg",
+                content=b"fake-ticket-image",
+            )
+        ],
+    )
+    db_session.add(
+        InboundEmailMessage(
+            email_account_id=account.id,
+            provider="gmail",
+            provider_message_id=payload.provider_message_id,
+            provider_thread_id=payload.provider_thread_id,
+            from_email=payload.from_email,
+            to_email=payload.to_email,
+            subject=payload.subject,
+            snippet=payload.snippet,
+            body_text=payload.body_text,
+            received_at=payload.received_at,
+            raw_headers_json=payload.raw_headers,
+            provider_labels_json=["STARRED"],
+            match_status="ignored",
+            match_reason="ignored_sender",
+        )
+    )
+    db_session.commit()
+    fake_gmail_provider.messages = [payload]
+
+    def fake_analyze_proof(self, **kwargs) -> AIProofExtraction:
+        return AIProofExtraction(
+            detected_evidence_type="ticket_agraphe",
+            case_type="refund",
+            restaurant_name="Frit Dodo",
+            customer_name="Yoann O",
+            order_number="F93BA",
+            display_id="F93BA",
+            order_date=date(2026, 6, 18),
+            order_amount=Decimal("24.99"),
+            currency="EUR",
+            confidence=Decimal("0.95"),
+            missing_fields=[],
+            notes="ticket lisible",
+        )
+
+    monkeypatch.setattr(OpenAIStructuredAnalysisService, "analyze_proof", fake_analyze_proof)
+
+    result = GmailInboundSyncResult(status="success")
+    GmailInboundSyncService(fake_gmail_provider).reprocess_starred_backlog(
+        db_session,
+        owner,
+        account,
+        result,
+        apply_reviews=True,
+        max_messages=1,
+        exclude_message_ids=set(),
+    )
+    db_session.commit()
+
+    assert result.linked_messages == 1
+    assert result.identity_repaired_messages == 1
+    order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "F93BA"))
+    assert order is not None
+    assert order.restaurant_id == restaurant["id"]
+    assert order.customer_name == "Yoann O"
+    message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-existing-starred-proof")
+    )
+    assert message is not None
+    assert message.order_id == order.id
+    assert message.match_status == "linked"
+    assert message.match_reason == "order_number_match"
+    get_settings.cache_clear()
+
+
 def test_existing_ignored_own_gmail_message_is_linked_when_starred_later(
     client: TestClient,
     db_session: Session,
