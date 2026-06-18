@@ -7,10 +7,11 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import AppealWorkflow, ClaimOrder, EmailThread, InboundEmailMessage, Restaurant, User
+from app.models import AppealWorkflow, ClaimOrder, EmailThread, EvidenceFile, InboundEmailMessage, Restaurant, User
 from app.models.domain import utc_now
 from app.services.appeal_workflow_service import latest_analysis
 from app.services.audit import add_audit_log
+from app.services.file_storage_service import FileStorageError, resolve_evidence_path
 from app.services.openai_structured_analysis_service import AIProofExtraction, OpenAIStructuredAnalysisService
 from app.services.order_identity_resolution_service import (
     ResolvedOrderIdentity,
@@ -24,6 +25,7 @@ from app.services.order_identity_resolution_service import (
 MAX_IDENTITY_TEXT_CHARS = 18000
 IDENTITY_MESSAGE_LIMIT = 35
 MIN_AI_IDENTITY_CONFIDENCE = Decimal("0.65")
+MAX_PROOF_IMAGE_BYTES = 8 * 1024 * 1024
 
 
 def repair_order_identity_for_autopilot(db: Session, user: User, order: ClaimOrder) -> bool:
@@ -36,6 +38,10 @@ def repair_order_identity_for_autopilot(db: Session, user: User, order: ClaimOrd
         ai_identity = analyze_identity_with_ai(db, order)
         if ai_identity is not None:
             merge_identity(identity, ai_identity, prefer_display=True)
+    if identity_score(identity) < 4:
+        proof_identity = analyze_attached_evidence_with_ai(db, order)
+        if proof_identity is not None:
+            merge_identity(identity, proof_identity, prefer_display=True)
 
     if apply_identity_to_order(order, identity):
         changed = True
@@ -136,6 +142,52 @@ def analyze_identity_with_ai(db: Session, order: ClaimOrder) -> ResolvedOrderIde
     identity = identity_from_ai_result(result)
     identity.source = "openai_gmail_identity"
     return identity
+
+
+def analyze_attached_evidence_with_ai(db: Session, order: ClaimOrder) -> ResolvedOrderIdentity | None:
+    service = OpenAIStructuredAnalysisService()
+    if not service.proof_enabled():
+        return None
+    evidence_files = db.scalars(
+        select(EvidenceFile)
+        .where(
+            EvidenceFile.order_id == order.id,
+            EvidenceFile.deleted_at.is_(None),
+        )
+        .order_by(EvidenceFile.id.desc())
+        .limit(5)
+    ).all()
+    best: ResolvedOrderIdentity | None = None
+    best_score = -1
+    for evidence in evidence_files:
+        mime_type = evidence.mime_type or ""
+        if not mime_type.startswith("image/"):
+            continue
+        if evidence.file_size and evidence.file_size > MAX_PROOF_IMAGE_BYTES:
+            continue
+        try:
+            path = resolve_evidence_path(evidence)
+            image_bytes = path.read_bytes()
+        except (OSError, FileStorageError):
+            continue
+        result = service.analyze_proof(
+            extracted_text="",
+            filename=evidence.original_filename,
+            restaurant_names=known_restaurant_names(db, order),
+            mime_type=mime_type,
+            image_bytes=image_bytes,
+        )
+        if result is None or result.confidence < MIN_AI_IDENTITY_CONFIDENCE:
+            continue
+        identity = identity_from_ai_result(result)
+        identity.source = f"openai_evidence_file:{evidence.id}"
+        score = identity_score(identity)
+        if score > best_score:
+            best = identity
+            best_score = score
+        if score >= 4:
+            return best
+    return best
 
 
 def identity_from_ai_result(result: AIProofExtraction) -> ResolvedOrderIdentity:

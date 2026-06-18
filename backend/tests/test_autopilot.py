@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,6 +20,7 @@ from app.models import (
     ClaimResponseReview,
     EmailAccount,
     EmailDraft,
+    EvidenceFile,
     EmailProviderDraft,
     FollowUpTask,
     GmailResponseAnalysis,
@@ -28,6 +30,7 @@ from app.models import (
     User,
 )
 from app.models.domain import utc_now
+from app.services.openai_structured_analysis_service import AIProofExtraction, OpenAIStructuredAnalysisService
 from app.routes.email import get_gmail_provider
 from app.services.email_provider import EmailConnectionStatus, EmailSendResult
 
@@ -714,6 +717,97 @@ def test_autopilot_reopens_manual_review_when_starred_gmail_thread_has_complete_
     assert payload["actions"][0]["skipped_reason"] is None
     db_session.refresh(workflow)
     assert workflow.next_action_type == "review_refusal"
+
+
+def test_autopilot_repairs_identity_from_attached_proof_image_when_gmail_text_is_incomplete(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    monkeypatch.setenv("EVIDENCE_STORAGE_DIR", str(tmp_path))
+    get_settings.cache_clear()
+
+    monkeypatch.setattr(
+        OpenAIStructuredAnalysisService,
+        "analyze_order_identity_text",
+        lambda *args, **kwargs: None,
+    )
+
+    def fake_analyze_proof(self, **kwargs) -> AIProofExtraction:
+        return AIProofExtraction(
+            detected_evidence_type="ticket_agraphe",
+            case_type="refund",
+            restaurant_name="Frit Dodo",
+            customer_name="Yoann O",
+            order_number="F93BA",
+            display_id="F93BA",
+            order_date=None,
+            order_amount=Decimal("24.99"),
+            currency="EUR",
+            confidence=Decimal("0.92"),
+            missing_fields=["order_date"],
+            notes="ticket visible",
+        )
+
+    monkeypatch.setattr(OpenAIStructuredAnalysisService, "analyze_proof", fake_analyze_proof)
+
+    restaurant = create_restaurant(client, "Frit Dodo")
+    order = ClaimOrder(
+        restaurant_id=restaurant["id"],
+        uber_order_number="AUTO-PROOF-IDENTITY",
+        customer_name=None,
+        order_date=date(2026, 6, 18),
+        order_amount=Decimal("24.99"),
+        currency="EUR",
+        accepted_by_restaurant=True,
+        prepared_before_cancellation=True,
+        status="refused",
+    )
+    db_session.add(order)
+    db_session.flush()
+    relative_path = Path(f"restaurant_{order.restaurant_id}") / f"order_{order.id}" / "proof.jpg"
+    target = tmp_path / relative_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"fake-image-bytes")
+    db_session.add(
+        EvidenceFile(
+            order_id=order.id,
+            evidence_type="preparation_proof",
+            original_filename="preuve-ticket-agraphe.jpg",
+            storage_path=relative_path.as_posix(),
+            storage_backend="local",
+            mime_type="image/jpeg",
+            file_size=target.stat().st_size,
+        )
+    )
+    workflow = AppealWorkflow(
+        case_type="claim_order",
+        case_id=order.id,
+        restaurant_id=order.restaurant_id,
+        claim_order_id=order.id,
+        status="appeal_needed",
+        refusal_count=1,
+        next_action_type="create_appeal_draft",
+        next_action_at=utc_now() - timedelta(hours=1),
+    )
+    db_session.add(workflow)
+    db_session.commit()
+    account = add_gmail_account(db_session)
+    add_starred_inbound_message(db_session, order, account)
+
+    response = client.post("/v1/autopilot/dry-run", json={"mode": "appeals", "restaurant_id": restaurant["id"]})
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["actions"][0]["reason"] == "dry_run_candidate"
+    assert payload["actions"][0]["skipped_reason"] is None
+    db_session.refresh(order)
+    assert order.customer_name == "Yoann O"
+    assert order.internal_reference == "F93BA"
 
 
 def test_autopilot_appeal_refuses_same_template_without_new_argument(
