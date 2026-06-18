@@ -472,6 +472,7 @@ export default function DashboardPage() {
 
 function GmailWorkerPanel({ status }: { status: GmailInboundStatus }) {
   const cycle = status.last_cycle;
+  const blockers = status.last_autopilot_blockers ?? [];
   const stateLabel =
     status.worker_state === "active"
       ? "Surveillance active"
@@ -536,6 +537,20 @@ function GmailWorkerPanel({ status }: { status: GmailInboundStatus }) {
         </div>
       </div>
 
+      {blockers.length > 0 ? (
+        <div className="gmail-worker-blockers">
+          <strong>Pourquoi TENNET n'a pas relance</strong>
+          <div>
+            {blockers.map((blocker) => (
+              <span key={`${blocker.action_type}-${blocker.skipped_reason}`}>
+                {blocker.count} {formatAutopilotActionType(blocker.action_type)}:{" "}
+                {formatAutopilotBlockerReason(blocker.skipped_reason)}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <div className="gmail-worker-flags">
         <span className={status.ai_gmail_analysis_enabled ? "flag flag--ok" : "flag flag--warn"}>
           IA Gmail {status.ai_gmail_analysis_enabled ? "active" : "inactive"}
@@ -564,6 +579,47 @@ function GmailWorkerPanel({ status }: { status: GmailInboundStatus }) {
       {status.last_error ? <p className="muted">Derniere erreur sync: {status.last_error}</p> : null}
     </section>
   );
+}
+
+function formatAutopilotActionType(actionType: string) {
+  const labels: Record<string, string> = {
+    send_initial_claim: "nouveau dossier",
+    send_followup_1: "relance",
+    send_followup_2: "relance",
+    send_escalation: "escalade",
+    send_appeal: "appel/refus",
+    request_more_evidence: "preuve",
+    manual_review: "a verifier",
+  };
+  return labels[actionType] ?? actionType.replaceAll("_", " ");
+}
+
+function formatAutopilotBlockerReason(reason: string) {
+  const labels: Record<string, string> = {
+    missing_customer_name: "nom client manquant",
+    missing_order_date: "date commande manquante",
+    missing_order_identifier: "numero de commande manquant",
+    missing_restaurant_name: "restaurant manquant",
+    missing_restaurant_phone_number: "telephone restaurant manquant",
+    missing_restaurant_email: "email restaurant manquant",
+    missing_restaurant_address: "adresse restaurant manquante",
+    missing_evidence: "preuve manquante",
+    incomplete_evidence: "preuve incomplete",
+    starred_gmail_thread_required: "fil Gmail etoile requis",
+    same_template_without_new_argument: "pas de nouvel argument",
+    cooldown_active: "delai de relance en cours",
+    positive_gmail_payment_signal_detected: "paiement deja detecte dans Gmail",
+    positive_payment_review_exists: "paiement deja comptabilise",
+    daily_send_limit_reached: "limite quotidienne atteinte",
+    per_restaurant_daily_limit_reached: "limite restaurant atteinte",
+    initial_claims_disabled: "nouveaux dossiers automatiques desactives",
+    manual_review_required: "verification humaine requise",
+    recipient_not_matching_support_filter: "destinataire Uber non autorise",
+    invalid_autopilot_recipient: "destinataire Uber invalide",
+    gmail_account_not_connected: "Gmail non connecte",
+    email_provider_disabled: "Gmail desactive",
+  };
+  return labels[reason] ?? reason.replaceAll("_", " ");
 }
 
 function RecoveryMachineFocusPanel({

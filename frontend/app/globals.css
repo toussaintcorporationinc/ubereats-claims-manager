@@ -893,7 +893,28 @@ button {
   gap: 8px;
 }
 
+.gmail-worker-blockers {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255, 168, 42, 0.32);
+  border-radius: 8px;
+  background: rgba(255, 248, 237, 0.9);
+}
+
+.gmail-worker-blockers strong {
+  color: #172a33;
+  font-size: 0.94rem;
+}
+
+.gmail-worker-blockers div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .flag,
+.gmail-worker-blockers span,
 .gmail-worker-errors span {
   display: inline-flex;
   align-items: center;
@@ -910,6 +931,7 @@ button {
 }
 
 .flag--warn,
+.gmail-worker-blockers span,
 .gmail-worker-errors span {
   background: rgba(255, 168, 42, 0.14);
   color: #8c5200;

@@ -770,6 +770,12 @@ class GmailWorkerCycleSummary(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class GmailWorkerBlockerSummary(BaseModel):
+    action_type: str
+    skipped_reason: str
+    count: int
+
+
 class GmailInboundStatusResponse(BaseModel):
     enabled: bool
     connected: bool
@@ -792,6 +798,7 @@ class GmailInboundStatusResponse(BaseModel):
     worker_state: str = "disabled"
     worker_message: str | None = None
     last_cycle: GmailWorkerCycleSummary | None = None
+    last_autopilot_blockers: list[GmailWorkerBlockerSummary] = Field(default_factory=list)
     status: GmailSyncStatus | None
     last_error: str | None
 

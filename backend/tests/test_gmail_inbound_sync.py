@@ -14,6 +14,7 @@ from app.models import (
     AuditLog,
     AppealWorkflow,
     AutopilotAction,
+    AutopilotRun,
     ClaimOrder,
     ClaimResponseReview,
     EmailAccount,
@@ -433,6 +434,40 @@ def test_inbound_status_exposes_last_auto_worker_cycle(
             ),
         )
     )
+    restaurant = Restaurant(
+        name="Gmail Worker Blocked Restaurant",
+        legal_name="Gmail Worker Blocked Restaurant",
+        sender_email="worker-blocked@example.com",
+    )
+    db_session.add(restaurant)
+    db_session.flush()
+    run = AutopilotRun(status="completed", mode="all", total_candidates=2, sent_count=0, skipped_count=2, failed_count=0)
+    db_session.add(run)
+    db_session.flush()
+    db_session.add_all(
+        [
+            AutopilotAction(
+                run_id=run.id,
+                case_type="appeal_workflow",
+                case_id=11,
+                restaurant_id=restaurant.id,
+                action_type="send_appeal",
+                status="skipped",
+                reason="skipped",
+                skipped_reason="missing_customer_name",
+            ),
+            AutopilotAction(
+                run_id=run.id,
+                case_type="claim_order",
+                case_id=12,
+                restaurant_id=restaurant.id,
+                action_type="send_initial_claim",
+                status="skipped",
+                reason="skipped",
+                skipped_reason="initial_claims_disabled",
+            ),
+        ]
+    )
     db_session.commit()
 
     response = client.get("/v1/email/gmail/inbound/status")
@@ -449,6 +484,10 @@ def test_inbound_status_exposes_last_auto_worker_cycle(
     assert payload["last_cycle"]["synced_messages"] == 42
     assert payload["last_cycle"]["negative_responses_detected"] == 3
     assert payload["last_cycle"]["autopilot_sent_count"] == 2
+    assert payload["last_autopilot_blockers"] == [
+        {"action_type": "send_appeal", "skipped_reason": "missing_customer_name", "count": 1},
+        {"action_type": "send_initial_claim", "skipped_reason": "initial_claims_disabled", "count": 1},
+    ]
     assert payload["seconds_until_next_sync"] is not None
 
 
@@ -935,7 +974,7 @@ def test_auto_sync_recovers_stale_running_state(
     now = utc_now()
 
     recent_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=120))
-    stale_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=901))
+    stale_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=301))
 
     assert service.account_is_due(recent_running, now) is False
     assert service.account_is_due(stale_running, now) is True

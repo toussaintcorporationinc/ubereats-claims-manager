@@ -442,6 +442,12 @@ export type GmailWorkerCycleSummary = {
   errors: string[];
 };
 
+export type GmailWorkerBlockerSummary = {
+  action_type: string;
+  skipped_reason: string;
+  count: number;
+};
+
 export type GmailInboundStatus = {
   enabled: boolean;
   connected: boolean;
@@ -464,6 +470,7 @@ export type GmailInboundStatus = {
   worker_state: "active" | "attention" | "disabled" | string;
   worker_message: string | null;
   last_cycle: GmailWorkerCycleSummary | null;
+  last_autopilot_blockers: GmailWorkerBlockerSummary[];
   status: GmailSyncStatus | null;
   last_error: string | null;
 };

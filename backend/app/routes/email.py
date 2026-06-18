@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import HTMLResponse
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.auth import (
@@ -19,6 +19,8 @@ from app.core.database import get_db
 from app.models import (
     ClaimOrder,
     AuditLog,
+    AutopilotAction,
+    AutopilotRun,
     EmailAccount,
     EmailAccountRestaurantMapping,
     EmailDraft,
@@ -44,6 +46,7 @@ from app.schemas.domain import (
     GmailOAuthStartResponse,
     GmailRestaurantMappingRead,
     GmailRestaurantMappingUpdate,
+    GmailWorkerBlockerSummary,
     GmailResponseAnalysisRead,
     GmailResponseAnalyzeRequest,
     GmailResponseAnalyzeResponse,
@@ -138,6 +141,46 @@ def _last_gmail_auto_sync_cycle(db: Session) -> GmailWorkerCycleSummary | None:
         workspace_machine_runs=_as_int(payload.get("workspace_machine_runs")),
         errors=_as_error_list(payload.get("errors")),
     )
+
+
+def _last_autopilot_blockers(db: Session, current_user: User) -> list[GmailWorkerBlockerSummary]:
+    latest_run = db.scalar(
+        select(AutopilotRun)
+        .where(AutopilotRun.mode != "emergency_stop")
+        .order_by(AutopilotRun.created_at.desc(), AutopilotRun.id.desc())
+        .limit(1)
+    )
+    if latest_run is None:
+        return []
+
+    statement = (
+        select(
+            AutopilotAction.action_type,
+            func.coalesce(AutopilotAction.skipped_reason, AutopilotAction.reason).label("skipped_reason"),
+            func.count(AutopilotAction.id).label("count"),
+        )
+        .where(
+            AutopilotAction.run_id == latest_run.id,
+            AutopilotAction.status == "skipped",
+        )
+        .group_by(AutopilotAction.action_type, func.coalesce(AutopilotAction.skipped_reason, AutopilotAction.reason))
+        .order_by(func.count(AutopilotAction.id).desc(), AutopilotAction.action_type)
+        .limit(8)
+    )
+    accessible_ids = get_accessible_restaurant_ids(db, current_user)
+    if accessible_ids is not None:
+        if not accessible_ids:
+            return []
+        statement = statement.where(AutopilotAction.restaurant_id.in_(accessible_ids))
+
+    return [
+        GmailWorkerBlockerSummary(
+            action_type=str(action_type),
+            skipped_reason=str(skipped_reason),
+            count=int(count),
+        )
+        for action_type, skipped_reason, count in db.execute(statement).all()
+    ]
 
 
 @router.get("/v1/email/gmail/status", response_model=GmailConnectionStatus)
@@ -671,6 +714,7 @@ def gmail_inbound_status(
         last_cycle=last_cycle,
         status=latest_sync_state.status if latest_sync_state else None,
         last_error=next((state.last_error for state in sync_states if state.last_error), None),
+        last_autopilot_blockers=_last_autopilot_blockers(db, current_user),
     )
 
 
