@@ -25,7 +25,13 @@ from app.models import (
     User,
 )
 from app.models.domain import utc_now
-from app.services.email_provider import EmailConnectionStatus, EmailProviderError, EmailSendResult, InboundEmailPayload
+from app.services.email_provider import (
+    EmailConnectionStatus,
+    EmailProviderError,
+    EmailSendResult,
+    InboundEmailAttachment,
+    InboundEmailPayload,
+)
 from app.services.file_storage_service import FileStorageError, resolve_evidence_path
 from app.services.token_cipher_service import TokenCipherService
 
@@ -36,6 +42,17 @@ GMAIL_DRAFTS_URL = "https://gmail.googleapis.com/gmail/v1/users/me/drafts"
 GMAIL_DRAFTS_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send"
 GMAIL_MESSAGES_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
 GMAIL_THREADS_URL = "https://gmail.googleapis.com/gmail/v1/users/me/threads"
+MAX_INBOUND_ATTACHMENTS = 5
+MAX_INBOUND_ATTACHMENT_BYTES = 8 * 1024 * 1024
+MAX_INBOUND_ATTACHMENT_TOTAL_BYTES = 16 * 1024 * 1024
+SUPPORTED_INBOUND_ATTACHMENT_MIME_TYPES = {
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "image/heif",
+}
 
 
 @dataclass(frozen=True)
@@ -244,7 +261,8 @@ class GmailEmailProvider:
         access_token = self.access_token_for_external_call(db, account)
         url = f"{GMAIL_MESSAGES_URL}/{quote(message_id, safe='')}?format=full"
         payload = self.get_json(url, {"Authorization": f"Bearer {access_token}"})
-        return self.parse_gmail_message(payload)
+        attachments = self.extract_inbound_attachments(access_token, payload)
+        return self.parse_gmail_message(payload, attachments=attachments)
 
     def get_thread(self, db: Session, user: User, thread_id: str) -> dict[str, Any]:
         self.ensure_enabled_and_configured(require_secret=True)
@@ -596,7 +614,60 @@ class GmailEmailProvider:
         if require_secret and not settings.gmail_oauth_client_secret:
             raise EmailProviderError("Gmail OAuth client secret is not configured", 503)
 
-    def parse_gmail_message(self, payload: dict[str, Any]) -> InboundEmailPayload:
+    def extract_inbound_attachments(self, access_token: str, payload: dict[str, Any]) -> list[InboundEmailAttachment]:
+        attachments: list[InboundEmailAttachment] = []
+        total_size = 0
+        message_id = str(payload.get("id") or "")
+        if not message_id:
+            return attachments
+        for part in iter_message_parts(payload.get("payload", {})):
+            if len(attachments) >= MAX_INBOUND_ATTACHMENTS:
+                break
+            filename = str(part.get("filename") or "").strip()
+            if not filename:
+                continue
+            mime_type = str(part.get("mimeType") or "application/octet-stream").lower()
+            if mime_type not in SUPPORTED_INBOUND_ATTACHMENT_MIME_TYPES:
+                continue
+            body = part.get("body") or {}
+            size = int(body.get("size") or 0)
+            if size > MAX_INBOUND_ATTACHMENT_BYTES:
+                continue
+            data = body.get("data")
+            if data:
+                content = decode_gmail_bytes(str(data))
+            else:
+                attachment_id = body.get("attachmentId")
+                if not attachment_id:
+                    continue
+                content = self.fetch_message_attachment(access_token, message_id, str(attachment_id))
+            if not content or len(content) > MAX_INBOUND_ATTACHMENT_BYTES:
+                continue
+            if total_size + len(content) > MAX_INBOUND_ATTACHMENT_TOTAL_BYTES:
+                break
+            total_size += len(content)
+            attachments.append(
+                InboundEmailAttachment(
+                    filename=Path(filename).name,
+                    mime_type=mime_type,
+                    content=content,
+                )
+            )
+        return attachments
+
+    def fetch_message_attachment(self, access_token: str, message_id: str, attachment_id: str) -> bytes:
+        payload = self.get_json(
+            f"{GMAIL_MESSAGES_URL}/{quote(message_id, safe='')}/attachments/{quote(attachment_id, safe='')}",
+            {"Authorization": f"Bearer {access_token}"},
+        )
+        return decode_gmail_bytes(str(payload.get("data") or ""))
+
+    def parse_gmail_message(
+        self,
+        payload: dict[str, Any],
+        *,
+        attachments: list[InboundEmailAttachment] | None = None,
+    ) -> InboundEmailPayload:
         headers = extract_headers(payload.get("payload", {}))
         body_text = extract_text_plain(payload.get("payload", {}))
         received_at = parse_received_at(payload, headers)
@@ -614,6 +685,7 @@ class GmailEmailProvider:
             received_at=received_at,
             raw_headers=headers,
             provider_labels=[str(label) for label in payload.get("labelIds", []) if label],
+            attachments=attachments or [],
         )
 
 
@@ -687,12 +759,26 @@ def extract_text_plain(payload: dict[str, Any]) -> str:
     return "\n".join(chunks).strip()
 
 
+def iter_message_parts(payload: dict[str, Any]):
+    yield payload
+    for part in payload.get("parts", []) or []:
+        yield from iter_message_parts(part)
+
+
 def decode_gmail_body(value: str) -> str:
     padding = "=" * (-len(value) % 4)
     try:
         return base64.urlsafe_b64decode(f"{value}{padding}").decode("utf-8", errors="replace")
     except (ValueError, TypeError):
         return ""
+
+
+def decode_gmail_bytes(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    try:
+        return base64.urlsafe_b64decode(f"{value}{padding}")
+    except (ValueError, TypeError):
+        return b""
 
 
 def parse_received_at(payload: dict[str, Any], headers: dict[str, str]) -> datetime | None:

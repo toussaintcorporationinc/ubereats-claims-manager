@@ -1,6 +1,6 @@
 import json
 from collections.abc import Generator
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -29,10 +29,20 @@ from app.models import (
 )
 from app.models.domain import utc_now
 from app.routes.email import get_gmail_provider
-from app.services.email_provider import EmailConnectionStatus, EmailProviderError, EmailSendResult, InboundEmailPayload
+from app.services.email_provider import (
+    EmailConnectionStatus,
+    EmailProviderError,
+    EmailSendResult,
+    InboundEmailAttachment,
+    InboundEmailPayload,
+)
 from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncService
 from app.services.gmail_inbound_sync_service import GmailInboundSyncResult, GmailInboundSyncService
-from app.services.openai_structured_analysis_service import AIGmailClassification
+from app.services.openai_structured_analysis_service import (
+    AIGmailClassification,
+    AIProofExtraction,
+    OpenAIStructuredAnalysisService,
+)
 import app.services.gmail_response_intelligence_service as gmail_intelligence_service
 
 
@@ -325,6 +335,7 @@ def inbound_payload(
     subject: str = "Re: réclamation Uber Eats",
     body_text: str = "Nous revenons vers vous.",
     provider_labels: list[str] | None = None,
+    attachments: list[InboundEmailAttachment] | None = None,
 ) -> InboundEmailPayload:
     return InboundEmailPayload(
         provider_message_id=message_id,
@@ -338,6 +349,7 @@ def inbound_payload(
         received_at=utc_now(),
         raw_headers={"from": from_email, "to": "claims-owner@example.com", "subject": subject},
         provider_labels=provider_labels or [],
+        attachments=attachments or [],
     )
 
 
@@ -1714,6 +1726,88 @@ def test_starred_message_from_own_gmail_account_marks_known_thread_urgent_withou
         )
     )
     assert analysis_count == 0
+
+
+def test_starred_gmail_attachment_repairs_missing_order_identity(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id, "claims-owner@example.com")
+    restaurant = create_restaurant(client, name="Frit Dodo")
+    order_data = create_order(client, restaurant["id"], "AUTO-GMAIL-ATTACHMENT")
+    order = db_session.get(ClaimOrder, order_data["id"])
+    assert order is not None
+    order.customer_name = None
+    order.order_date = None
+    order.internal_reference = None
+    db_session.add(
+        EmailThread(
+            order_id=order.id,
+            provider="gmail",
+            thread_id="thread-proof-attachment",
+            message_id="outbound-proof-attachment",
+            direction="outbound",
+            subject="Contestation remboursement de commande",
+            body="Bonjour, contestation de commande avec preuve.",
+            sent_at=utc_now(),
+        )
+    )
+    db_session.commit()
+
+    def fake_analyze_proof(self, **kwargs) -> AIProofExtraction:
+        assert kwargs["filename"] == "preuve-ticket.jpg"
+        assert kwargs["image_bytes"] == b"fake-ticket-image"
+        return AIProofExtraction(
+            detected_evidence_type="ticket_agraphe",
+            case_type="refund",
+            restaurant_name="Frit Dodo",
+            customer_name="Yoann O",
+            order_number="F93BA",
+            display_id="F93BA",
+            order_date=date(2026, 6, 18),
+            order_amount=Decimal("24.99"),
+            currency="EUR",
+            confidence=Decimal("0.94"),
+            missing_fields=[],
+            notes="ticket lisible",
+        )
+
+    monkeypatch.setattr(OpenAIStructuredAnalysisService, "analyze_proof", fake_analyze_proof)
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-own-starred-proof",
+            thread_id="thread-proof-attachment",
+            from_email="claims-owner@example.com",
+            provider_labels=["STARRED"],
+            attachments=[
+                InboundEmailAttachment(
+                    filename="preuve-ticket.jpg",
+                    mime_type="image/jpeg",
+                    content=b"fake-ticket-image",
+                )
+            ],
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["identity_repaired_messages"] == 1
+    db_session.refresh(order)
+    assert order.customer_name == "Yoann O"
+    assert order.order_date == date(2026, 6, 18)
+    assert order.internal_reference == "F93BA"
+    assert db_session.scalar(
+        select(AuditLog).where(AuditLog.action == "autopilot.identity_repaired_from_gmail_attachment")
+    ) is not None
+    get_settings.cache_clear()
 
 
 def test_existing_ignored_own_gmail_message_is_linked_when_starred_later(

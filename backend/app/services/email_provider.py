@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -30,6 +30,13 @@ class EmailSendResult:
 
 
 @dataclass(frozen=True)
+class InboundEmailAttachment:
+    filename: str
+    mime_type: str
+    content: bytes
+
+
+@dataclass(frozen=True)
 class InboundEmailPayload:
     provider_message_id: str
     provider_thread_id: str | None
@@ -42,6 +49,7 @@ class InboundEmailPayload:
     received_at: datetime | None
     raw_headers: dict[str, Any]
     provider_labels: list[str]
+    attachments: list[InboundEmailAttachment] = field(default_factory=list)
 
 
 class EmailProvider(Protocol):

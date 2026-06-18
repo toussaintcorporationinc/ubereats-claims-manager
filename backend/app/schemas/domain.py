@@ -821,6 +821,7 @@ class GmailInboundSyncResponse(BaseModel):
     applied_reviews: int = 0
     manual_review_messages: int = 0
     negative_responses_detected: int = 0
+    identity_repaired_messages: int = 0
     autopilot_run_id: int | None = None
     autopilot_sent_count: int = 0
     autopilot_skipped_count: int = 0

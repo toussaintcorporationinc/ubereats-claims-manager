@@ -11,6 +11,7 @@ from app.models import AppealWorkflow, ClaimOrder, EmailThread, EvidenceFile, In
 from app.models.domain import utc_now
 from app.services.appeal_workflow_service import latest_analysis
 from app.services.audit import add_audit_log
+from app.services.email_provider import InboundEmailAttachment
 from app.services.file_storage_service import FileStorageError, resolve_evidence_path
 from app.services.openai_structured_analysis_service import AIProofExtraction, OpenAIStructuredAnalysisService
 from app.services.order_identity_resolution_service import (
@@ -58,6 +59,35 @@ def repair_order_identity_for_autopilot(db: Session, user: User, order: ClaimOrd
             new_value=snapshot_order_identity(order) | {"source": identity.source},
         )
     return changed
+
+
+def repair_order_identity_from_inbound_attachments(
+    db: Session,
+    user: User,
+    order: ClaimOrder,
+    attachments: list[InboundEmailAttachment],
+) -> bool:
+    """Repair identity while a Gmail sync still has access to inbound image attachments."""
+    if not attachments:
+        return False
+    before = snapshot_order_identity(order)
+    identity = analyze_inbound_attachments_with_ai(db, order, attachments)
+    if identity is None:
+        return False
+    if not apply_identity_to_order(order, identity):
+        return False
+
+    db.flush()
+    add_audit_log(
+        db,
+        entity_type="claim_order",
+        entity_id=order.id,
+        action="autopilot.identity_repaired_from_gmail_attachment",
+        user_id=user.id,
+        old_value=before,
+        new_value=snapshot_order_identity(order) | {"source": identity.source},
+    )
+    return True
 
 
 def repair_appeal_workflow_for_autopilot(db: Session, user: User, workflow: AppealWorkflow) -> bool:
@@ -181,6 +211,42 @@ def analyze_attached_evidence_with_ai(db: Session, order: ClaimOrder) -> Resolve
             continue
         identity = identity_from_ai_result(result)
         identity.source = f"openai_evidence_file:{evidence.id}"
+        score = identity_score(identity)
+        if score > best_score:
+            best = identity
+            best_score = score
+        if score >= 4:
+            return best
+    return best
+
+
+def analyze_inbound_attachments_with_ai(
+    db: Session,
+    order: ClaimOrder,
+    attachments: list[InboundEmailAttachment],
+) -> ResolvedOrderIdentity | None:
+    service = OpenAIStructuredAnalysisService()
+    if not service.proof_enabled():
+        return None
+    best: ResolvedOrderIdentity | None = None
+    best_score = -1
+    for index, attachment in enumerate(attachments[:5], start=1):
+        mime_type = attachment.mime_type or ""
+        if not mime_type.startswith("image/"):
+            continue
+        if len(attachment.content) > MAX_PROOF_IMAGE_BYTES:
+            continue
+        result = service.analyze_proof(
+            extracted_text="",
+            filename=attachment.filename,
+            restaurant_names=known_restaurant_names(db, order),
+            mime_type=mime_type,
+            image_bytes=attachment.content,
+        )
+        if result is None or result.confidence < MIN_AI_IDENTITY_CONFIDENCE:
+            continue
+        identity = identity_from_ai_result(result)
+        identity.source = f"openai_gmail_attachment:{index}:{attachment.filename}"
         score = identity_score(identity)
         if score > best_score:
             best = identity
