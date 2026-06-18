@@ -28,6 +28,7 @@ MAX_IDENTITY_TEXT_CHARS = 18000
 IDENTITY_MESSAGE_LIMIT = 35
 MIN_AI_IDENTITY_CONFIDENCE = Decimal("0.65")
 MAX_PROOF_IMAGE_BYTES = 8 * 1024 * 1024
+MAX_INBOUND_ATTACHMENT_AI_ANALYSES = 2
 REQUIRED_ATTACHMENT_IDENTITY_FIELDS = ("restaurant", "customer_name", "order_number", "order_date", "order_amount")
 
 
@@ -331,7 +332,7 @@ def analyze_best_inbound_attachment(
     restaurant_names = list(db.scalars(select(Restaurant.name).where(Restaurant.active.is_(True)).order_by(Restaurant.name)).all())
     best: AIProofExtraction | None = None
     best_score = -1
-    for attachment in attachments[:5]:
+    for attachment in attachments[:MAX_INBOUND_ATTACHMENT_AI_ANALYSES]:
         mime_type = attachment.mime_type or ""
         if not mime_type.startswith("image/"):
             continue
