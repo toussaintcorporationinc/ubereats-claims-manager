@@ -193,24 +193,24 @@ def find_snapshot_for_dispute(
 ) -> UberOrderSnapshot | None:
     candidate_numbers = {order_number}
     candidate_numbers.update(value for value in (dispute.uber_order_id, dispute.display_id) if value)
-    statement = select(UberOrderSnapshot).where(
-        UberOrderSnapshot.restaurant_id == dispute.restaurant_id,
-        UberOrderSnapshot.uber_order_id.in_(candidate_numbers),
-    )
-    if dispute.uber_store_id:
-        statement = statement.where(UberOrderSnapshot.uber_store_id == dispute.uber_store_id)
-    snapshot = db.scalar(statement.order_by(UberOrderSnapshot.id.desc()).limit(1))
-    if snapshot is not None:
-        return snapshot
-    return db.scalar(
+    snapshots = db.scalars(
         select(UberOrderSnapshot)
         .where(
             UberOrderSnapshot.restaurant_id == dispute.restaurant_id,
-            UberOrderSnapshot.display_id.in_(candidate_numbers),
+            (
+                UberOrderSnapshot.uber_order_id.in_(candidate_numbers)
+                | UberOrderSnapshot.display_id.in_(candidate_numbers)
+            ),
         )
         .order_by(UberOrderSnapshot.id.desc())
-        .limit(1)
-    )
+    ).all()
+    if not snapshots:
+        return None
+    if dispute.uber_store_id:
+        for snapshot in snapshots:
+            if snapshot.uber_store_id == dispute.uber_store_id:
+                return snapshot
+    return snapshots[0]
 
 
 def create_customer_refund_draft(

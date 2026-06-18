@@ -334,6 +334,7 @@ def inbound_payload(
     *,
     thread_id: str | None = None,
     from_email: str = "support@uber.com",
+    to_email: str = "claims-owner@example.com",
     subject: str = "Re: réclamation Uber Eats",
     body_text: str = "Nous revenons vers vous.",
     provider_labels: list[str] | None = None,
@@ -344,12 +345,12 @@ def inbound_payload(
         provider_thread_id=thread_id,
         gmail_history_id=f"history-{message_id}",
         from_email=from_email,
-        to_email="claims-owner@example.com",
+        to_email=to_email,
         subject=subject,
         snippet=body_text[:80],
         body_text=body_text,
         received_at=utc_now(),
-        raw_headers={"from": from_email, "to": "claims-owner@example.com", "subject": subject},
+        raw_headers={"from": from_email, "to": to_email, "subject": subject},
         provider_labels=provider_labels or [],
         attachments=attachments or [],
     )
@@ -1889,6 +1890,132 @@ def test_starred_gmail_attachment_creates_order_when_thread_is_not_linked(
     assert message.order_id == order.id
     assert message.match_status == "linked"
     assert message.match_reason == "order_number_match"
+    get_settings.cache_clear()
+
+
+def test_starred_gmail_text_creates_order_when_thread_is_not_linked(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id, "tiramisumaisonfrance@gmail.com")
+    restaurant = create_restaurant(client, name="Frit Dodo")
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-unlinked-starred-text",
+            thread_id="thread-unlinked-starred-text",
+            from_email="tiramisumaisonfrance@gmail.com",
+            to_email="restaurantsfrance@uber.com",
+            subject="Contestation de remboursement de commande",
+            body_text=(
+                "Bonjour je veux contester la demande de remboursement de Yoann O "
+                "numero de commande F93BA car sa commande a bien ete preparee.\n\n"
+                "Montant concerne : 24.99 EUR\n\n"
+                "Frit Dodo\n"
+                "108 Avenue du Marechal Foch, Meaux, 77100\n"
+                "0605807385\n"
+                "tiramisumaisonfrance@gmail.com"
+            ),
+            provider_labels=["STARRED"],
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["linked_messages"] == 1
+    assert payload["identity_repaired_messages"] == 1
+    order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "F93BA"))
+    assert order is not None
+    assert order.restaurant_id == restaurant["id"]
+    assert order.customer_name == "Yoann O"
+    assert order.order_amount == Decimal("24.99")
+    assert order.status == "refused"
+    workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
+    assert workflow is not None
+    assert workflow.status == "appeal_needed"
+    message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-unlinked-starred-text")
+    )
+    assert message is not None
+    assert message.order_id == order.id
+    assert message.match_status == "linked"
+    assert message.match_reason == "order_number_match"
+    analysis = db_session.scalar(
+        select(GmailResponseAnalysis).where(GmailResponseAnalysis.inbound_message_id == message.id)
+    )
+    assert analysis is not None
+    assert analysis.recommended_review_type == "refused"
+    assert analysis.reason == "gmail_starred_urgent_followup"
+    get_settings.cache_clear()
+
+
+def test_starred_gmail_text_uses_ai_to_create_order_when_local_text_is_sparse(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id, "tiramisumaisonfrance@gmail.com")
+    restaurant = create_restaurant(client, name="Frit Dodo")
+
+    def fake_analyze_order_identity_text(self, **kwargs) -> AIProofExtraction:
+        assert kwargs["order_context"]["source"] == "starred_gmail_unlinked_thread"
+        assert "relance urgente" in kwargs["text"]
+        return AIProofExtraction(
+            detected_evidence_type="gmail_thread",
+            case_type="cancellation",
+            restaurant_name="Frit Dodo",
+            customer_name="Inaki A",
+            order_number="BAEF7",
+            display_id="BAEF7",
+            order_date=date(2026, 6, 18),
+            order_amount=Decimal("19.99"),
+            currency="EUR",
+            confidence=Decimal("0.91"),
+            missing_fields=[],
+            notes="fil gmail etoile exploitable",
+        )
+
+    monkeypatch.setattr(OpenAIStructuredAnalysisService, "analyze_order_identity_text", fake_analyze_order_identity_text)
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-unlinked-starred-ai-text",
+            thread_id="thread-unlinked-starred-ai-text",
+            from_email="tiramisumaisonfrance@gmail.com",
+            to_email="restaurantsfrance@uber.com",
+            subject="contestation d'annulation de commande",
+            body_text="relance urgente sur ce refus Uber, voir le fil complet et la preuve deja envoyee",
+            provider_labels=["STARRED"],
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    assert response.json()["identity_repaired_messages"] == 1
+    order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "BAEF7"))
+    assert order is not None
+    assert order.restaurant_id == restaurant["id"]
+    assert order.customer_name == "Inaki A"
+    assert order.order_date == date(2026, 6, 18)
+    assert order.order_amount == Decimal("19.99")
+    assert order.loss_type == "cancellation"
+    message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-unlinked-starred-ai-text")
+    )
+    assert message is not None
+    assert message.order_id == order.id
     get_settings.cache_clear()
 
 
