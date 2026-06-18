@@ -390,7 +390,7 @@ def test_create_claim_order_from_dispute(configured_client: TestClient, db_sessi
 
 def test_create_draft_requires_complete_evidence(configured_client: TestClient, db_session: Session) -> None:
     restaurant = create_restaurant(configured_client)
-    add_snapshot(db_session, restaurant["id"])
+    add_snapshot(db_session, restaurant["id"], customer_name="Client Remboursement")
     add_transaction(db_session, restaurant["id"], payload={"reason": "missing item"})
     detect(configured_client)
     dispute = db_session.scalar(select(UberCustomerRefundDispute))
@@ -419,6 +419,7 @@ def test_create_draft_requires_complete_evidence(configured_client: TestClient, 
     draft_payload = draft.json()
     assert draft_payload["draft_type"] == "customer_refund_missing_item"
     assert draft_payload["subject"] == "Contestation de remboursement de commande - UBER-REFUND-1"
+    assert "commande Uber Eats de Client Remboursement, numero de commande UBER-REFUND-1" in draft_payload["body"]
     assert "ticket-agrafe-commande.png" in draft_payload["body"]
     assert_clean_uber_email(draft_payload["subject"], draft_payload["body"])
 
