@@ -97,11 +97,13 @@ def find_or_create_order_from_inbound_attachments(
     db: Session,
     user: User,
     attachments: list[InboundEmailAttachment],
+    *,
+    context_text: str = "",
 ) -> ClaimOrder | None:
     """Create or link a claim order from a starred Gmail proof image when no thread link exists yet."""
     if not attachments:
         return None
-    result = analyze_best_inbound_attachment(db, attachments)
+    result = analyze_best_inbound_attachment(db, attachments, context_text=context_text)
     if result is None or not ai_result_has_required_identity(result):
         return None
     restaurant = resolve_restaurant_from_ai_result(db, result)
@@ -325,6 +327,8 @@ def analyze_inbound_attachments_with_ai(
 def analyze_best_inbound_attachment(
     db: Session,
     attachments: list[InboundEmailAttachment],
+    *,
+    context_text: str = "",
 ) -> AIProofExtraction | None:
     service = OpenAIStructuredAnalysisService()
     if not service.proof_enabled():
@@ -339,7 +343,7 @@ def analyze_best_inbound_attachment(
         if len(attachment.content) > MAX_PROOF_IMAGE_BYTES:
             continue
         result = service.analyze_proof(
-            extracted_text="",
+            extracted_text=context_text[:12000],
             filename=attachment.filename,
             restaurant_names=restaurant_names,
             mime_type=mime_type,

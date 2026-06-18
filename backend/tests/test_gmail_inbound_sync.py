@@ -1827,6 +1827,7 @@ def test_starred_gmail_attachment_creates_order_when_thread_is_not_linked(
     restaurant = create_restaurant(client, name="Frit Dodo")
 
     def fake_analyze_proof(self, **kwargs) -> AIProofExtraction:
+        assert "Bonjour je veux contester cette commande." in kwargs["extracted_text"]
         return AIProofExtraction(
             detected_evidence_type="ticket_agraphe",
             case_type="refund",
@@ -1939,6 +1940,7 @@ def test_starred_backlog_reprocess_fetches_attachment_and_creates_order(
     fake_gmail_provider.messages = [payload]
 
     def fake_analyze_proof(self, **kwargs) -> AIProofExtraction:
+        assert "Bonjour je veux contester cette commande." in kwargs["extracted_text"]
         return AIProofExtraction(
             detected_evidence_type="ticket_agraphe",
             case_type="refund",

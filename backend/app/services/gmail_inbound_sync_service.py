@@ -656,7 +656,12 @@ class GmailInboundSyncService:
         labels = normalize_gmail_labels(payload.provider_labels)
         if "STARRED" not in labels or not payload.attachments:
             return False
-        order = find_or_create_order_from_inbound_attachments(db, user, payload.attachments)
+        order = find_or_create_order_from_inbound_attachments(
+            db,
+            user,
+            payload.attachments,
+            context_text=starred_payload_identity_context(payload),
+        )
         if order is None:
             return False
         self.record_linked_message(db, user, message, order, match_reason="order_number_match")
@@ -889,6 +894,18 @@ def inbound_payload_from_message(message: InboundEmailMessage) -> InboundEmailPa
         raw_headers=message.raw_headers_json or {},
         provider_labels=message.provider_labels_json or [],
     )
+
+
+def starred_payload_identity_context(payload: InboundEmailPayload) -> str:
+    return "\n\n".join(
+        part
+        for part in (
+            f"Sujet: {payload.subject or ''}",
+            f"Extrait: {payload.snippet or ''}",
+            f"Corps:\n{payload.body_text or ''}",
+        )
+        if part.strip()
+    )[:12000]
 
 
 def normalize_gmail_labels(labels: list[str] | None) -> tuple[str, ...]:
