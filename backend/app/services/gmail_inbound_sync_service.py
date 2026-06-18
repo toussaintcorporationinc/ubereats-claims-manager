@@ -19,6 +19,7 @@ from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.autopilot_identity_repair_service import (
     find_or_create_order_from_inbound_attachments,
+    find_or_create_order_from_starred_text,
     repair_order_identity_from_inbound_attachments,
 )
 from app.services.autopilot_service import AutopilotError, run_autopilot
@@ -656,14 +657,19 @@ class GmailInboundSyncService:
         account: EmailAccount,
     ) -> bool:
         labels = normalize_gmail_labels(payload.provider_labels)
-        if "STARRED" not in labels or not payload.attachments:
+        if "STARRED" not in labels:
             return False
-        order = find_or_create_order_from_inbound_attachments(
-            db,
-            user,
-            payload.attachments,
-            context_text=starred_payload_identity_context(payload),
-        )
+        context_text = starred_payload_identity_context(payload)
+        order = None
+        if payload.attachments:
+            order = find_or_create_order_from_inbound_attachments(
+                db,
+                user,
+                payload.attachments,
+                context_text=context_text,
+            )
+        if order is None:
+            order = find_or_create_order_from_starred_text(db, user, context_text)
         if order is None:
             return False
         self.record_linked_message(db, user, message, order, match_reason="order_number_match")
