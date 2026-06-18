@@ -142,6 +142,53 @@ class OpenAIStructuredAnalysisService:
             notes=(string_or_none(result.get("notes")) or "")[:1200],
         )
 
+    def analyze_order_identity_text(
+        self,
+        *,
+        text: str,
+        restaurant_names: list[str],
+        order_context: dict[str, Any] | None = None,
+    ) -> AIProofExtraction | None:
+        if not (self.gmail_enabled() or self.proof_enabled()):
+            return None
+        schema = proof_schema()
+        context = order_context or {}
+        prompt = (
+            "Tu aides TENNET a reparer l'identite d'un dossier Uber Eats avant relance Gmail. "
+            "Le texte peut contenir des emails envoyes par le restaurant, des reponses Uber, des extraits de ticket "
+            "ou des notes historiques. Extrais uniquement les informations explicitement presentes: nom client, "
+            "numero de commande, date de commande, restaurant et montant. "
+            "N'invente jamais une donnee absente. Si une information est incertaine ou absente, retourne null et "
+            "ajoute le champ dans missing_fields. "
+            "Si un numero court visible comme F93BA ou BAEF7 existe, mets-le dans display_id. "
+            "Restaurants connus: "
+            f"{', '.join(restaurant_names) or 'aucun'}.\n"
+            f"Contexte dossier: {json.dumps(context, ensure_ascii=True, default=str)}\n"
+            f"Texte Gmail / historique / preuve:\n{text[:12000]}"
+        )
+        result = self._request_json(
+            model=self.settings.openai_gmail_model or self.settings.openai_evidence_model or "gpt-4o-mini",
+            schema_name="tennet_order_identity_extraction",
+            schema=schema,
+            prompt=prompt,
+        )
+        if not result:
+            return None
+        return AIProofExtraction(
+            detected_evidence_type=string_or_none(result.get("detected_evidence_type")),
+            case_type=string_or_none(result.get("case_type")),
+            restaurant_name=string_or_none(result.get("restaurant_name")),
+            customer_name=string_or_none(result.get("customer_name")),
+            order_number=string_or_none(result.get("order_number")),
+            display_id=string_or_none(result.get("display_id")),
+            order_date=parse_date(result.get("order_date")),
+            order_amount=parse_decimal(result.get("order_amount")),
+            currency=(string_or_none(result.get("currency")) or "EUR")[:3].upper(),
+            confidence=parse_decimal(result.get("confidence")) or Decimal("0"),
+            missing_fields=[str(item) for item in result.get("missing_fields", []) if str(item).strip()],
+            notes=(string_or_none(result.get("notes")) or "")[:1000],
+        )
+
     def _request_json(
         self,
         *,

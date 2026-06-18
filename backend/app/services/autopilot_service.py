@@ -33,6 +33,10 @@ from app.services.appeal_workflow_service import (
     latest_attempt_with_draft,
     mark_appeal_sent,
 )
+from app.services.autopilot_identity_repair_service import (
+    repair_appeal_workflow_for_autopilot,
+    repair_order_identity_for_autopilot,
+)
 from app.services.audit import add_audit_log
 from app.services.claim_validation_service import FINAL_CLAIM_STATUSES, get_claim_validation_gaps
 from app.services.email_draft_service import EmailDraftBusinessError, create_email_draft
@@ -294,6 +298,9 @@ def initial_claim_candidates(db: Session, user: User, restaurant_id: int | None)
         if not restaurant_ids:
             return []
         statement = statement.where(ClaimOrder.restaurant_id.in_(restaurant_ids))
+    orders = db.scalars(statement).all()
+    for order in orders:
+        repair_order_identity_for_autopilot(db, user, order)
     return [
         Candidate(
             case_type="claim_order",
@@ -303,7 +310,7 @@ def initial_claim_candidates(db: Session, user: User, restaurant_id: int | None)
             reason="ready_to_send_initial_claim",
             object=order,
         )
-        for order in db.scalars(statement).all()
+        for order in orders
     ]
 
 
@@ -327,6 +334,9 @@ def followup_candidates(db: Session, user: User, restaurant_id: int | None) -> l
         if not restaurant_ids:
             return []
         statement = statement.where(ClaimOrder.restaurant_id.in_(restaurant_ids))
+    tasks = db.scalars(statement).all()
+    for task in tasks:
+        repair_order_identity_for_autopilot(db, user, task.order)
     return [
         Candidate(
             case_type="followup_task",
@@ -336,7 +346,7 @@ def followup_candidates(db: Session, user: User, restaurant_id: int | None) -> l
             reason="followup_due",
             object=task,
         )
-        for task in db.scalars(statement).all()
+        for task in tasks
     ]
 
 
@@ -358,6 +368,9 @@ def appeal_candidates(db: Session, user: User, restaurant_id: int | None) -> lis
         if not restaurant_ids:
             return []
         statement = statement.where(AppealWorkflow.restaurant_id.in_(restaurant_ids))
+    workflows = db.scalars(statement).all()
+    for workflow in workflows:
+        repair_appeal_workflow_for_autopilot(db, user, workflow)
     return [
         Candidate(
             case_type="appeal_workflow",
@@ -367,7 +380,7 @@ def appeal_candidates(db: Session, user: User, restaurant_id: int | None) -> lis
             reason="appeal_due",
             object=workflow,
         )
-        for workflow in db.scalars(statement).all()
+        for workflow in workflows
     ]
 
 
@@ -519,7 +532,14 @@ def appeal_skip_reason(db: Session, workflow: AppealWorkflow) -> str | None:
         return "cooldown_active"
     analysis = latest_analysis(db, workflow)
     if analysis is not None and analysis.recommended_next_action in {"provide_missing_evidence", "manual_review"}:
-        return "manual_review_or_evidence_needed"
+        starred_override = (
+            analysis.recommended_next_action == "manual_review"
+            and workflow.claim_order is not None
+            and order_identity_skip_reason(workflow.claim_order) is None
+            and latest_starred_linked_inbound_message(db, workflow.claim_order.id) is not None
+        )
+        if not starred_override:
+            return "manual_review_or_evidence_needed"
     latest_attempt = latest_attempt_with_draft(db, workflow)
     if (
         latest_attempt is not None

@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import Any
 
@@ -177,13 +178,13 @@ def ensure_order_has_evidence(order: ClaimOrder) -> None:
 
 
 def build_subject(order: ClaimOrder, draft_type: str) -> str:
-    return DRAFT_SUBJECTS[draft_type].format(uber_order_number=order.uber_order_number)
+    return DRAFT_SUBJECTS[draft_type].format(uber_order_number=display_order_number(order))
 
 
 def build_template_context(order: ClaimOrder) -> dict[str, Any]:
     restaurant = order.restaurant
     return {
-        "uber_order_number": order.uber_order_number,
+        "uber_order_number": display_order_number(order),
         "order_identity_phrase": build_order_identity_phrase(order),
         "restaurant_name": restaurant.name,
         "customer_name_line": optional_line("Client", order.customer_name),
@@ -202,11 +203,29 @@ def build_order_identity_phrase(order: ClaimOrder) -> str:
     phrase = "la commande Uber Eats"
     if order.customer_name:
         phrase += f" de {order.customer_name}"
-    phrase += f", numero de commande {order.uber_order_number}"
+    phrase += f", numero de commande {display_order_number(order)}"
     order_date = format_display_date(order.order_date)
     if order_date:
         phrase += f", du {order_date}"
     return phrase
+
+
+def display_order_number(order: ClaimOrder) -> str:
+    reference = str(order.internal_reference or "").strip()
+    if reference and not is_uuid_like(reference):
+        return reference
+    return order.uber_order_number
+
+
+def is_uuid_like(value: str | None) -> bool:
+    return bool(
+        value
+        and re.fullmatch(
+            r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}",
+            value.strip(),
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def format_display_date(value: object | None) -> str:

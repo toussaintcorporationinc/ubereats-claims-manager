@@ -7,7 +7,13 @@ from sqlalchemy.orm import Session
 
 from app.models import AppealWorkflow, ClaimOrder, EmailDraft, RefusalAnalysis
 from app.services.audit import add_audit_log
-from app.services.email_draft_service import build_order_identity_phrase, format_amount, format_display_date, format_restaurant_signature
+from app.services.email_draft_service import (
+    build_order_identity_phrase,
+    display_order_number,
+    format_amount,
+    format_display_date,
+    format_restaurant_signature,
+)
 from app.services.refusal_policy_service import template_type_for_policy
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates" / "emails"
@@ -45,7 +51,7 @@ def create_appeal_email_draft(
     recommended_action = analysis.recommended_next_action if analysis else "challenge_generic_refusal"
     template_type = template_type_for_policy(recommended_action, appeal_type)
     context = build_appeal_context(workflow, order, analysis, appeal_type)
-    subject = APPEAL_SUBJECTS[template_type].format(uber_order_number=order.uber_order_number)
+    subject = APPEAL_SUBJECTS[template_type].format(uber_order_number=display_order_number(order))
     body = render_template(template_type, context)
 
     draft = EmailDraft(
@@ -115,7 +121,7 @@ def build_appeal_context(
 
     return {
         "restaurant_name": restaurant.name if restaurant else f"Restaurant #{order.restaurant_id}",
-        "uber_order_number": order.uber_order_number,
+        "uber_order_number": display_order_number(order),
         "order_identity_phrase": build_order_identity_phrase(order),
         "customer_name_line": optional_line("Client", order.customer_name),
         "order_date_line": optional_line("Date de commande", format_display_date(order.order_date)),

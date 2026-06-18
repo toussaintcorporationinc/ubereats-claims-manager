@@ -23,6 +23,7 @@ from app.models import (
     FollowUpTask,
     GmailResponseAnalysis,
     InboundEmailMessage,
+    RefusalAnalysis,
     Restaurant,
     User,
 )
@@ -181,6 +182,33 @@ def add_starred_inbound_message(db_session: Session, order: ClaimOrder, account:
             subject=f"Re: commande {order.uber_order_number}",
             body_text="Votre demande est refusee.",
             provider_labels_json=["STARRED"],
+            match_status="linked",
+            match_reason="thread_id_match",
+            review_status="reviewed",
+            received_at=utc_now(),
+        )
+    )
+    db_session.commit()
+
+
+def add_starred_identity_message(db_session: Session, order: ClaimOrder, account: EmailAccount) -> None:
+    db_session.add(
+        InboundEmailMessage(
+            email_account_id=account.id,
+            order_id=order.id,
+            provider="gmail",
+            provider_message_id=f"starred-identity-{order.id}",
+            provider_thread_id=f"thread-identity-{order.id}",
+            from_email=account.email_address,
+            to_email="restaurantsfrance@uber.com",
+            subject="Contestation de remboursement de commande",
+            body_text=(
+                "Bonjour je veux contester la demande de remboursement de Yoann O "
+                "numero de commande F93BA du 18/06/2026 car sa commande a bien ete preparee. "
+                "Montant concerne : 24.99 EUR\n\n"
+                "Frit Dodo\n108 Avenue du Marechal Foch, Meaux, 77100\n0605807385"
+            ),
+            provider_labels_json=["STARRED", "SENT"],
             match_status="linked",
             match_reason="thread_id_match",
             review_status="reviewed",
@@ -581,6 +609,111 @@ def test_autopilot_appeal_requires_starred_gmail_thread(
     payload = response.json()
     assert payload["run"]["sent_count"] == 0
     assert payload["actions"][0]["skipped_reason"] == "starred_gmail_thread_required"
+
+
+def test_autopilot_repairs_missing_identity_from_starred_gmail_thread(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client, "Frit Dodo")
+    order = ClaimOrder(
+        restaurant_id=restaurant["id"],
+        uber_order_number="AUTO-IDENTITY-MISSING",
+        customer_name=None,
+        order_date=None,
+        order_amount=Decimal("24.99"),
+        currency="EUR",
+        accepted_by_restaurant=True,
+        prepared_before_cancellation=True,
+        status="refused",
+    )
+    db_session.add(order)
+    db_session.flush()
+    workflow = AppealWorkflow(
+        case_type="claim_order",
+        case_id=order.id,
+        restaurant_id=order.restaurant_id,
+        claim_order_id=order.id,
+        status="appeal_needed",
+        refusal_count=1,
+        next_action_type="create_appeal_draft",
+        next_action_at=utc_now() - timedelta(hours=1),
+    )
+    db_session.add(workflow)
+    db_session.commit()
+    account = add_gmail_account(db_session)
+    add_starred_identity_message(db_session, order, account)
+
+    response = client.post("/v1/autopilot/dry-run", json={"mode": "appeals", "restaurant_id": restaurant["id"]})
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["actions"][0]["reason"] == "dry_run_candidate"
+    assert payload["actions"][0]["skipped_reason"] is None
+    db_session.refresh(order)
+    assert order.customer_name == "Yoann O"
+    assert order.order_date is not None
+    assert order.order_date.isoformat() == "2026-06-18"
+    assert order.internal_reference == "F93BA"
+
+
+def test_autopilot_reopens_manual_review_when_starred_gmail_thread_has_complete_identity(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client, "Frit Dodo")
+    order = ClaimOrder(
+        restaurant_id=restaurant["id"],
+        uber_order_number="AUTO-MANUAL-REPAIR",
+        customer_name=None,
+        order_date=None,
+        order_amount=Decimal("24.99"),
+        currency="EUR",
+        accepted_by_restaurant=True,
+        prepared_before_cancellation=True,
+        status="refused",
+    )
+    db_session.add(order)
+    db_session.flush()
+    workflow = AppealWorkflow(
+        case_type="claim_order",
+        case_id=order.id,
+        restaurant_id=order.restaurant_id,
+        claim_order_id=order.id,
+        status="appeal_needed",
+        refusal_count=1,
+        next_action_type="manual_review",
+        next_action_at=utc_now() - timedelta(hours=1),
+    )
+    db_session.add(workflow)
+    db_session.flush()
+    db_session.add(
+        RefusalAnalysis(
+            workflow_id=workflow.id,
+            refusal_source="manual",
+            refusal_reason="generic_refusal",
+            refusal_text_excerpt="Uber semble refuser la demande.",
+            recommended_next_action="manual_review",
+            required_evidence_types_json=[],
+            confidence=Decimal("0.50"),
+        )
+    )
+    db_session.commit()
+    account = add_gmail_account(db_session)
+    add_starred_identity_message(db_session, order, account)
+
+    response = client.post("/v1/autopilot/dry-run", json={"mode": "appeals", "restaurant_id": restaurant["id"]})
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["actions"][0]["action_type"] == "send_appeal"
+    assert payload["actions"][0]["skipped_reason"] is None
+    db_session.refresh(workflow)
+    assert workflow.next_action_type == "review_refusal"
 
 
 def test_autopilot_appeal_refuses_same_template_without_new_argument(
