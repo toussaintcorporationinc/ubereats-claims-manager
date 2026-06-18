@@ -158,6 +158,57 @@ def find_or_create_order_from_inbound_attachments(
     return order
 
 
+def find_or_create_order_from_starred_text(db: Session, user: User, text: str) -> ClaimOrder | None:
+    """Create or link a claim order from a starred Gmail thread when the original proof was already sent."""
+    if not text.strip():
+        return None
+    restaurant_names = known_active_restaurant_names(db)
+    restaurant_name = extract_restaurant_name(text, restaurant_names)
+    local_order_number = extract_order_number(text)
+    local_amount = extract_amount(text)
+    identity = ResolvedOrderIdentity(
+        order_number=local_order_number,
+        display_id=local_order_number,
+        customer_name=extract_customer_name(text),
+        order_date=extract_order_date(text),
+        order_amount=local_amount,
+        currency="EUR" if local_amount is not None else None,
+        source="starred_gmail_thread_text",
+    )
+
+    ai_result = OpenAIStructuredAnalysisService().analyze_order_identity_text(
+        text=text,
+        restaurant_names=restaurant_names,
+        order_context={"source": "starred_gmail_unlinked_thread"},
+    )
+    if ai_result is not None and ai_result.confidence >= MIN_AI_IDENTITY_CONFIDENCE:
+        ai_identity = identity_from_ai_result(ai_result)
+        merge_identity(identity, ai_identity, prefer_display=True)
+        if ai_result.restaurant_name:
+            restaurant_name = ai_result.restaurant_name
+        identity.source = "openai_starred_gmail_thread_text"
+
+    restaurant = resolve_restaurant_from_name(db, restaurant_name)
+    if restaurant is None or not can_access_restaurant(db, user, restaurant.id):
+        return None
+    if not identity.order_number and identity.display_id:
+        identity.order_number = identity.display_id
+    if not identity.display_id and identity.order_number and not is_uuid_like(identity.order_number):
+        identity.display_id = identity.order_number
+    if not text_identity_has_required_fields(identity):
+        return None
+
+    order = create_or_update_order_from_identity(
+        db,
+        user,
+        restaurant,
+        identity,
+        source="openai_starred_gmail_thread_text" if identity.source == "openai_starred_gmail_thread_text" else "starred_gmail_thread_text",
+        case_type=case_type_from_text(text, ai_result.case_type if ai_result else None),
+    )
+    return order
+
+
 def repair_appeal_workflow_for_autopilot(db: Session, user: User, workflow: AppealWorkflow) -> bool:
     changed = False
     order = workflow.claim_order
@@ -405,9 +456,15 @@ def resolve_truthy(value: object) -> bool:
 def resolve_restaurant_from_ai_result(db: Session, result: AIProofExtraction) -> Restaurant | None:
     if not result.restaurant_name:
         return None
+    return resolve_restaurant_from_name(db, result.restaurant_name)
+
+
+def resolve_restaurant_from_name(db: Session, restaurant_name: str | None) -> Restaurant | None:
+    if not restaurant_name:
+        return None
     from app.services.evidence_ai_analysis_service import resolve_restaurant_display_name
 
-    resolved_name = resolve_restaurant_display_name(db, result.restaurant_name) or result.restaurant_name
+    resolved_name = resolve_restaurant_display_name(db, restaurant_name) or restaurant_name
     normalized = resolved_name.strip().casefold()
     for restaurant in db.scalars(select(Restaurant).where(Restaurant.active.is_(True))).all():
         if restaurant.name and restaurant.name.strip().casefold() == normalized:
@@ -442,6 +499,80 @@ def loss_type_from_ai_case_type(case_type: str | None) -> str:
     if case_type == "refund":
         return "customer_refund"
     return "gmail_starred_proof"
+
+
+def case_type_from_text(text: str, ai_case_type: str | None = None) -> str | None:
+    if ai_case_type in {"cancellation", "refund"}:
+        return ai_case_type
+    normalized = text.casefold()
+    if "annulation" in normalized or "cancel" in normalized:
+        return "cancellation"
+    if "remboursement" in normalized or "refund" in normalized:
+        return "refund"
+    return None
+
+
+def text_identity_has_required_fields(identity: ResolvedOrderIdentity) -> bool:
+    return bool(
+        clean_order_identifier(identity.order_number or identity.display_id)
+        and identity.order_amount is not None
+    )
+
+
+def create_or_update_order_from_identity(
+    db: Session,
+    user: User,
+    restaurant: Restaurant,
+    identity: ResolvedOrderIdentity,
+    *,
+    source: str,
+    case_type: str | None,
+) -> ClaimOrder | None:
+    order = find_existing_order_for_identity(db, restaurant.id, identity)
+    created = False
+    if order is None:
+        order_number = clean_order_identifier(identity.order_number or identity.display_id)
+        if order_number is None:
+            return None
+        order = ClaimOrder(
+            restaurant_id=restaurant.id,
+            uber_order_number=order_number,
+            internal_reference=clean_order_identifier(identity.display_id),
+            customer_name=clean_customer_name(identity.customer_name),
+            order_date=identity.order_date,
+            order_amount=identity.order_amount,
+            currency=(identity.currency or "EUR")[:3].upper(),
+            accepted_by_restaurant=True,
+            prepared_before_cancellation=True,
+            loss_type=loss_type_from_ai_case_type(case_type),
+            status="refused",
+            notes="Dossier cree depuis un fil Gmail etoile deja envoye. Relance autorisee dans le meme fil, sans inventer de preuve.",
+        )
+        db.add(order)
+        db.flush()
+        created = True
+    else:
+        apply_identity_to_order(order, identity)
+        if order.status not in {"payment_confirmed", "accepted", "closed"}:
+            order.status = "refused"
+            order.updated_at = utc_now()
+        db.flush()
+
+    ensure_workflow_for_claim_order(db, order, user)
+    add_audit_log(
+        db,
+        entity_type="claim_order",
+        entity_id=order.id,
+        action="autopilot.order_created_from_starred_gmail_text" if created else "autopilot.order_linked_from_starred_gmail_text",
+        user_id=user.id,
+        new_value=snapshot_order_identity(order)
+        | {
+            "restaurant_id": restaurant.id,
+            "source": source,
+            "case_type": case_type,
+        },
+    )
+    return order
 
 
 def apply_identity_to_order(order: ClaimOrder, identity: ResolvedOrderIdentity) -> bool:
@@ -620,6 +751,14 @@ def known_restaurant_names(db: Session, order: ClaimOrder) -> list[str]:
         if name and name not in names:
             names.append(name)
     return names
+
+
+def known_active_restaurant_names(db: Session) -> list[str]:
+    return [
+        name
+        for name in db.scalars(select(Restaurant.name).where(Restaurant.active.is_(True)).order_by(Restaurant.name)).all()
+        if name
+    ]
 
 
 def compact_text(text: str) -> str:
