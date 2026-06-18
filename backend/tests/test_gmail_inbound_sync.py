@@ -1685,7 +1685,7 @@ def test_message_from_own_gmail_account_is_ignored(
     assert inbound_message.match_reason == "ignored_sender"
 
 
-def test_starred_message_from_own_gmail_account_marks_known_thread_urgent_without_analysis(
+def test_starred_message_from_own_gmail_account_marks_known_thread_urgent_for_reply(
     client: TestClient,
     db_session: Session,
     gmail_inbound_enabled: None,
@@ -1723,12 +1723,15 @@ def test_starred_message_from_own_gmail_account_marks_known_thread_urgent_withou
     assert inbound_message.match_status == "linked"
     assert inbound_message.match_reason == "thread_id_match"
     assert inbound_message.provider_labels_json == ["STARRED"]
-    analysis_count = db_session.scalar(
-        select(func.count(GmailResponseAnalysis.id)).where(
-            GmailResponseAnalysis.inbound_message_id == inbound_message.id
-        )
+    analysis = db_session.scalar(
+        select(GmailResponseAnalysis).where(GmailResponseAnalysis.inbound_message_id == inbound_message.id)
     )
-    assert analysis_count == 0
+    assert analysis is not None
+    assert analysis.recommended_review_type == "refused"
+    assert analysis.reason == "gmail_starred_urgent_followup"
+    workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
+    assert workflow is not None
+    assert workflow.status == "appeal_needed"
 
 
 def test_starred_gmail_attachment_repairs_missing_order_identity(
@@ -2033,12 +2036,15 @@ def test_existing_ignored_own_gmail_message_is_linked_when_starred_later(
     assert inbound_message.match_status == "linked"
     assert inbound_message.match_reason == "thread_id_match"
     assert inbound_message.provider_labels_json == ["STARRED"]
-    analysis_count = db_session.scalar(
-        select(func.count(GmailResponseAnalysis.id)).where(
-            GmailResponseAnalysis.inbound_message_id == inbound_message.id
-        )
+    analysis = db_session.scalar(
+        select(GmailResponseAnalysis).where(GmailResponseAnalysis.inbound_message_id == inbound_message.id)
     )
-    assert analysis_count == 0
+    assert analysis is not None
+    assert analysis.recommended_review_type == "refused"
+    assert analysis.reason == "gmail_starred_urgent_followup"
+    workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
+    assert workflow is not None
+    assert workflow.status == "appeal_needed"
 
 
 @pytest.mark.parametrize("final_status", ["accepted", "payment_confirmed"])

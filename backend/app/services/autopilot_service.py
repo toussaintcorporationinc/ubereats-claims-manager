@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.auth import can_access_restaurant, get_accessible_restaurant_ids
 from app.core.config import get_settings
 from app.models import (
+    AppealAttempt,
     AppealWorkflow,
     AutopilotAction,
     AutopilotRun,
@@ -40,6 +41,13 @@ from app.services.autopilot_identity_repair_service import (
 from app.services.audit import add_audit_log
 from app.services.claim_validation_service import FINAL_CLAIM_STATUSES, get_claim_validation_gaps
 from app.services.email_draft_service import EmailDraftBusinessError, create_email_draft
+from app.services.email_draft_service import (
+    build_order_identity_phrase,
+    display_order_number,
+    format_amount,
+    format_display_date,
+    format_restaurant_signature,
+)
 from app.services.email_provider import EmailConnectionStatus, EmailProvider, EmailProviderError
 from app.services.followup_policy_service import complete_task_for_sent_provider_draft
 
@@ -515,6 +523,12 @@ def appeal_skip_reason(db: Session, workflow: AppealWorkflow) -> str | None:
     if workflow.claim_order is not None and workflow.claim_order.status in {"accepted", "payment_confirmed"}:
         return "claim_order_resolved"
     if workflow.claim_order is not None:
+        starred_message = latest_starred_linked_inbound_message(db, workflow.claim_order.id)
+        if starred_message is not None:
+            starred_reason = starred_thread_reply_skip_reason(db, workflow)
+            if starred_reason is not None:
+                return starred_reason
+            return None
         identity_reason = order_identity_skip_reason(workflow.claim_order)
         if identity_reason is not None:
             return identity_reason
@@ -550,6 +564,30 @@ def appeal_skip_reason(db: Session, workflow: AppealWorkflow) -> str | None:
         return "same_template_without_new_argument"
     if workflow.claim_order is not None and latest_starred_linked_inbound_message(db, workflow.claim_order.id) is None:
         return "starred_gmail_thread_required"
+    return None
+
+
+def starred_thread_reply_skip_reason(db: Session, workflow: AppealWorkflow) -> str | None:
+    settings = get_settings()
+    order = workflow.claim_order
+    if order is None:
+        return "missing_claim_order"
+    if not str(order.uber_order_number or "").strip() and not str(order.internal_reference or "").strip():
+        return "missing_uber_order_number"
+    if order.order_amount is None:
+        return "missing_amount"
+    signature_reason = restaurant_signature_skip_reason(order.restaurant)
+    if signature_reason is not None:
+        return signature_reason
+    positive_signal_reason = positive_payment_signal_skip_reason(db, order.id)
+    if positive_signal_reason is not None:
+        return positive_signal_reason
+    if workflow.appeal_attempt_count >= settings.autopilot_max_appeal_attempts:
+        return "max_appeal_attempts_reached"
+    if not settings.autopilot_refusal_retry_enabled:
+        return "refusal_retry_disabled"
+    if cooldown_active(workflow.last_appeal_sent_at, settings.autopilot_cooldown_hours):
+        return "cooldown_active"
     return None
 
 
@@ -841,8 +879,21 @@ def send_appeal(
     action: AutopilotAction,
     provider: EmailProvider,
 ) -> None:
+    starred_message = None
+    if workflow.claim_order_id is not None:
+        starred_message = latest_starred_linked_inbound_message(db, workflow.claim_order_id)
     attempt = latest_attempt_with_draft(db, workflow)
-    if attempt is None or attempt.email_draft is None:
+    if starred_message is not None and attempt_is_already_sent(attempt):
+        attempt = create_starred_thread_reply_attempt(db, workflow=workflow, starred_message=starred_message, user=user)
+        action.status = "draft_created"
+        action.email_draft_id = attempt.email_draft_id
+        db.flush()
+    elif starred_message is not None and (attempt is None or attempt.email_draft is None):
+        attempt = create_starred_thread_reply_attempt(db, workflow=workflow, starred_message=starred_message, user=user)
+        action.status = "draft_created"
+        action.email_draft_id = attempt.email_draft_id
+        db.flush()
+    elif attempt is None or attempt.email_draft is None:
         if latest_analysis(db, workflow) is None:
             create_refusal_analysis(db, workflow=workflow, user=user)
         try:
@@ -885,6 +936,122 @@ def send_appeal(
         action="autopilot.appeal.sent",
         user_id=user.id,
         new_value={"workflow_id": workflow.id, "provider_draft_id": provider_draft.id},
+    )
+
+
+def attempt_is_already_sent(attempt: AppealAttempt | None) -> bool:
+    if attempt is None:
+        return False
+    if attempt.status == "sent":
+        return True
+    return attempt.provider_draft is not None and attempt.provider_draft.status == "sent"
+
+
+def create_starred_thread_reply_attempt(
+    db: Session,
+    *,
+    workflow: AppealWorkflow,
+    starred_message: InboundEmailMessage,
+    user: User,
+) -> AppealAttempt:
+    order = workflow.claim_order
+    if order is None:
+        raise AutopilotError("missing_claim_order", 409)
+    draft = EmailDraft(
+        order_id=order.id,
+        draft_type="appeal_generic_refusal",
+        subject=starred_message.subject or f"Re: Contestation commande Uber Eats {display_order_number(order)}",
+        body=build_starred_thread_reply_body(order, workflow, starred_message),
+        status="created",
+    )
+    db.add(draft)
+    db.flush()
+    attempt = AppealAttempt(
+        workflow_id=workflow.id,
+        attempt_number=next_attempt_number_for_workflow(db, workflow),
+        appeal_type=starred_thread_appeal_type(workflow),
+        status="draft_created",
+        based_on_refusal_message_id=starred_message.id,
+        email_draft_id=draft.id,
+        argument_summary="starred_gmail_thread_reply",
+        new_evidence_summary=None,
+        created_by_user_id=user.id,
+    )
+    db.add(attempt)
+    workflow.status = "gmail_draft_needed"
+    workflow.next_action_type = "create_gmail_draft"
+    workflow.next_action_at = utc_now()
+    workflow.updated_at = utc_now()
+    db.flush()
+    add_audit_log(
+        db,
+        entity_type="appeal_attempt",
+        entity_id=attempt.id,
+        action="appeal_attempt.starred_gmail_reply_draft_created",
+        user_id=user.id,
+        new_value={
+            "workflow_id": workflow.id,
+            "email_draft_id": draft.id,
+            "inbound_message_id": starred_message.id,
+        },
+    )
+    return attempt
+
+
+def next_attempt_number_for_workflow(db: Session, workflow: AppealWorkflow) -> int:
+    current = db.scalar(select(func.max(AppealAttempt.attempt_number)).where(AppealAttempt.workflow_id == workflow.id))
+    return int(current or 0) + 1
+
+
+def starred_thread_appeal_type(workflow: AppealWorkflow) -> str:
+    if workflow.appeal_attempt_count >= 2:
+        return "escalation"
+    if workflow.appeal_attempt_count == 1:
+        return "second_appeal"
+    return "first_appeal"
+
+
+def build_starred_thread_reply_body(
+    order: ClaimOrder,
+    workflow: AppealWorkflow,
+    starred_message: InboundEmailMessage,
+) -> str:
+    restaurant = order.restaurant
+    subject_text = " ".join(value for value in [starred_message.subject, starred_message.snippet, starred_message.body_text] if value)
+    is_cancellation = "annulation" in subject_text.casefold() or "cancel" in subject_text.casefold()
+    identity_phrase = build_order_identity_phrase(order)
+    date_line = format_display_date(order.order_date)
+    if date_line and f"du {date_line}" not in identity_phrase:
+        identity_phrase = f"{identity_phrase}, du {date_line}"
+    opening = (
+        f"Je vous demande de reexaminer le refus concernant {identity_phrase} "
+        f"pour le restaurant {restaurant.name if restaurant else 'le restaurant'}."
+    )
+    if is_cancellation:
+        argument = (
+            "La commande avait ete acceptee et preparee avant l'annulation. "
+            "Le restaurant a supporte une perte et du gaspillage; merci de reexaminer le dossier."
+        )
+    else:
+        argument = (
+            "La commande a ete preparee complete et les articles demandes ont ete places dans le sac avant l'envoi. "
+            "Nous verifions les commandes avant remise au livreur."
+        )
+    if workflow.appeal_attempt_count >= 2:
+        argument += (
+            "\n\nLe dossier a deja ete relance sans regularisation claire. "
+            "Merci de transmettre la demande a un niveau de traitement superieur si necessaire."
+        )
+    amount_line = f"Montant concerne : {format_amount(order.order_amount or 0)} {order.currency or 'EUR'}"
+    return "\n\n".join(
+        [
+            "Bonjour,",
+            opening,
+            amount_line,
+            argument,
+            "Merci de revoir ce dossier et de nous confirmer la suite donnee a la demande.",
+            f"Cordialement,\n{format_restaurant_signature(restaurant) if restaurant else 'Restaurant'}",
+        ]
     )
 
 
