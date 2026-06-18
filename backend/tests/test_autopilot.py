@@ -23,6 +23,7 @@ from app.models import (
     FollowUpTask,
     GmailResponseAnalysis,
     InboundEmailMessage,
+    Restaurant,
     User,
 )
 from app.models.domain import utc_now
@@ -108,6 +109,8 @@ def create_restaurant(client: TestClient, name: str = "AutoPilot Restaurant") ->
         "/v1/restaurants",
         json={
             "name": name,
+            "address": "108 Avenue du Marechal Foch, Meaux, 77100",
+            "phone_number": "0605807385",
             "sender_email": "claims@example.com",
             "autopilot_enabled": True,
         },
@@ -453,6 +456,64 @@ def test_autopilot_followup_respects_cooldown(
 
     assert response.status_code == 201
     assert response.json()["actions"][0]["skipped_reason"] == "cooldown_active"
+
+
+def test_autopilot_followup_requires_complete_restaurant_signature(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client)
+    restaurant_record = db_session.get(Restaurant, restaurant["id"])
+    assert restaurant_record is not None
+    restaurant_record.phone_number = None
+    db_session.commit()
+    ready = create_ready_order(client, restaurant["id"], "AUTO-FOLLOW-NO-SIGNATURE")
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    assert order is not None
+    order.status = "sent"
+    order.first_email_sent_at = utc_now() - timedelta(days=5)
+    task = FollowUpTask(order_id=order.id, task_type="followup_1", status="pending", due_at=utc_now() - timedelta(hours=1))
+    db_session.add(task)
+    account = add_gmail_account(db_session)
+    add_starred_inbound_message(db_session, order, account)
+    db_session.commit()
+
+    response = client.post("/v1/autopilot/run", json={"mode": "followups", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["run"]["sent_count"] == 0
+    assert payload["actions"][0]["skipped_reason"] == "missing_restaurant_phone_number"
+    assert db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent")) is None
+
+
+def test_autopilot_followup_blocks_internal_brand_in_restaurant_signature(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client, name="Restaurant Test TENNET")
+    ready = create_ready_order(client, restaurant["id"], "AUTO-FOLLOW-BRAND")
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    assert order is not None
+    order.status = "sent"
+    order.first_email_sent_at = utc_now() - timedelta(days=5)
+    task = FollowUpTask(order_id=order.id, task_type="followup_1", status="pending", due_at=utc_now() - timedelta(hours=1))
+    db_session.add(task)
+    account = add_gmail_account(db_session)
+    add_starred_inbound_message(db_session, order, account)
+    db_session.commit()
+
+    response = client.post("/v1/autopilot/run", json={"mode": "followups", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["run"]["sent_count"] == 0
+    assert payload["actions"][0]["skipped_reason"] == "restaurant_signature_contains_internal_brand"
+    assert db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent")) is None
 
 
 def test_autopilot_appeal_after_refusal_does_not_close(

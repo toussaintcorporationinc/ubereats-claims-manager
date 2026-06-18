@@ -40,7 +40,7 @@ def create_appeal_email_draft(
 ) -> EmailDraft:
     order = resolve_order(workflow)
     if order is None:
-        raise AppealDraftError("Appeal draft requires a linked TENNET claim order", 409)
+        raise AppealDraftError("Appeal draft requires a linked claim order", 409)
 
     recommended_action = analysis.recommended_next_action if analysis else "challenge_generic_refusal"
     template_type = template_type_for_policy(recommended_action, appeal_type)

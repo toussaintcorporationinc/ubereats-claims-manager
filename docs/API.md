@@ -1024,14 +1024,16 @@ Variables attendues :
 - `GMAIL_INBOUND_SYNC_LOOKBACK_DAYS=30` ;
 - `GMAIL_INBOUND_MAX_MESSAGES_PER_SYNC=100` ;
 - `GMAIL_INBOUND_AUTO_SYNC_ENABLED=false` par defaut ;
-- `GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS=900` ;
+- `GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS=300` ;
 - `GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT=true` ;
 - `GMAIL_SUPPORT_SENDER_FILTER=uber.com` ;
 - `GMAIL_SCOPES` doit inclure `https://www.googleapis.com/auth/gmail.readonly` en plus des scopes de brouillon/envoi.
 
 Les comptes connectes avant l'ajout de `gmail.readonly` doivent se reconnecter pour autoriser la lecture.
 
-Quand `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true`, le backend lance automatiquement la meme sync a intervalle regulier pour les comptes Gmail connectes `owner` et `manager`. Les comptes `staff` sont ignores. Les messages restent dedupliques par compte + id Gmail.
+Quand `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true`, le backend lance automatiquement la meme sync a intervalle regulier pour les comptes Gmail connectes `owner` et `manager`. Les comptes `staff` sont ignores. Les messages restent dedupliques par compte + id Gmail. En production, un intervalle de 300 secondes permet a TENNET de travailler en continu sans clic utilisateur.
+
+Les relances automatiques Gmail restent bloquees si le fil Gmail n'est pas etoile, si le client, le numero de commande, la date, le restaurant ou la signature restaurant complete manquent. La signature complete attendue contient le nom, l'adresse, le telephone et l'email expediteur du restaurant.
 
 ### Status inbound
 

@@ -53,6 +53,7 @@ def get_autopilot_status(
             min_amount=Decimal(snapshot["min_amount"]),
             max_amount_without_owner_review=Decimal(snapshot["max_amount_without_owner_review"]),
             require_complete_evidence=bool(snapshot["require_complete_evidence"]),
+            require_complete_restaurant_signature=bool(snapshot["require_complete_restaurant_signature"]),
             require_gmail_connected=bool(snapshot["require_gmail_connected"]),
             cooldown_hours=int(snapshot["cooldown_hours"]),
             refusal_retry_enabled=bool(snapshot["refusal_retry_enabled"]),
