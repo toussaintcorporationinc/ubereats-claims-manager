@@ -195,7 +195,7 @@ class GmailInboundSyncService:
                 result.synced_messages += 1
                 if inbound_message.match_status == "linked":
                     result.linked_messages += 1
-                    if analyze_responses:
+                    if analyze_responses and should_analyze_message(inbound_message, account):
                         self.analyze_linked_message(db, user, inbound_message, result, apply_reviews=apply_reviews)
                 elif inbound_message.match_status == "ignored":
                     result.ignored_messages += 1
@@ -345,7 +345,8 @@ class GmailInboundSyncService:
                     self.analyze_unlinked_message(db, user, message, result)
                 continue
             if message.match_status == "linked" and message.order_id is not None:
-                self.analyze_linked_message(db, user, message, result, apply_reviews=apply_reviews)
+                if should_analyze_message(message, account):
+                    self.analyze_linked_message(db, user, message, result, apply_reviews=apply_reviews)
 
     def run_autopilot_for_negative_responses(
         self,
@@ -459,7 +460,8 @@ class GmailInboundSyncService:
                 self.analyze_unlinked_message(db, user, message, result)
             return
         if message.match_status == "linked" and message.order_id is not None:
-            self.analyze_linked_message(db, user, message, result, apply_reviews=apply_reviews)
+            if should_analyze_message(message, account):
+                self.analyze_linked_message(db, user, message, result, apply_reviews=apply_reviews)
 
     def create_inbound_message(
         self,
@@ -516,7 +518,15 @@ class GmailInboundSyncService:
         *,
         order_identifier_index: OrderIdentifierIndex | None = None,
     ) -> MatchResult:
-        if same_email(payload.from_email, account.email_address):
+        own_sender = same_email(payload.from_email, account.email_address)
+        labels = normalize_gmail_labels(payload.provider_labels)
+
+        if own_sender and "STARRED" in labels:
+            thread_order = self.match_by_thread(db, user, payload.provider_thread_id)
+            if thread_order is not None:
+                return MatchResult(thread_order, "linked", "thread_id_match")
+
+        if own_sender:
             return MatchResult(None, "ignored", "ignored_sender")
 
         thread_order = self.match_by_thread(db, user, payload.provider_thread_id)
@@ -761,6 +771,10 @@ def truncate_db_string(value: str | None, max_length: int = MAX_DB_STRING_LENGTH
 
 def same_email(left: str | None, right: str | None) -> bool:
     return bool(left and right and left.strip().casefold() == right.strip().casefold())
+
+
+def should_analyze_message(message: InboundEmailMessage, account: EmailAccount) -> bool:
+    return not same_email(message.from_email, account.email_address)
 
 
 def sender_matches_filter(from_email: str | None, sender_filter: str) -> bool:
