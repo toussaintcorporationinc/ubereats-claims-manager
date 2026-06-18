@@ -105,6 +105,8 @@ class FakeInboundGmailProvider:
         messages = self.messages
         if "is:starred" in query:
             messages = [message for message in messages if "STARRED" in message.provider_labels]
+        if "has:attachment" in query:
+            messages = [message for message in messages if message.attachments]
         return [message.provider_message_id for message in messages[:max_results]]
 
     def get_message(self, db: Session, user: User, message_id: str) -> InboundEmailPayload:
@@ -810,8 +812,9 @@ def test_sync_starred_gmail_query_respects_cycle_limit(
     response = sync_inbound(client, payload={"lookback_days": 30, "max_messages": 2})
 
     assert response.status_code == 200
-    starred_limits = [limit for query, limit in fake_gmail_provider.query_limits if "is:starred" in query]
-    assert starred_limits == [2]
+    starred_limits = {query: limit for query, limit in fake_gmail_provider.query_limits if "is:starred" in query}
+    assert starred_limits["is:starred has:attachment"] == 2
+    assert starred_limits["is:starred"] == 2
     get_settings.cache_clear()
 
 
@@ -1862,6 +1865,7 @@ def test_starred_gmail_attachment_creates_order_when_thread_is_not_linked(
 
     assert response.status_code == 200
     payload = response.json()
+    assert "is:starred has:attachment" in fake_gmail_provider.queries
     assert payload["linked_messages"] == 1
     assert payload["identity_repaired_messages"] == 1
     order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "BAEF7"))

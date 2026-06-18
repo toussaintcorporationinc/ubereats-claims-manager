@@ -32,6 +32,7 @@ MAX_DB_STRING_LENGTH = 255
 ACTIONABLE_NEGATIVE_REVIEW_TYPES = {"refused"}
 MAX_EXISTING_REPROCESS_MESSAGES = 1000
 GMAIL_STARRED_URGENT_QUERY = "is:starred"
+GMAIL_STARRED_WITH_ATTACHMENT_QUERY = "is:starred has:attachment"
 OrderIdentifierIndex = list[tuple[ClaimOrder, list[str]]]
 
 
@@ -181,6 +182,13 @@ class GmailInboundSyncService:
             starred_max_messages = max(0, min(max_messages, get_settings().gmail_starred_max_messages_per_sync))
             payloads = merge_unique_payloads(
                 self.fetch_payloads(db, user, account, query=query, max_messages=max_messages),
+                self.fetch_payloads(
+                    db,
+                    user,
+                    account,
+                    query=GMAIL_STARRED_WITH_ATTACHMENT_QUERY,
+                    max_messages=starred_max_messages,
+                ),
                 self.fetch_payloads(
                     db,
                     user,
