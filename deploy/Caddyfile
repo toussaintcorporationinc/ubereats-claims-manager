@@ -12,7 +12,7 @@ app.thetennet.com {
 	encode zstd gzip
 	import security_headers
 
-	reverse_proxy frontend:3000
+	reverse_proxy ubereats_claims_manager-frontend-1:3000
 }
 
 thetennet.com, www.thetennet.com {
@@ -30,7 +30,7 @@ api.thetennet.com {
 		max_size 25MB
 	}
 
-	reverse_proxy backend:8000
+	reverse_proxy ubereats_claims_manager-backend-1:8000
 }
 
 staging-app.thetennet.com {
