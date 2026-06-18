@@ -38,6 +38,7 @@ class FakeInboundGmailProvider:
     def __init__(self) -> None:
         self.messages: list[InboundEmailPayload] = []
         self.queries: list[str] = []
+        self.query_limits: list[tuple[str, int]] = []
 
     def get_connection_status(self, db: Session, user: User) -> EmailConnectionStatus:
         if not get_settings().email_provider_enabled:
@@ -86,6 +87,7 @@ class FakeInboundGmailProvider:
 
     def list_messages(self, db: Session, user: User, query: str, max_results: int) -> list[str]:
         self.queries.append(query)
+        self.query_limits.append((query, max_results))
         messages = self.messages
         if "is:starred" in query:
             messages = [message for message in messages if "STARRED" in message.provider_labels]
@@ -335,10 +337,10 @@ def inbound_payload(
     )
 
 
-def sync_inbound(client: TestClient, token: str | None = None):
+def sync_inbound(client: TestClient, token: str | None = None, payload: dict | None = None):
     return client.post(
         "/v1/email/gmail/inbound/sync",
-        json={"lookback_days": 30, "max_messages": 100},
+        json=payload or {"lookback_days": 30, "max_messages": 100},
         headers=auth_headers(token) if token else None,
     )
 
@@ -664,6 +666,30 @@ def test_sync_starred_gmail_message_is_urgent_refusal_to_follow_up(
     workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
     assert workflow is not None
     assert workflow.status == "appeal_needed"
+
+
+def test_sync_starred_gmail_query_respects_cycle_limit(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GMAIL_STARRED_MAX_MESSAGES_PER_SYNC", "1000")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    fake_gmail_provider.messages = [
+        inbound_payload(f"msg-starred-limit-{index}", provider_labels=["STARRED"])
+        for index in range(5)
+    ]
+
+    response = sync_inbound(client, payload={"lookback_days": 30, "max_messages": 2})
+
+    assert response.status_code == 200
+    starred_limits = [limit for query, limit in fake_gmail_provider.query_limits if "is:starred" in query]
+    assert starred_limits == [2]
+    get_settings.cache_clear()
 
 
 def test_sync_existing_gmail_message_marked_starred_is_reprocessed_as_urgent_refusal(

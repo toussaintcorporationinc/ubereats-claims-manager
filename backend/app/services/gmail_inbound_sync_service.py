@@ -163,7 +163,7 @@ class GmailInboundSyncService:
         result = GmailInboundSyncResult(status="success")
         created_message_ids: set[int] = set()
         try:
-            starred_max_messages = max(max_messages, get_settings().gmail_starred_max_messages_per_sync)
+            starred_max_messages = max(0, min(max_messages, get_settings().gmail_starred_max_messages_per_sync))
             payloads = merge_unique_payloads(
                 self.fetch_payloads(db, user, account, query=query, max_messages=max_messages),
                 self.fetch_payloads(
