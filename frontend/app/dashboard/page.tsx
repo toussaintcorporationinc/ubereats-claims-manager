@@ -15,6 +15,7 @@ import { buildMachineSmartImportDecisions } from "@/lib/smartImportMachine";
 import {
   api,
   type DashboardSummary,
+  type GmailInboundStatus,
   type RecoveryMachineRail,
   type RecoveryMachineRailKey,
   type RecoveryMachineResponse,
@@ -23,6 +24,7 @@ import {
   type WorkspaceMachineRunResponse,
   type WorkspaceUnclassifiedResponse,
   formatCurrency,
+  formatDateTime,
 } from "@/lib/api";
 
 const acceptedTypes = ".pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.zip,image/*,application/pdf";
@@ -33,6 +35,7 @@ export default function DashboardPage() {
   const [nextActions, setNextActions] = useState<WorkspaceNextActionsResponse | null>(null);
   const [unclassified, setUnclassified] = useState<WorkspaceUnclassifiedResponse | null>(null);
   const [recoveryMachine, setRecoveryMachine] = useState<RecoveryMachineResponse | null>(null);
+  const [gmailWorker, setGmailWorker] = useState<GmailInboundStatus | null>(null);
   const [machineResult, setMachineResult] = useState<WorkspaceMachineRunResponse | null>(null);
   const [homeFiles, setHomeFiles] = useState<File[]>([]);
   const [railFiles, setRailFiles] = useState<Record<RecoveryMachineRailKey, File[]>>({
@@ -49,17 +52,19 @@ export default function DashboardPage() {
   const canRunRecoveryMachine = user?.role === "owner" || user?.role === "manager";
 
   const loadDashboard = useCallback(async () => {
-    const [summaryData, actionsData, recoveryMachineData, unclassifiedData] = await Promise.all([
+    const [summaryData, actionsData, recoveryMachineData, unclassifiedData, gmailWorkerData] = await Promise.all([
       api.getDashboardSummary(),
       api.getWorkspaceNextActions(),
       api.getWorkspaceRecoveryMachine(),
       api.getWorkspaceUnclassified(),
+      canRunRecoveryMachine ? api.getInboundStatus().catch(() => null) : Promise.resolve(null),
     ]);
     setSummary(summaryData);
     setNextActions(actionsData);
     setRecoveryMachine(recoveryMachineData);
     setUnclassified(unclassifiedData);
-  }, []);
+    setGmailWorker(gmailWorkerData);
+  }, [canRunRecoveryMachine]);
 
   useEffect(() => {
     loadDashboard()
@@ -278,6 +283,8 @@ export default function DashboardPage() {
         ) : null}
       </div>
 
+      {canSeeBusinessMetrics && gmailWorker ? <GmailWorkerPanel status={gmailWorker} /> : null}
+
       <ApiError error={error} />
       <ApiError error={pilotError} />
       {machineResult ? <MachineResultBox result={machineResult} /> : null}
@@ -459,6 +466,102 @@ export default function DashboardPage() {
           ) : null}
         </>
       ) : null}
+    </section>
+  );
+}
+
+function GmailWorkerPanel({ status }: { status: GmailInboundStatus }) {
+  const cycle = status.last_cycle;
+  const stateLabel =
+    status.worker_state === "active"
+      ? "Surveillance active"
+      : status.worker_state === "attention"
+        ? "Attention requise"
+        : "Desactive";
+  const nextSyncLabel =
+    status.seconds_until_next_sync !== null && status.seconds_until_next_sync !== undefined
+      ? `dans ${formatDuration(status.seconds_until_next_sync)}`
+      : formatDateTime(status.next_sync_at);
+  const cycleMessage = cycle
+    ? `${cycle.accounts_synced}/${cycle.accounts_checked} compte(s), ${cycle.synced_messages} mail(s) lu(s), ${cycle.negative_responses_detected} refus detecte(s), ${cycle.autopilot_sent_count} relance(s) envoyee(s).`
+    : "Aucun passage automatique enregistre encore.";
+
+  return (
+    <section className={`gmail-worker-card gmail-worker-card--${status.worker_state}`}>
+      <div className="gmail-worker-card__header">
+        <div>
+          <p className="eyebrow">Gmail / IA 24-7</p>
+          <h2>{stateLabel}</h2>
+          <p>{status.worker_message ?? "TENNET surveille les reponses Uber en arriere-plan."}</p>
+        </div>
+        <StatusBadge
+          status={
+            status.worker_state === "active"
+              ? "active"
+              : status.worker_state === "attention"
+                ? "manual_review"
+                : "disabled"
+          }
+        />
+      </div>
+
+      <div className="gmail-worker-grid">
+        <div>
+          <span>Comptes Gmail</span>
+          <strong>{status.connected_accounts_count}</strong>
+          <small>
+            {status.connected_account_emails.length > 0
+              ? status.connected_account_emails.join(", ")
+              : "Aucun compte connecte"}
+          </small>
+        </div>
+        <div>
+          <span>Dernier passage</span>
+          <strong>{formatDateTime(cycle?.created_at ?? status.last_success_at ?? status.last_sync_at)}</strong>
+          <small>{cycleMessage}</small>
+        </div>
+        <div>
+          <span>Prochain passage</span>
+          <strong>{status.auto_sync_enabled ? nextSyncLabel : "sync automatique off"}</strong>
+          <small>Intervalle: {status.auto_sync_interval_seconds ? formatDuration(status.auto_sync_interval_seconds) : "-"}</small>
+        </div>
+        <div>
+          <span>Relances</span>
+          <strong>{cycle ? cycle.autopilot_sent_count : 0} envoyee(s)</strong>
+          <small>
+            {cycle
+              ? `${cycle.autopilot_skipped_count} bloquee(s), ${cycle.autopilot_failed_count} erreur(s)`
+              : "En attente du prochain cycle"}
+          </small>
+        </div>
+      </div>
+
+      <div className="gmail-worker-flags">
+        <span className={status.ai_gmail_analysis_enabled ? "flag flag--ok" : "flag flag--warn"}>
+          IA Gmail {status.ai_gmail_analysis_enabled ? "active" : "inactive"}
+        </span>
+        <span className={status.autopilot_followups_enabled ? "flag flag--ok" : "flag flag--warn"}>
+          Relances {status.autopilot_followups_enabled ? "activees" : "desactivees"}
+        </span>
+        <span className={status.autopilot_appeals_enabled ? "flag flag--ok" : "flag flag--warn"}>
+          Appels {status.autopilot_appeals_enabled ? "actifs" : "desactives"}
+        </span>
+        <span className={status.autopilot_initial_claims_enabled ? "flag flag--ok" : "flag flag--warn"}>
+          Nouveaux dossiers {status.autopilot_initial_claims_enabled ? "automatiques" : "non automatiques"}
+        </span>
+        {status.autopilot_require_complete_restaurant_signature ? (
+          <span className="flag flag--ok">Signature restaurant obligatoire</span>
+        ) : null}
+      </div>
+
+      {cycle?.errors.length ? (
+        <div className="gmail-worker-errors">
+          {cycle.errors.map((error) => (
+            <span key={error}>{error}</span>
+          ))}
+        </div>
+      ) : null}
+      {status.last_error ? <p className="muted">Derniere erreur sync: {status.last_error}</p> : null}
     </section>
   );
 }
@@ -823,6 +926,23 @@ function countNextActions(nextActions: WorkspaceNextActionsResponse): number {
     nextActions.high_value.length +
     nextActions.this_week.length
   );
+}
+
+function formatDuration(totalSeconds: number): string {
+  if (!Number.isFinite(totalSeconds) || totalSeconds < 0) {
+    return "-";
+  }
+  if (totalSeconds < 60) {
+    return `${Math.round(totalSeconds)} s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60);
+  if (minutes < 60) {
+    return seconds > 0 ? `${minutes} min ${seconds} s` : `${minutes} min`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0 ? `${hours} h ${remainingMinutes} min` : `${hours} h`;
 }
 
 function formatPercent(value: string | number | null): string {

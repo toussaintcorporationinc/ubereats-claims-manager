@@ -1,3 +1,4 @@
+import json
 from collections.abc import Generator
 from datetime import timedelta
 from decimal import Decimal
@@ -380,6 +381,75 @@ def test_inbound_status_connected_and_not_connected(
     connected_response = client.get("/v1/email/gmail/inbound/status")
     assert connected_response.status_code == 200
     assert connected_response.json()["connected"] is True
+
+
+def test_inbound_status_exposes_last_auto_worker_cycle(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS", "300")
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_FOLLOWUPS_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id, email_address="first@example.com")
+    connect_gmail_account(db_session, owner.id, email_address="second@example.com")
+    account = get_active_account(db_session, owner.id)
+    assert account is not None
+    db_session.add(
+        GmailSyncState(
+            email_account_id=account.id,
+            status="idle",
+            last_sync_at=utc_now(),
+            last_success_at=utc_now(),
+        )
+    )
+    db_session.add(
+        AuditLog(
+            user_id=None,
+            entity_type="gmail_auto_sync",
+            entity_id=0,
+            action="cycle_completed",
+            new_value=json.dumps(
+                {
+                    "accounts_checked": 2,
+                    "accounts_synced": 2,
+                    "accounts_skipped": 0,
+                    "synced_messages": 42,
+                    "applied_reviews": 4,
+                    "negative_responses_detected": 3,
+                    "autopilot_sent_count": 2,
+                    "autopilot_skipped_count": 1,
+                    "autopilot_failed_count": 0,
+                    "workspace_machine_runs": 1,
+                    "errors": [],
+                }
+            ),
+        )
+    )
+    db_session.commit()
+
+    response = client.get("/v1/email/gmail/inbound/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["worker_state"] == "active"
+    assert payload["connected_accounts_count"] == 2
+    assert payload["auto_sync_enabled"] is True
+    assert payload["autopilot_enabled"] is True
+    assert payload["autopilot_followups_enabled"] is True
+    assert payload["autopilot_appeals_enabled"] is True
+    assert payload["last_cycle"]["accounts_checked"] == 2
+    assert payload["last_cycle"]["synced_messages"] == 42
+    assert payload["last_cycle"]["negative_responses_detected"] == 3
+    assert payload["last_cycle"]["autopilot_sent_count"] == 2
+    assert payload["seconds_until_next_sync"] is not None
 
 
 def test_sync_refused_if_email_provider_disabled(

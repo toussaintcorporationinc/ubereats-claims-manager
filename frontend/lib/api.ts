@@ -427,11 +427,43 @@ export type GmailDraftSendResponse = {
   sent_at: string | null;
 };
 
+export type GmailWorkerCycleSummary = {
+  created_at: string;
+  accounts_checked: number;
+  accounts_synced: number;
+  accounts_skipped: number;
+  synced_messages: number;
+  applied_reviews: number;
+  negative_responses_detected: number;
+  autopilot_sent_count: number;
+  autopilot_skipped_count: number;
+  autopilot_failed_count: number;
+  workspace_machine_runs: number;
+  errors: string[];
+};
+
 export type GmailInboundStatus = {
   enabled: boolean;
   connected: boolean;
+  auto_sync_enabled: boolean;
+  auto_sync_interval_seconds: number | null;
+  auto_sync_run_autopilot: boolean;
+  auto_sync_run_workspace_machine: boolean;
+  autopilot_enabled: boolean;
+  autopilot_initial_claims_enabled: boolean;
+  autopilot_followups_enabled: boolean;
+  autopilot_appeals_enabled: boolean;
+  autopilot_require_complete_restaurant_signature: boolean;
+  ai_gmail_analysis_enabled: boolean;
+  connected_accounts_count: number;
+  connected_account_emails: string[];
   last_sync_at: string | null;
   last_success_at: string | null;
+  next_sync_at: string | null;
+  seconds_until_next_sync: number | null;
+  worker_state: "active" | "attention" | "disabled" | string;
+  worker_message: string | null;
+  last_cycle: GmailWorkerCycleSummary | null;
   status: GmailSyncStatus | null;
   last_error: string | null;
 };

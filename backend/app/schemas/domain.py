@@ -755,6 +755,21 @@ class GmailDraftSendResponse(BaseModel):
     sent_at: datetime | None
 
 
+class GmailWorkerCycleSummary(BaseModel):
+    created_at: datetime
+    accounts_checked: int = 0
+    accounts_synced: int = 0
+    accounts_skipped: int = 0
+    synced_messages: int = 0
+    applied_reviews: int = 0
+    negative_responses_detected: int = 0
+    autopilot_sent_count: int = 0
+    autopilot_skipped_count: int = 0
+    autopilot_failed_count: int = 0
+    workspace_machine_runs: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
 class GmailInboundStatusResponse(BaseModel):
     enabled: bool
     connected: bool
@@ -763,11 +778,20 @@ class GmailInboundStatusResponse(BaseModel):
     auto_sync_run_autopilot: bool = False
     auto_sync_run_workspace_machine: bool = False
     autopilot_enabled: bool = False
+    autopilot_initial_claims_enabled: bool = False
     autopilot_followups_enabled: bool = False
     autopilot_appeals_enabled: bool = False
+    autopilot_require_complete_restaurant_signature: bool = True
     ai_gmail_analysis_enabled: bool = False
+    connected_accounts_count: int = 0
+    connected_account_emails: list[str] = Field(default_factory=list)
     last_sync_at: datetime | None
     last_success_at: datetime | None
+    next_sync_at: datetime | None = None
+    seconds_until_next_sync: int | None = None
+    worker_state: str = "disabled"
+    worker_message: str | None = None
+    last_cycle: GmailWorkerCycleSummary | None = None
     status: GmailSyncStatus | None
     last_error: str | None
 

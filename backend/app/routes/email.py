@@ -1,3 +1,6 @@
+import json
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import and_, or_, select
@@ -15,6 +18,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.models import (
     ClaimOrder,
+    AuditLog,
     EmailAccount,
     EmailAccountRestaurantMapping,
     EmailDraft,
@@ -43,6 +47,7 @@ from app.schemas.domain import (
     GmailResponseAnalysisRead,
     GmailResponseAnalyzeRequest,
     GmailResponseAnalyzeResponse,
+    GmailWorkerCycleSummary,
     InboundEmailMessageRead,
     InboundManualLinkRequest,
     InboundMessagesResponse,
@@ -68,6 +73,71 @@ def get_gmail_provider() -> EmailProvider:
 
 def get_resend_provider() -> ResendEmailProvider:
     return ResendEmailProvider()
+
+
+def _as_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return 0
+    return 0
+
+
+def _as_error_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item)[:240] for item in value if item]
+    if isinstance(value, str) and value:
+        return [value[:240]]
+    return []
+
+
+def _as_aware_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _last_gmail_auto_sync_cycle(db: Session) -> GmailWorkerCycleSummary | None:
+    audit = db.scalar(
+        select(AuditLog)
+        .where(AuditLog.entity_type == "gmail_auto_sync")
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+    )
+    if audit is None:
+        return None
+
+    payload: dict[str, object] = {}
+    if audit.new_value:
+        try:
+            decoded = json.loads(audit.new_value)
+            if isinstance(decoded, dict):
+                payload = decoded
+        except json.JSONDecodeError:
+            payload = {}
+
+    return GmailWorkerCycleSummary(
+        created_at=audit.created_at,
+        accounts_checked=_as_int(payload.get("accounts_checked")),
+        accounts_synced=_as_int(payload.get("accounts_synced")),
+        accounts_skipped=_as_int(payload.get("accounts_skipped")),
+        synced_messages=_as_int(payload.get("synced_messages")),
+        applied_reviews=_as_int(payload.get("applied_reviews")),
+        negative_responses_detected=_as_int(payload.get("negative_responses_detected")),
+        autopilot_sent_count=_as_int(payload.get("autopilot_sent_count")),
+        autopilot_skipped_count=_as_int(payload.get("autopilot_skipped_count")),
+        autopilot_failed_count=_as_int(payload.get("autopilot_failed_count")),
+        workspace_machine_runs=_as_int(payload.get("workspace_machine_runs")),
+        errors=_as_error_list(payload.get("errors")),
+    )
 
 
 @router.get("/v1/email/gmail/status", response_model=GmailConnectionStatus)
@@ -525,10 +595,55 @@ def gmail_inbound_status(
 ) -> GmailInboundStatusResponse:
     settings = get_settings()
     connection_status = provider.get_connection_status(db, current_user)
-    account = get_active_gmail_account(db, current_user)
-    sync_state = None
-    if account is not None:
-        sync_state = db.scalar(select(GmailSyncState).where(GmailSyncState.email_account_id == account.id))
+    connected_accounts = get_connected_gmail_accounts(db, current_user)
+    account_ids = [account.id for account in connected_accounts]
+    sync_states = (
+        list(db.scalars(select(GmailSyncState).where(GmailSyncState.email_account_id.in_(account_ids))).all())
+        if account_ids
+        else []
+    )
+    latest_sync_state = max(
+        sync_states,
+        key=lambda item: item.last_sync_at or item.last_success_at or item.updated_at,
+        default=None,
+    )
+    last_cycle = _last_gmail_auto_sync_cycle(db)
+    latest_sync_at = _as_aware_utc(max((state.last_sync_at for state in sync_states if state.last_sync_at), default=None))
+    latest_success_at = _as_aware_utc(max((state.last_success_at for state in sync_states if state.last_success_at), default=None))
+    base_time = latest_success_at or latest_sync_at or _as_aware_utc(last_cycle.created_at if last_cycle else None)
+    interval_seconds = settings.gmail_inbound_auto_sync_interval_seconds
+    next_sync_at = base_time + timedelta(seconds=interval_seconds) if base_time and settings.gmail_inbound_auto_sync_enabled else None
+    now = utc_now()
+    seconds_until_next_sync = None
+    if next_sync_at is not None:
+        seconds_until_next_sync = max(0, int((next_sync_at - now).total_seconds()))
+
+    has_cycle_errors = bool(last_cycle and last_cycle.errors)
+    has_sync_errors = any(state.last_error for state in sync_states)
+    overdue = (
+        next_sync_at is not None
+        and settings.gmail_inbound_auto_sync_enabled
+        and now > next_sync_at + timedelta(seconds=interval_seconds * 2)
+    )
+    if not settings.email_provider_enabled or not settings.gmail_inbound_sync_enabled:
+        worker_state = "disabled"
+        worker_message = "Lecture Gmail desactivee sur cet environnement."
+    elif not connection_status.connected or not connected_accounts:
+        worker_state = "attention"
+        worker_message = "Aucun compte Gmail connecte."
+    elif not settings.gmail_inbound_auto_sync_enabled:
+        worker_state = "attention"
+        worker_message = "Sync Gmail automatique desactivee."
+    elif has_cycle_errors or has_sync_errors:
+        worker_state = "attention"
+        worker_message = "Dernier passage Gmail avec erreur a verifier."
+    elif overdue:
+        worker_state = "attention"
+        worker_message = "Le worker Gmail semble en retard."
+    else:
+        worker_state = "active"
+        worker_message = "TENNET surveille Gmail automatiquement."
+
     return GmailInboundStatusResponse(
         enabled=settings.email_provider_enabled and settings.gmail_inbound_sync_enabled,
         connected=connection_status.connected,
@@ -537,13 +652,25 @@ def gmail_inbound_status(
         auto_sync_run_autopilot=settings.gmail_inbound_auto_sync_run_autopilot,
         auto_sync_run_workspace_machine=settings.gmail_inbound_auto_sync_run_workspace_machine,
         autopilot_enabled=settings.autopilot_enabled,
+        autopilot_initial_claims_enabled=settings.autopilot_initial_claims_enabled,
         autopilot_followups_enabled=settings.autopilot_followups_enabled,
         autopilot_appeals_enabled=settings.autopilot_appeals_enabled,
+        autopilot_require_complete_restaurant_signature=settings.autopilot_require_complete_restaurant_signature,
         ai_gmail_analysis_enabled=settings.ai_gmail_analysis_enabled,
-        last_sync_at=sync_state.last_sync_at if sync_state else None,
-        last_success_at=sync_state.last_success_at if sync_state else None,
-        status=sync_state.status if sync_state else None,
-        last_error=sync_state.last_error if sync_state else None,
+        connected_accounts_count=len(connected_accounts),
+        connected_account_emails=[
+            account.email_address or f"Compte Gmail #{account.id}"
+            for account in connected_accounts
+        ],
+        last_sync_at=latest_sync_at,
+        last_success_at=latest_success_at,
+        next_sync_at=next_sync_at,
+        seconds_until_next_sync=seconds_until_next_sync,
+        worker_state=worker_state,
+        worker_message=worker_message,
+        last_cycle=last_cycle,
+        status=latest_sync_state.status if latest_sync_state else None,
+        last_error=next((state.last_error for state in sync_states if state.last_error), None),
     )
 
 
