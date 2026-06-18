@@ -65,6 +65,7 @@ class GmailInboundAutoSyncService:
         accounts = list(db.scalars(self.active_accounts_statement()).all())
         users_needing_workspace_machine: dict[int, User] = {}
         for account in accounts:
+            account_id = account.id
             user = db.get(User, account.user_id)
             if user is None or not user.active or user.role == "staff":
                 result.accounts_skipped += 1
@@ -95,10 +96,12 @@ class GmailInboundAutoSyncService:
                 result.accounts_synced += 1
                 users_needing_workspace_machine[user.id] = user
             except EmailProviderError as exc:
-                result.errors.append(f"email_account:{account.id}:{exc.message}")
+                db.rollback()
+                result.errors.append(f"email_account:{account_id}:{exc.message}")
             except Exception as exc:  # noqa: BLE001 - background sync must not kill the scheduler loop.
-                logger.exception("Gmail auto-sync failed for account %s", account.id)
-                result.errors.append(f"email_account:{account.id}:{exc}")
+                db.rollback()
+                logger.exception("Gmail auto-sync failed for account %s", account_id)
+                result.errors.append(f"email_account:{account_id}:{str(exc)[:200]}")
 
         if self.settings.gmail_inbound_auto_sync_run_workspace_machine:
             for user in users_needing_workspace_machine.values():

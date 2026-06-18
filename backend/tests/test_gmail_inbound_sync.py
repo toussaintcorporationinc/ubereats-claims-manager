@@ -1353,6 +1353,60 @@ def test_ai_gmail_payment_confirmed_requires_amount(
     get_settings.cache_clear()
 
 
+def test_ai_gmail_long_unlinked_reason_is_truncated(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    long_reason = "mixed_signals_requiring_manual_review_" + ("very_long_reason_" * 10)
+
+    def fake_ai_gmail(*_args, **_kwargs):
+        return AIGmailClassification(
+            review_type="manual_review",
+            confidence=Decimal("0.91"),
+            reason=long_reason,
+            detected_amount=None,
+            evidence_requested=False,
+            notes="Message ambigu a verifier.",
+        )
+
+    monkeypatch.setattr(
+        gmail_intelligence_service.OpenAIStructuredAnalysisService,
+        "analyze_gmail_message",
+        fake_ai_gmail,
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-ai-unlinked-long-reason",
+            thread_id="thread-ai-unlinked-long-reason",
+            body_text="After another review, the context is unclear and needs a merchant review.",
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    inbound_message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-ai-unlinked-long-reason")
+    )
+    assert inbound_message is not None
+    analysis = db_session.scalar(
+        select(GmailResponseAnalysis).where(GmailResponseAnalysis.inbound_message_id == inbound_message.id)
+    )
+    assert analysis is not None
+    assert analysis.status == "manual_review"
+    assert analysis.reason is not None
+    assert analysis.reason.startswith("message_not_linked_to_order:ai:mixed_signals")
+    assert len(analysis.reason) == 100
+    get_settings.cache_clear()
+
+
 def test_existing_unlinked_uber_message_is_relinked_on_next_sync(
     client: TestClient,
     db_session: Session,
