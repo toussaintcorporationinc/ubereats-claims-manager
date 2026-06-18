@@ -181,7 +181,7 @@ class GmailInboundAutoSyncService:
                     trigger="manual",
                     sync_gmail=False,
                     run_autopilot=self.settings.gmail_inbound_auto_sync_run_autopilot,
-                    run_historical_cleanup=True,
+                    run_historical_cleanup=False,
                 )
             )
         except Exception as exc:  # noqa: BLE001 - background recovery must not stop Gmail sync cycles.
