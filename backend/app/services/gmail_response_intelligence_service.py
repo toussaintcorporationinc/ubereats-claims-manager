@@ -27,6 +27,7 @@ AUTO_APPLY_REVIEW_TYPES = {
 }
 MIN_AUTO_APPLY_CONFIDENCE = Decimal("0.70")
 MAX_NOTES_LENGTH = 1200
+MAX_REASON_LENGTH = 100
 
 
 @dataclass(frozen=True)
@@ -118,7 +119,7 @@ class GmailResponseIntelligenceService:
 
         if message.match_status != "linked" or order is None:
             analysis.status = "manual_review"
-            analysis.reason = f"message_not_linked_to_order:{classification.reason}"
+            analysis.reason = limit_reason(f"message_not_linked_to_order:{classification.reason}")
             analysis.error_message = None
             db.flush()
             return analysis
@@ -416,7 +417,7 @@ class GmailResponseIntelligenceService:
         analysis.recommended_review_type = classification.review_type
         analysis.status = "manual_review" if classification.review_type == "manual_review" else "analyzed"
         analysis.confidence_score = classification.confidence_score
-        analysis.reason = classification.reason
+        analysis.reason = limit_reason(classification.reason)
         analysis.detected_amount = classification.detected_amount
         analysis.expected_payment_date = None
         analysis.evidence_requested = classification.evidence_requested
@@ -647,6 +648,11 @@ def build_notes(prefix: str, message: InboundEmailMessage, matches: dict[str, li
 
 def limited_note(prefix: str, note: str | None) -> str:
     return f"{prefix} {note or ''}".strip()[:MAX_NOTES_LENGTH]
+
+
+def limit_reason(reason: str | None) -> str:
+    value = (reason or "unknown").strip() or "unknown"
+    return value[:MAX_REASON_LENGTH]
 
 
 def clean_human_snippet(value: str) -> str:
