@@ -450,6 +450,12 @@ class GmailInboundSyncService:
         *,
         apply_reviews: bool,
     ) -> None:
+        if message.match_status == "ignored":
+            match = self.match_message(db, user, account, inbound_payload_from_message(message))
+            if match.order is not None and match.match_status == "linked":
+                self.record_linked_message(db, user, message, match.order, match_reason=match.match_reason)
+                result.linked_messages += 1
+            return
         if message.match_status == "unlinked":
             match = self.match_message(db, user, account, inbound_payload_from_message(message))
             if match.order is not None and match.match_status == "linked":

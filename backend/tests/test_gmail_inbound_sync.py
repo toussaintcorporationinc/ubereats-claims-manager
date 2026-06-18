@@ -1716,6 +1716,61 @@ def test_starred_message_from_own_gmail_account_marks_known_thread_urgent_withou
     assert analysis_count == 0
 
 
+def test_existing_ignored_own_gmail_message_is_linked_when_starred_later(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id, "claims-owner@example.com")
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-OWN-STARRED-LATER",
+        thread_id="thread-own-starred-later",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-own-starred-later",
+            thread_id="thread-own-starred-later",
+            from_email="claims-owner@example.com",
+        )
+    ]
+    assert sync_inbound(client).status_code == 200
+    inbound_message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-own-starred-later")
+    )
+    assert inbound_message is not None
+    assert inbound_message.match_status == "ignored"
+
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-own-starred-later",
+            thread_id="thread-own-starred-later",
+            from_email="claims-owner@example.com",
+            provider_labels=["STARRED"],
+        )
+    ]
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    assert response.json()["linked_messages"] == 1
+    db_session.refresh(inbound_message)
+    assert inbound_message.order_id == order.id
+    assert inbound_message.match_status == "linked"
+    assert inbound_message.match_reason == "thread_id_match"
+    assert inbound_message.provider_labels_json == ["STARRED"]
+    analysis_count = db_session.scalar(
+        select(func.count(GmailResponseAnalysis.id)).where(
+            GmailResponseAnalysis.inbound_message_id == inbound_message.id
+        )
+    )
+    assert analysis_count == 0
+
+
 @pytest.mark.parametrize("final_status", ["accepted", "payment_confirmed"])
 def test_linked_inbound_does_not_modify_final_order_status(
     client: TestClient,
