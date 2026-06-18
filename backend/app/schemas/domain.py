@@ -758,6 +758,14 @@ class GmailDraftSendResponse(BaseModel):
 class GmailInboundStatusResponse(BaseModel):
     enabled: bool
     connected: bool
+    auto_sync_enabled: bool = False
+    auto_sync_interval_seconds: int | None = None
+    auto_sync_run_autopilot: bool = False
+    auto_sync_run_workspace_machine: bool = False
+    autopilot_enabled: bool = False
+    autopilot_followups_enabled: bool = False
+    autopilot_appeals_enabled: bool = False
+    ai_gmail_analysis_enabled: bool = False
     last_sync_at: datetime | None
     last_success_at: datetime | None
     status: GmailSyncStatus | None
@@ -2468,6 +2476,7 @@ class AutopilotSettingsRead(BaseModel):
     min_amount: Decimal
     max_amount_without_owner_review: Decimal
     require_complete_evidence: bool
+    require_complete_restaurant_signature: bool
     require_gmail_connected: bool
     cooldown_hours: int
     refusal_retry_enabled: bool

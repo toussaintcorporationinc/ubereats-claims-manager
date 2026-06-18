@@ -201,7 +201,12 @@ def connect_gmail_account(db_session: Session, user_id: int, email_address: str 
 def create_restaurant(client: TestClient, name: str = "Inbound Restaurant", token: str | None = None) -> dict:
     response = client.post(
         "/v1/restaurants",
-        json={"name": name, "sender_email": "claims@example.com"},
+        json={
+            "name": name,
+            "address": "108 Avenue du Marechal Foch, Meaux, 77100",
+            "phone_number": "0605807385",
+            "sender_email": "claims@example.com",
+        },
         headers=auth_headers(token) if token else None,
     )
     assert response.status_code == 201
@@ -353,8 +358,17 @@ def test_inbound_status_connected_and_not_connected(
 ) -> None:
     not_connected_response = client.get("/v1/email/gmail/inbound/status")
     assert not_connected_response.status_code == 200
-    assert not_connected_response.json()["enabled"] is True
-    assert not_connected_response.json()["connected"] is False
+    not_connected_payload = not_connected_response.json()
+    assert not_connected_payload["enabled"] is True
+    assert not_connected_payload["connected"] is False
+    assert not_connected_payload["auto_sync_enabled"] is False
+    assert not_connected_payload["auto_sync_interval_seconds"] == 300
+    assert not_connected_payload["auto_sync_run_autopilot"] is True
+    assert not_connected_payload["auto_sync_run_workspace_machine"] is True
+    assert not_connected_payload["autopilot_enabled"] is False
+    assert not_connected_payload["autopilot_followups_enabled"] is False
+    assert not_connected_payload["autopilot_appeals_enabled"] is False
+    assert not_connected_payload["ai_gmail_analysis_enabled"] is True
 
     owner = get_user(db_session, "owner@example.com")
     connect_gmail_account(db_session, owner.id)

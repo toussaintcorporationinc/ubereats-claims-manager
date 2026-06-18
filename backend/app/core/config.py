@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     gmail_inbound_max_messages_per_sync: int = 100
     gmail_starred_max_messages_per_sync: int = 1000
     gmail_inbound_auto_sync_enabled: bool = False
-    gmail_inbound_auto_sync_interval_seconds: int = 900
+    gmail_inbound_auto_sync_interval_seconds: int = 300
     gmail_inbound_auto_sync_initial_delay_seconds: int = 30
     gmail_inbound_auto_sync_run_autopilot: bool = True
     gmail_inbound_auto_sync_run_workspace_machine: bool = True
@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     autopilot_min_amount: float = 5
     autopilot_max_amount_without_owner_review: float = 150
     autopilot_require_complete_evidence: bool = True
+    autopilot_require_complete_restaurant_signature: bool = True
     autopilot_require_gmail_connected: bool = True
     autopilot_cooldown_hours: int = 48
     autopilot_refusal_retry_enabled: bool = True

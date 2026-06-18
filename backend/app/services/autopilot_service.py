@@ -89,6 +89,7 @@ def settings_snapshot() -> dict[str, object]:
         "min_amount": Decimal(str(settings.autopilot_min_amount)),
         "max_amount_without_owner_review": Decimal(str(settings.autopilot_max_amount_without_owner_review)),
         "require_complete_evidence": settings.autopilot_require_complete_evidence,
+        "require_complete_restaurant_signature": settings.autopilot_require_complete_restaurant_signature,
         "require_gmail_connected": settings.autopilot_require_gmail_connected,
         "cooldown_hours": settings.autopilot_cooldown_hours,
         "refusal_retry_enabled": settings.autopilot_refusal_retry_enabled,
@@ -446,6 +447,9 @@ def initial_claim_skip_reason(db: Session, order: ClaimOrder) -> str | None:
         return "not_ready_to_send"
     if order.restaurant is None or not order.restaurant.autopilot_enabled:
         return "restaurant_autopilot_disabled"
+    signature_reason = restaurant_signature_skip_reason(order.restaurant)
+    if signature_reason is not None:
+        return signature_reason
     if order.order_amount is None:
         return "missing_amount"
     amount = Decimal(order.order_amount)
@@ -472,6 +476,9 @@ def followup_skip_reason(db: Session, task: FollowUpTask) -> str | None:
     identity_reason = order_identity_skip_reason(order)
     if identity_reason is not None:
         return identity_reason
+    signature_reason = restaurant_signature_skip_reason(order.restaurant)
+    if signature_reason is not None:
+        return signature_reason
     positive_signal_reason = positive_payment_signal_skip_reason(db, order.id)
     if positive_signal_reason is not None:
         return positive_signal_reason
@@ -498,6 +505,9 @@ def appeal_skip_reason(db: Session, workflow: AppealWorkflow) -> str | None:
         identity_reason = order_identity_skip_reason(workflow.claim_order)
         if identity_reason is not None:
             return identity_reason
+        signature_reason = restaurant_signature_skip_reason(workflow.claim_order.restaurant)
+        if signature_reason is not None:
+            return signature_reason
         positive_signal_reason = positive_payment_signal_skip_reason(db, workflow.claim_order.id)
         if positive_signal_reason is not None:
             return positive_signal_reason
@@ -554,6 +564,27 @@ def order_identity_skip_reason(order: ClaimOrder) -> str | None:
         return "missing_order_date"
     if order.restaurant is None or not str(order.restaurant.name or "").strip():
         return "missing_restaurant_name"
+    return None
+
+
+def restaurant_signature_skip_reason(restaurant: Restaurant | None) -> str | None:
+    settings = get_settings()
+    if restaurant is None:
+        return "missing_restaurant"
+    public_fields = {
+        "restaurant_name": restaurant.name,
+        "restaurant_address": restaurant.address,
+        "restaurant_phone_number": restaurant.phone_number,
+        "restaurant_sender_email": restaurant.sender_email,
+    }
+    for value in public_fields.values():
+        if value and "tennet" in str(value).casefold():
+            return "restaurant_signature_contains_internal_brand"
+    if not settings.autopilot_require_complete_restaurant_signature:
+        return None
+    for key, value in public_fields.items():
+        if not str(value or "").strip():
+            return f"missing_{key}"
     return None
 
 
