@@ -99,6 +99,7 @@ Regles :
 - une reponse `refused` fiable peut declencher AutoPilot `appeals` si les flags, Gmail et le restaurant sont actifs ;
 - la sync peut etre planifiee cote backend avec `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true` ;
 - l'intervalle recommande est `GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS=300` pour un traitement 24/7 ;
+- en auto-sync, TENNET garde les cycles courts : les nouveaux mails et fils etoiles sont prioritaires, puis seuls `GMAIL_INBOUND_AUTO_SYNC_EXISTING_REPROCESS_LIMIT` anciens mails non revus sont repris par passage ;
 - un fil Gmail etoile est traite comme une relance urgente, mais aucun envoi automatique ne part sans client, numero de commande, date, restaurant et signature restaurant complete ;
 - aucune relance automatique n'est creee hors AutoPilot controle ;
 - les messages Gmail etoiles (`STARRED`, messages suivis) sont resynchronises avec `GMAIL_STARRED_MAX_MESSAGES_PER_SYNC` et un message deja connu est reanalyse si l'etoile est ajoutee apres coup ;

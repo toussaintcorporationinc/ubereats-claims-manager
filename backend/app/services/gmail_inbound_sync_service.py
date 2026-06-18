@@ -144,6 +144,7 @@ class GmailInboundSyncService:
         max_messages: int,
         analyze_responses: bool = True,
         apply_reviews: bool = True,
+        reprocess_existing_limit: int | None = None,
     ) -> GmailInboundSyncResult:
         sync_state = self.get_or_create_sync_state(db, account)
         sync_state.status = "running"
@@ -213,7 +214,7 @@ class GmailInboundSyncService:
                     account,
                     result,
                     apply_reviews=apply_reviews,
-                    max_messages=max_messages,
+                    max_messages=max_messages if reprocess_existing_limit is None else reprocess_existing_limit,
                     exclude_message_ids=created_message_ids,
                 )
 

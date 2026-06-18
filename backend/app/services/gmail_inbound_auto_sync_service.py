@@ -86,6 +86,7 @@ class GmailInboundAutoSyncService:
                     max_messages=self.settings.gmail_inbound_max_messages_per_sync,
                     analyze_responses=True,
                     apply_reviews=True,
+                    reprocess_existing_limit=self.settings.gmail_inbound_auto_sync_existing_reprocess_limit,
                 )
                 if (
                     self.settings.gmail_inbound_auto_sync_run_autopilot

@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     gmail_inbound_auto_sync_enabled: bool = False
     gmail_inbound_auto_sync_interval_seconds: int = 300
     gmail_inbound_auto_sync_initial_delay_seconds: int = 30
+    gmail_inbound_auto_sync_existing_reprocess_limit: int = 10
     gmail_inbound_auto_sync_run_autopilot: bool = True
     gmail_inbound_auto_sync_run_workspace_machine: bool = True
     gmail_support_sender_filter: str = "uber.com"

@@ -981,6 +981,44 @@ def test_auto_sync_recovers_stale_running_state(
     get_settings.cache_clear()
 
 
+def test_auto_sync_limits_existing_reprocess_backlog(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_EXISTING_REPROCESS_LIMIT", "3")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    recorded_limits: list[int] = []
+    original_reprocess = GmailInboundSyncService.reprocess_unreviewed_messages
+
+    def spy_reprocess(self, db, user, account, result, *, apply_reviews, max_messages, exclude_message_ids):
+        recorded_limits.append(max_messages)
+        return original_reprocess(
+            self,
+            db,
+            user,
+            account,
+            result,
+            apply_reviews=apply_reviews,
+            max_messages=max_messages,
+            exclude_message_ids=exclude_message_ids,
+        )
+
+    monkeypatch.setattr(GmailInboundSyncService, "reprocess_unreviewed_messages", spy_reprocess)
+
+    result = GmailInboundAutoSyncService(fake_gmail_provider).sync_due_accounts(db_session)
+
+    assert result.status == "success"
+    assert result.accounts_checked == 1
+    assert recorded_limits == [3]
+    get_settings.cache_clear()
+
+
 def test_auto_sync_service_processes_refusals_and_runs_autopilot(
     client: TestClient,
     db_session: Session,
