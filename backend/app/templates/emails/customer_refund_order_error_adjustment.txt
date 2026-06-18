@@ -1,9 +1,8 @@
 Bonjour,
 
-Je souhaite contester l'ajustement negatif applique sur la commande Uber Eats {uber_order_number}.
+Je souhaite contester l'ajustement negatif applique sur {order_identity_phrase}, restaurant {restaurant_name}.
 
-Restaurant : {restaurant_name}
-{customer_name_line}{order_date_line}Montant concerne : {customer_refund_amount} {currency}
+Montant concerne : {customer_refund_amount} {currency}
 
 La commande a ete preparee par le restaurant. Les elements disponibles sont joints pour verification.
 

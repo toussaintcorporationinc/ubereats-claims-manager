@@ -184,9 +184,10 @@ def build_template_context(order: ClaimOrder) -> dict[str, Any]:
     restaurant = order.restaurant
     return {
         "uber_order_number": order.uber_order_number,
+        "order_identity_phrase": build_order_identity_phrase(order),
         "restaurant_name": restaurant.name,
         "customer_name_line": optional_line("Client", order.customer_name),
-        "order_date_line": optional_line("Date de commande", order.order_date),
+        "order_date_line": optional_line("Date de commande", format_display_date(order.order_date)),
         "order_amount": format_amount(order.order_amount),
         "currency": order.currency,
         "accepted_line": optional_bool_line("Commande acceptee par le restaurant", order.accepted_by_restaurant),
@@ -195,6 +196,25 @@ def build_template_context(order: ClaimOrder) -> dict[str, Any]:
         "evidence_list": format_evidence_list(order),
         "signature": format_restaurant_signature(restaurant),
     }
+
+
+def build_order_identity_phrase(order: ClaimOrder) -> str:
+    phrase = "la commande Uber Eats"
+    if order.customer_name:
+        phrase += f" de {order.customer_name}"
+    phrase += f", numero de commande {order.uber_order_number}"
+    order_date = format_display_date(order.order_date)
+    if order_date:
+        phrase += f", du {order_date}"
+    return phrase
+
+
+def format_display_date(value: object | None) -> str:
+    if value is None or value == "":
+        return ""
+    if hasattr(value, "strftime"):
+        return value.strftime("%d/%m/%Y")
+    return str(value)
 
 
 def optional_line(label: str, value: object | None) -> str:

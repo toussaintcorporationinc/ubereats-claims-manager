@@ -19,7 +19,12 @@ from app.models import (
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.customer_refund_evidence_policy_service import evidence_policy_for_dispute
-from app.services.email_draft_service import format_restaurant_signature, optional_line
+from app.services.email_draft_service import (
+    build_order_identity_phrase,
+    format_display_date,
+    format_restaurant_signature,
+    optional_line,
+)
 from app.services.email_provider import EmailProvider, EmailProviderError
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates" / "emails"
@@ -506,9 +511,10 @@ def render_customer_refund_template(dispute: UberCustomerRefundDispute, order: C
     template = template_path.read_text(encoding="utf-8")
     return template.format(
         uber_order_number=order.uber_order_number,
+        order_identity_phrase=build_order_identity_phrase(order),
         restaurant_name=order.restaurant.name,
         customer_name_line=optional_line("Client", order.customer_name),
-        order_date_line=optional_line("Date de commande", order.order_date),
+        order_date_line=optional_line("Date de commande", format_display_date(order.order_date)),
         customer_refund_amount=f"{dispute.customer_refund_amount:.2f}",
         currency=dispute.currency,
         dispute_type=dispute.dispute_type,

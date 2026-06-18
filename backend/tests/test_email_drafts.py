@@ -181,6 +181,7 @@ def test_initial_claim_body_contains_required_claim_data(client: TestClient) -> 
     draft = create_initial_claim_draft(client, order["id"])
 
     assert "UBER-CONTENT" in draft["body"]
+    assert "commande Uber Eats de Client Email, numero de commande UBER-CONTENT, du 07/06/2026" in draft["body"]
     assert restaurant["name"] in draft["body"]
     assert "32.40 EUR" in draft["body"]
     assert "cancellation_proof.png" in draft["body"]

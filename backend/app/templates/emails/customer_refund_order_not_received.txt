@@ -1,11 +1,10 @@
 Bonjour,
 
-Je souhaite contester la demande de remboursement indiquant une commande non recue pour la commande Uber Eats {uber_order_number}.
+Je souhaite contester la demande de remboursement indiquant une commande non recue pour {order_identity_phrase}, restaurant {restaurant_name}.
 
-Restaurant : {restaurant_name}
-{customer_name_line}{order_date_line}Montant concerne : {customer_refund_amount} {currency}
+Montant concerne : {customer_refund_amount} {currency}
 
-La commande a ete preparee et remise selon le parcours normal. Les elements disponibles sont joints.
+La commande a ete preparee, emballee et remise selon le parcours normal. Les elements disponibles sont joints.
 
 Pieces jointes :
 {evidence_list}

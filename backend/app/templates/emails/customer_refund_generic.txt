@@ -1,9 +1,8 @@
 Bonjour,
 
-Je souhaite contester la demande de remboursement appliquee sur la commande Uber Eats {uber_order_number}.
+Je souhaite contester la demande de remboursement de {order_identity_phrase} pour le restaurant {restaurant_name}.
 
-Restaurant : {restaurant_name}
-{customer_name_line}{order_date_line}Montant concerne : {customer_refund_amount} {currency}
+Montant concerne : {customer_refund_amount} {currency}
 
 La commande a ete preparee par le restaurant. Les elements disponibles montrent que la commande etait conforme au moment de l'envoi.
 

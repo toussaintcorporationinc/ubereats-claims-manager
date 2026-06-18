@@ -1,9 +1,8 @@
 Bonjour,
 
-Je souhaite contester la demande de remboursement pour article manquant concernant la commande Uber Eats {uber_order_number}.
+Je souhaite contester la demande de remboursement pour article manquant concernant {order_identity_phrase}, restaurant {restaurant_name}.
 
-Restaurant : {restaurant_name}
-{customer_name_line}{order_date_line}Montant concerne : {customer_refund_amount} {currency}
+Montant concerne : {customer_refund_amount} {currency}
 
 La commande a ete preparee complete et les articles demandes ont ete places dans le sac avant l'envoi.
 Nous verifions les commandes avant remise au livreur.
