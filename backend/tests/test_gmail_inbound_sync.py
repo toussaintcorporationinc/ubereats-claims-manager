@@ -1810,6 +1810,80 @@ def test_starred_gmail_attachment_repairs_missing_order_identity(
     get_settings.cache_clear()
 
 
+def test_starred_gmail_attachment_creates_order_when_thread_is_not_linked(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id, "claims-owner@example.com")
+    restaurant = create_restaurant(client, name="Frit Dodo")
+
+    def fake_analyze_proof(self, **kwargs) -> AIProofExtraction:
+        return AIProofExtraction(
+            detected_evidence_type="ticket_agraphe",
+            case_type="refund",
+            restaurant_name="Frit Dodo",
+            customer_name="Inaki A",
+            order_number="BAEF7",
+            display_id="BAEF7",
+            order_date=date(2026, 6, 18),
+            order_amount=Decimal("19.99"),
+            currency="EUR",
+            confidence=Decimal("0.95"),
+            missing_fields=[],
+            notes="ticket lisible",
+        )
+
+    monkeypatch.setattr(OpenAIStructuredAnalysisService, "analyze_proof", fake_analyze_proof)
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-unlinked-starred-proof",
+            thread_id="thread-unlinked-proof",
+            from_email="claims-owner@example.com",
+            subject="Contestation remboursement de commande",
+            body_text="Bonjour je veux contester cette commande.",
+            provider_labels=["STARRED"],
+            attachments=[
+                InboundEmailAttachment(
+                    filename="preuve-annulation.jpg",
+                    mime_type="image/jpeg",
+                    content=b"fake-ticket-image",
+                )
+            ],
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["linked_messages"] == 1
+    assert payload["identity_repaired_messages"] == 1
+    order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "BAEF7"))
+    assert order is not None
+    assert order.restaurant_id == restaurant["id"]
+    assert order.customer_name == "Inaki A"
+    assert order.order_date == date(2026, 6, 18)
+    assert order.order_amount == Decimal("19.99")
+    assert order.status == "refused"
+    workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
+    assert workflow is not None
+    assert workflow.status == "appeal_needed"
+    message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-unlinked-starred-proof")
+    )
+    assert message is not None
+    assert message.order_id == order.id
+    assert message.match_status == "linked"
+    assert message.match_reason == "order_number_match"
+    get_settings.cache_clear()
+
+
 def test_existing_ignored_own_gmail_message_is_linked_when_starred_later(
     client: TestClient,
     db_session: Session,

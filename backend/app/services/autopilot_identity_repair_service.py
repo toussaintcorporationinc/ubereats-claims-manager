@@ -7,9 +7,10 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.auth import can_access_restaurant
 from app.models import AppealWorkflow, ClaimOrder, EmailThread, EvidenceFile, InboundEmailMessage, Restaurant, User
 from app.models.domain import utc_now
-from app.services.appeal_workflow_service import latest_analysis
+from app.services.appeal_workflow_service import ensure_workflow_for_claim_order, latest_analysis
 from app.services.audit import add_audit_log
 from app.services.email_provider import InboundEmailAttachment
 from app.services.file_storage_service import FileStorageError, resolve_evidence_path
@@ -27,6 +28,7 @@ MAX_IDENTITY_TEXT_CHARS = 18000
 IDENTITY_MESSAGE_LIMIT = 35
 MIN_AI_IDENTITY_CONFIDENCE = Decimal("0.65")
 MAX_PROOF_IMAGE_BYTES = 8 * 1024 * 1024
+REQUIRED_ATTACHMENT_IDENTITY_FIELDS = ("restaurant", "customer_name", "order_number", "order_date", "order_amount")
 
 
 def repair_order_identity_for_autopilot(db: Session, user: User, order: ClaimOrder) -> bool:
@@ -88,6 +90,69 @@ def repair_order_identity_from_inbound_attachments(
         new_value=snapshot_order_identity(order) | {"source": identity.source},
     )
     return True
+
+
+def find_or_create_order_from_inbound_attachments(
+    db: Session,
+    user: User,
+    attachments: list[InboundEmailAttachment],
+) -> ClaimOrder | None:
+    """Create or link a claim order from a starred Gmail proof image when no thread link exists yet."""
+    if not attachments:
+        return None
+    result = analyze_best_inbound_attachment(db, attachments)
+    if result is None or not ai_result_has_required_identity(result):
+        return None
+    restaurant = resolve_restaurant_from_ai_result(db, result)
+    if restaurant is None or not can_access_restaurant(db, user, restaurant.id):
+        return None
+
+    identity = identity_from_ai_result(result)
+    order = find_existing_order_for_identity(db, restaurant.id, identity)
+    created = False
+    if order is None:
+        order_number = clean_order_identifier(identity.order_number or identity.display_id)
+        if order_number is None:
+            return None
+        order = ClaimOrder(
+            restaurant_id=restaurant.id,
+            uber_order_number=order_number,
+            internal_reference=clean_order_identifier(identity.display_id),
+            customer_name=clean_customer_name(identity.customer_name),
+            order_date=identity.order_date,
+            order_amount=identity.order_amount,
+            currency=(identity.currency or "EUR")[:3].upper(),
+            accepted_by_restaurant=True,
+            prepared_before_cancellation=True,
+            loss_type=loss_type_from_ai_case_type(result.case_type),
+            status="refused",
+            notes="Dossier cree depuis un fil Gmail etoile et une preuve image lisible. Aucune donnee inventee.",
+        )
+        db.add(order)
+        db.flush()
+        created = True
+    else:
+        apply_identity_to_order(order, identity)
+        if order.status not in {"payment_confirmed", "accepted", "closed"}:
+            order.status = "refused"
+            order.updated_at = utc_now()
+        db.flush()
+
+    ensure_workflow_for_claim_order(db, order, user)
+    add_audit_log(
+        db,
+        entity_type="claim_order",
+        entity_id=order.id,
+        action="autopilot.order_created_from_starred_gmail_attachment" if created else "autopilot.order_linked_from_starred_gmail_attachment",
+        user_id=user.id,
+        new_value=snapshot_order_identity(order)
+        | {
+            "restaurant_id": restaurant.id,
+            "source": "openai_starred_gmail_attachment",
+            "case_type": result.case_type,
+        },
+    )
+    return order
 
 
 def repair_appeal_workflow_for_autopilot(db: Session, user: User, workflow: AppealWorkflow) -> bool:
@@ -256,6 +321,40 @@ def analyze_inbound_attachments_with_ai(
     return best
 
 
+def analyze_best_inbound_attachment(
+    db: Session,
+    attachments: list[InboundEmailAttachment],
+) -> AIProofExtraction | None:
+    service = OpenAIStructuredAnalysisService()
+    if not service.proof_enabled():
+        return None
+    restaurant_names = list(db.scalars(select(Restaurant.name).where(Restaurant.active.is_(True)).order_by(Restaurant.name)).all())
+    best: AIProofExtraction | None = None
+    best_score = -1
+    for attachment in attachments[:5]:
+        mime_type = attachment.mime_type or ""
+        if not mime_type.startswith("image/"):
+            continue
+        if len(attachment.content) > MAX_PROOF_IMAGE_BYTES:
+            continue
+        result = service.analyze_proof(
+            extracted_text="",
+            filename=attachment.filename,
+            restaurant_names=restaurant_names,
+            mime_type=mime_type,
+            image_bytes=attachment.content,
+        )
+        if result is None or result.confidence < MIN_AI_IDENTITY_CONFIDENCE:
+            continue
+        score = ai_result_identity_score(result)
+        if score > best_score:
+            best = result
+            best_score = score
+        if score >= len(REQUIRED_ATTACHMENT_IDENTITY_FIELDS):
+            return best
+    return best
+
+
 def identity_from_ai_result(result: AIProofExtraction) -> ResolvedOrderIdentity:
     return ResolvedOrderIdentity(
         order_number=result.order_number,
@@ -266,6 +365,78 @@ def identity_from_ai_result(result: AIProofExtraction) -> ResolvedOrderIdentity:
         currency=result.currency,
         source="openai_gmail_identity",
     )
+
+
+def ai_result_has_required_identity(result: AIProofExtraction) -> bool:
+    return all(
+        (
+            resolve_truthy(result.restaurant_name),
+            resolve_truthy(result.customer_name),
+            resolve_truthy(result.order_number or result.display_id),
+            result.order_date is not None,
+            result.order_amount is not None,
+        )
+    )
+
+
+def ai_result_identity_score(result: AIProofExtraction) -> int:
+    return sum(
+        1
+        for value in (
+            result.restaurant_name,
+            result.customer_name,
+            result.order_number or result.display_id,
+            result.order_date,
+            result.order_amount,
+        )
+        if resolve_truthy(value)
+    )
+
+
+def resolve_truthy(value: object) -> bool:
+    return bool(str(value or "").strip())
+
+
+def resolve_restaurant_from_ai_result(db: Session, result: AIProofExtraction) -> Restaurant | None:
+    if not result.restaurant_name:
+        return None
+    from app.services.evidence_ai_analysis_service import resolve_restaurant_display_name
+
+    resolved_name = resolve_restaurant_display_name(db, result.restaurant_name) or result.restaurant_name
+    normalized = resolved_name.strip().casefold()
+    for restaurant in db.scalars(select(Restaurant).where(Restaurant.active.is_(True))).all():
+        if restaurant.name and restaurant.name.strip().casefold() == normalized:
+            return restaurant
+    return None
+
+
+def find_existing_order_for_identity(db: Session, restaurant_id: int, identity: ResolvedOrderIdentity) -> ClaimOrder | None:
+    identifiers = [
+        candidate
+        for candidate in {
+            clean_order_identifier(identity.order_number),
+            clean_order_identifier(identity.display_id),
+        }
+        if candidate
+    ]
+    if not identifiers:
+        return None
+    return db.scalar(
+        select(ClaimOrder)
+        .where(
+            ClaimOrder.restaurant_id == restaurant_id,
+            (ClaimOrder.uber_order_number.in_(identifiers)) | (ClaimOrder.internal_reference.in_(identifiers)),
+        )
+        .order_by(ClaimOrder.id.desc())
+    )
+
+
+def loss_type_from_ai_case_type(case_type: str | None) -> str:
+    if case_type == "cancellation":
+        return "cancellation"
+    if case_type == "refund":
+        return "customer_refund"
+    return "gmail_starred_proof"
 
 
 def apply_identity_to_order(order: ClaimOrder, identity: ResolvedOrderIdentity) -> bool:

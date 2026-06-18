@@ -17,7 +17,10 @@ from app.models import (
 )
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
-from app.services.autopilot_identity_repair_service import repair_order_identity_from_inbound_attachments
+from app.services.autopilot_identity_repair_service import (
+    find_or_create_order_from_inbound_attachments,
+    repair_order_identity_from_inbound_attachments,
+)
 from app.services.autopilot_service import AutopilotError, run_autopilot
 from app.services.email_provider import EmailProvider, EmailProviderError, InboundEmailPayload
 from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
@@ -213,6 +216,17 @@ class GmailInboundSyncService:
                         )
                     elif repaired:
                         db.flush()
+                    elif self.link_or_create_from_starred_attachment(
+                        db,
+                        user,
+                        existing_message,
+                        payload,
+                        result,
+                        apply_reviews=apply_reviews,
+                        analyze_responses=analyze_responses,
+                        account=account,
+                    ):
+                        db.flush()
                     continue
                 inbound_message = self.create_inbound_message(db, user, account, payload)
                 created_message_ids.add(inbound_message.id)
@@ -222,6 +236,17 @@ class GmailInboundSyncService:
                     self.repair_identity_from_payload_attachments(db, user, inbound_message, payload, result)
                     if analyze_responses and should_analyze_message(inbound_message, account):
                         self.analyze_linked_message(db, user, inbound_message, result, apply_reviews=apply_reviews)
+                elif self.link_or_create_from_starred_attachment(
+                    db,
+                    user,
+                    inbound_message,
+                    payload,
+                    result,
+                    apply_reviews=apply_reviews,
+                    analyze_responses=analyze_responses,
+                    account=account,
+                ):
+                    result.linked_messages += 1
                 elif inbound_message.match_status == "ignored":
                     result.ignored_messages += 1
                 else:
@@ -481,6 +506,20 @@ class GmailInboundSyncService:
             if match.order is not None and match.match_status == "linked":
                 self.record_linked_message(db, user, message, match.order, match_reason=match.match_reason)
                 result.linked_messages += 1
+                if payload is not None:
+                    self.repair_identity_from_payload_attachments(db, user, message, payload, result)
+                return
+            if payload is not None and self.link_or_create_from_starred_attachment(
+                db,
+                user,
+                message,
+                payload,
+                result,
+                apply_reviews=apply_reviews,
+                analyze_responses=True,
+                account=account,
+            ):
+                result.linked_messages += 1
             return
         if message.match_status == "unlinked":
             match = self.match_message(db, user, account, inbound_payload_from_message(message))
@@ -490,6 +529,17 @@ class GmailInboundSyncService:
                 if payload is not None:
                     self.repair_identity_from_payload_attachments(db, user, message, payload, result)
                 self.analyze_linked_message(db, user, message, result, apply_reviews=apply_reviews)
+            elif payload is not None and self.link_or_create_from_starred_attachment(
+                db,
+                user,
+                message,
+                payload,
+                result,
+                apply_reviews=apply_reviews,
+                analyze_responses=True,
+                account=account,
+            ):
+                result.linked_messages += 1
             elif sender_matches_filter(message.from_email, get_settings().gmail_support_sender_filter):
                 self.analyze_unlinked_message(db, user, message, result)
             return
@@ -516,6 +566,30 @@ class GmailInboundSyncService:
         if repaired:
             result.identity_repaired_messages += 1
         return repaired
+
+    def link_or_create_from_starred_attachment(
+        self,
+        db: Session,
+        user: User,
+        message: InboundEmailMessage,
+        payload: InboundEmailPayload,
+        result: GmailInboundSyncResult,
+        *,
+        apply_reviews: bool,
+        analyze_responses: bool,
+        account: EmailAccount,
+    ) -> bool:
+        labels = normalize_gmail_labels(payload.provider_labels)
+        if "STARRED" not in labels or not payload.attachments:
+            return False
+        order = find_or_create_order_from_inbound_attachments(db, user, payload.attachments)
+        if order is None:
+            return False
+        self.record_linked_message(db, user, message, order, match_reason="order_number_match")
+        result.identity_repaired_messages += 1
+        if analyze_responses and should_analyze_message(message, account):
+            self.analyze_linked_message(db, user, message, result, apply_reviews=apply_reviews)
+        return True
 
     def create_inbound_message(
         self,
