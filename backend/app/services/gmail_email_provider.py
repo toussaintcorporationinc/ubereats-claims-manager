@@ -150,7 +150,7 @@ class GmailEmailProvider:
         gmail_subject = build_reply_subject(email_draft.subject, reply_context)
         raw_message = self.build_raw_message(account, email_draft, to_email, attachments, reply_context)
         try:
-            access_token = self.ensure_access_token(db, account)
+            access_token = self.access_token_for_external_call(db, account)
             response_payload = self.create_gmail_draft(
                 access_token,
                 raw_message,
@@ -200,7 +200,7 @@ class GmailEmailProvider:
         if not provider_draft.provider_draft_id:
             raise EmailProviderError("Gmail draft id is missing", 409)
 
-        access_token = self.ensure_access_token(db, account)
+        access_token = self.access_token_for_external_call(db, account)
         response_payload = self.send_gmail_draft(access_token, provider_draft.provider_draft_id)
         return EmailSendResult(
             provider_message_id=response_payload.get("id"),
@@ -223,7 +223,7 @@ class GmailEmailProvider:
         query: str,
         max_results: int,
     ) -> list[str]:
-        access_token = self.ensure_access_token(db, account)
+        access_token = self.access_token_for_external_call(db, account)
         params = urlencode({"q": query, "maxResults": max_results})
         payload = self.get_json(f"{GMAIL_MESSAGES_URL}?{params}", {"Authorization": f"Bearer {access_token}"})
         return [str(message["id"]) for message in payload.get("messages", []) if message.get("id")]
@@ -241,7 +241,7 @@ class GmailEmailProvider:
         account: EmailAccount,
         message_id: str,
     ) -> InboundEmailPayload:
-        access_token = self.ensure_access_token(db, account)
+        access_token = self.access_token_for_external_call(db, account)
         url = f"{GMAIL_MESSAGES_URL}/{quote(message_id, safe='')}?format=full"
         payload = self.get_json(url, {"Authorization": f"Bearer {access_token}"})
         return self.parse_gmail_message(payload)
@@ -251,7 +251,7 @@ class GmailEmailProvider:
         account = self.get_active_account(db, user.id)
         if account is None:
             raise EmailProviderError("Gmail account is not connected", 409)
-        access_token = self.ensure_access_token(db, account)
+        access_token = self.access_token_for_external_call(db, account)
         return self.get_json(
             f"{GMAIL_THREADS_URL}/{quote(thread_id, safe='')}?format=metadata",
             {"Authorization": f"Bearer {access_token}"},
@@ -378,6 +378,14 @@ class GmailEmailProvider:
         # locked while later Gmail API calls or AI analysis are running.
         db.commit()
         return refreshed_token
+
+    def access_token_for_external_call(self, db: Session, account: EmailAccount) -> str:
+        access_token = self.ensure_access_token(db, account)
+        # Accessing an expired EmailAccount can open a read transaction even when
+        # the token is still valid. Close that transaction before network calls
+        # so Gmail/OpenAI latency cannot pile up PostgreSQL locks.
+        db.commit()
+        return access_token
 
     def exchange_code_for_tokens(self, code: str) -> dict:
         settings = get_settings()

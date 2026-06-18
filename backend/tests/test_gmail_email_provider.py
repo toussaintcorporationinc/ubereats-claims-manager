@@ -411,6 +411,34 @@ def test_gmail_provider_commits_refreshed_access_token(
     assert account.access_token_encrypted == "encrypted-new-access-token"
 
 
+def test_gmail_provider_commits_before_external_call_even_with_valid_token(
+    db_session: Session,
+    gmail_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = User(email="valid-token-owner@example.com", full_name="Valid Token Owner", role="owner", hashed_password="hash")
+    db_session.add(owner)
+    db_session.commit()
+    db_session.refresh(owner)
+    account = connect_gmail_account(db_session, owner.id, "valid-token@example.com")
+    provider = GmailEmailProvider()
+    commits: list[bool] = []
+    original_commit = db_session.commit
+
+    monkeypatch.setattr(provider, "ensure_access_token", lambda db, account: "valid-access-token")
+
+    def commit_spy() -> None:
+        commits.append(True)
+        original_commit()
+
+    monkeypatch.setattr(db_session, "commit", commit_spy)
+
+    token = provider.access_token_for_external_call(db_session, account)
+
+    assert token == "valid-access-token"
+    assert commits
+
+
 def test_owner_can_map_restaurant_to_connected_gmail_account(
     client: TestClient,
     db_session: Session,
