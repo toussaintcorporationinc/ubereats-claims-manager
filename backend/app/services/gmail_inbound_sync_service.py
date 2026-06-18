@@ -582,6 +582,8 @@ class GmailInboundSyncService:
                 result.linked_messages += 1
                 if payload is not None:
                     self.repair_identity_from_payload_attachments(db, user, message, payload, result)
+                if should_analyze_message(message, account):
+                    self.analyze_linked_message(db, user, message, result, apply_reviews=apply_reviews)
                 return
             if payload is not None and self.link_or_create_from_starred_attachment(
                 db,
@@ -993,6 +995,9 @@ def same_email(left: str | None, right: str | None) -> bool:
 
 
 def should_analyze_message(message: InboundEmailMessage, account: EmailAccount) -> bool:
+    labels = {str(label).strip().casefold() for label in (message.provider_labels_json or [])}
+    if "starred" in labels:
+        return True
     return not same_email(message.from_email, account.email_address)
 
 
