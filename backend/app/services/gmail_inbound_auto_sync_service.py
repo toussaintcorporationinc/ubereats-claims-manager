@@ -148,12 +148,15 @@ class GmailInboundAutoSyncService:
         )
 
     def account_is_due(self, sync_state: GmailSyncState, now: datetime) -> bool:
-        if sync_state.status == "running":
-            return False
-        if sync_state.last_sync_at is None:
-            return True
-        last_sync_at = normalize_datetime(sync_state.last_sync_at)
+        last_sync_at = normalize_datetime(sync_state.last_sync_at) if sync_state.last_sync_at is not None else None
         interval_seconds = max(60, self.settings.gmail_inbound_auto_sync_interval_seconds)
+        if sync_state.status == "running":
+            if last_sync_at is None:
+                return True
+            stale_after_seconds = max(interval_seconds * 3, 900)
+            return now >= last_sync_at + timedelta(seconds=stale_after_seconds)
+        if last_sync_at is None:
+            return True
         return now >= last_sync_at + timedelta(seconds=interval_seconds)
 
     def add_account_result(self, result: GmailInboundAutoSyncResult, account_result: GmailInboundSyncResult) -> None:

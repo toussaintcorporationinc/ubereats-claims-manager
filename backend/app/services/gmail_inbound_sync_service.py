@@ -158,6 +158,10 @@ class GmailInboundSyncService:
             new_value={"lookback_days": lookback_days, "max_messages": max_messages},
         )
         db.flush()
+        # Do not hold the sync-state row lock while Gmail/OpenAI network calls run.
+        # Background cycles must stay short and recoverable instead of blocking
+        # every following sync attempt behind one long external request.
+        db.commit()
 
         query = f"newer_than:{lookback_days}d"
         result = GmailInboundSyncResult(status="success")

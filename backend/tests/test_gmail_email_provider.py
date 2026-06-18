@@ -1,5 +1,6 @@
 import base64
 from collections.abc import Generator
+from datetime import timedelta
 from email import policy
 from email.parser import BytesParser
 
@@ -371,6 +372,43 @@ def test_gmail_provider_uses_restaurant_mapped_account_for_draft(
     assert selected_account is not None
     assert selected_account.id == mapped_account.id
     assert selected_account.id != default_account.id
+
+
+def test_gmail_provider_commits_refreshed_access_token(
+    db_session: Session,
+    gmail_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = User(email="token-owner@example.com", full_name="Token Owner", role="owner", hashed_password="hash")
+    db_session.add(owner)
+    db_session.commit()
+    db_session.refresh(owner)
+    account = connect_gmail_account(db_session, owner.id, "token-refresh@example.com")
+    account.token_expires_at = utc_now() - timedelta(minutes=5)
+    db_session.commit()
+    provider = GmailEmailProvider()
+    commits: list[bool] = []
+    original_commit = db_session.commit
+
+    monkeypatch.setattr(provider.token_cipher, "decrypt", lambda value: "refresh-token" if value else "")
+    monkeypatch.setattr(provider.token_cipher, "encrypt", lambda value: f"encrypted-{value}")
+    monkeypatch.setattr(
+        provider,
+        "refresh_access_token",
+        lambda refresh_token: {"access_token": "new-access-token", "expires_in": 3600},
+    )
+
+    def commit_spy() -> None:
+        commits.append(True)
+        original_commit()
+
+    monkeypatch.setattr(db_session, "commit", commit_spy)
+
+    token = provider.ensure_access_token(db_session, account)
+
+    assert token == "new-access-token"
+    assert commits
+    assert account.access_token_encrypted == "encrypted-new-access-token"
 
 
 def test_owner_can_map_restaurant_to_connected_gmail_account(

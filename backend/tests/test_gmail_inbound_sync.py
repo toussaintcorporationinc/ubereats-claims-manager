@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -18,6 +19,7 @@ from app.models import (
     EmailDraft,
     EmailProviderDraft,
     EmailThread,
+    GmailSyncState,
     GmailResponseAnalysis,
     InboundEmailMessage,
     Restaurant,
@@ -851,6 +853,23 @@ def test_auto_sync_service_is_disabled_by_default(
 
     assert result.status == "disabled"
     assert result.accounts_checked == 0
+
+
+def test_auto_sync_recovers_stale_running_state(
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS", "300")
+    get_settings.cache_clear()
+    service = GmailInboundAutoSyncService(fake_gmail_provider)
+    now = utc_now()
+
+    recent_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=120))
+    stale_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=901))
+
+    assert service.account_is_due(recent_running, now) is False
+    assert service.account_is_due(stale_running, now) is True
+    get_settings.cache_clear()
 
 
 def test_auto_sync_service_processes_refusals_and_runs_autopilot(

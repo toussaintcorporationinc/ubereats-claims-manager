@@ -374,6 +374,9 @@ class GmailEmailProvider:
         account.token_expires_at = utc_now() + timedelta(seconds=max(expires_in - 60, 60))
         account.updated_at = utc_now()
         db.flush()
+        # Persist refreshed tokens immediately so the email_accounts row is not
+        # locked while later Gmail API calls or AI analysis are running.
+        db.commit()
         return refreshed_token
 
     def exchange_code_for_tokens(self, code: str) -> dict:
