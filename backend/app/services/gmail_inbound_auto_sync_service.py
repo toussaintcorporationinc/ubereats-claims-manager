@@ -162,7 +162,7 @@ class GmailInboundAutoSyncService:
         if sync_state.status == "running":
             if last_sync_at is None:
                 return True
-            stale_after_seconds = min(max(interval_seconds * 2, 120), 300)
+            stale_after_seconds = max(interval_seconds * 4, 1800)
             return now >= last_sync_at + timedelta(seconds=stale_after_seconds)
         if last_sync_at is None:
             return True
