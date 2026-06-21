@@ -107,8 +107,8 @@ export default function DashboardPage() {
     }
   }
 
-  async function runRecoveryRailImport(trigger: RecoveryMachineRailKey) {
-    const files = railFiles[trigger];
+  async function runRecoveryRailImport(trigger: RecoveryMachineRailKey, selectedFiles?: File[]) {
+    const files = selectedFiles ?? railFiles[trigger];
     if (files.length === 0) {
       setPilotError(
         new Error(
@@ -188,8 +188,8 @@ export default function DashboardPage() {
           <div className="home-machine-status">
             <strong>Passage complet automatique</strong>
             <p>
-              La synchronisation, les rapprochements et les relances autorisees tournent en arriere-plan. Le bouton
-              sert seulement a forcer tout de suite le traitement d'un depot de preuves.
+              La synchronisation, les rapprochements et les relances autorisees tournent en arriere-plan. Un depot de
+              preuves lance directement le traitement du parcours choisi.
             </p>
             {!canSeeBusinessMetrics ? (
               <Link href="/evidence-tasks" className="button button--hero">
@@ -204,8 +204,12 @@ export default function DashboardPage() {
             filesByRail={railFiles}
             runningRail={railRunning}
             busy={pilotRunning}
-            onFilesChange={(railKey, files) => setRailFiles((current) => ({ ...current, [railKey]: files }))}
-            onRun={(railKey) => void runRecoveryRailImport(railKey)}
+            onFilesChange={(railKey, files) => {
+              setRailFiles((current) => ({ ...current, [railKey]: files }));
+              if (files.length > 0) {
+                void runRecoveryRailImport(railKey, files);
+              }
+            }}
           />
         ) : null}
       </div>
@@ -555,14 +559,12 @@ function RecoveryMachineFocusPanel({
   runningRail,
   busy,
   onFilesChange,
-  onRun,
 }: {
   machine: RecoveryMachineResponse;
   filesByRail: Record<RecoveryMachineRailKey, File[]>;
   runningRail: RecoveryMachineRailKey | null;
   busy: boolean;
   onFilesChange: (railKey: RecoveryMachineRailKey, files: File[]) => void;
-  onRun: (railKey: RecoveryMachineRailKey) => void;
 }) {
   const refunds = machine.rails.find((rail) => rail.key === "refunds");
   const cancellations = machine.rails.find((rail) => rail.key === "cancellations");
@@ -579,7 +581,6 @@ function RecoveryMachineFocusPanel({
             running={runningRail === rail.key}
             disabled={busy || (runningRail !== null && runningRail !== rail.key)}
             onFilesChange={(files) => onFilesChange(rail.key, files)}
-            onRun={() => onRun(rail.key)}
           />
         ))}
       </div>
@@ -607,14 +608,12 @@ function RecoveryMachineLane({
   running,
   disabled,
   onFilesChange,
-  onRun,
 }: {
   rail: RecoveryMachineRail;
   files: File[];
   running: boolean;
   disabled: boolean;
   onFilesChange: (files: File[]) => void;
-  onRun: () => void;
 }) {
   const evidenceNeeded = stageByKey(rail, "evidence_needed");
   const evidenceReceived = stageByKey(rail, "evidence_received");
@@ -630,14 +629,12 @@ function RecoveryMachineLane({
           helper:
             "Photos de ticket agrafe, PDF ou ZIP lies aux remboursements client. TENNET rattache au bon client, commande, restaurant et dossier.",
           fileButtonLabel: "Deposer preuves de remboursement",
-          goLabel: "GO",
         }
       : {
           instruction: "IMPORTEZ LES PREUVES DE DEMANDE D'ANNULATION",
           helper:
             "Photos de ticket agrafe, preuves terrain, PDF ou ZIP lies aux annulations. TENNET verifie paiement, doublons et preuves avant action.",
           fileButtonLabel: "Deposer preuves d'annulation",
-          goLabel: "GO",
         };
 
   return (
@@ -676,16 +673,12 @@ function RecoveryMachineLane({
             type="file"
             multiple
             accept={acceptedTypes}
+            disabled={disabled || running}
             onChange={(event) => onFilesChange(Array.from(event.target.files ?? []))}
           />
-          <button
-            type="button"
-            className="button machine-go-button"
-            disabled={disabled || running || files.length === 0}
-            onClick={onRun}
-          >
-            {running ? "TENNET travaille" : config.goLabel}
-          </button>
+          <span className="machine-auto-run-note">
+            {running ? "TENNET travaille" : "Traitement automatique apres depot"}
+          </span>
         </div>
       </div>
       <div className="machine-lane__amounts">
