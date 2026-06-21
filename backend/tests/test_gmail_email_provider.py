@@ -411,6 +411,38 @@ def test_gmail_provider_commits_refreshed_access_token(
     assert account.access_token_encrypted == "encrypted-new-access-token"
 
 
+def test_gmail_provider_disconnects_revoked_authorization(
+    db_session: Session,
+    gmail_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = User(email="revoked-owner@example.com", full_name="Revoked Owner", role="owner", hashed_password="hash")
+    db_session.add(owner)
+    db_session.commit()
+    db_session.refresh(owner)
+    account = connect_gmail_account(db_session, owner.id, "revoked-token@example.com")
+    account.token_expires_at = utc_now() - timedelta(minutes=5)
+    db_session.commit()
+    provider = GmailEmailProvider()
+
+    monkeypatch.setattr(provider.token_cipher, "decrypt", lambda value: "refresh-token" if value else "")
+    monkeypatch.setattr(
+        provider,
+        "refresh_access_token",
+        lambda refresh_token: (_ for _ in ()).throw(
+            EmailProviderError("Gmail API error: invalid_grant - Token has been expired or revoked.", 502)
+        ),
+    )
+
+    with pytest.raises(EmailProviderError, match="Reconnect Gmail"):
+        provider.ensure_access_token(db_session, account)
+
+    db_session.refresh(account)
+    assert account.disconnected_at is not None
+    assert account.access_token_encrypted is None
+    assert account.refresh_token_encrypted is None
+
+
 def test_gmail_provider_commits_before_external_call_even_with_valid_token(
     db_session: Session,
     gmail_enabled: None,
