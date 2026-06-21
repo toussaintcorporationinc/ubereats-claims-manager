@@ -180,6 +180,7 @@ class GmailInboundSyncService:
         result = GmailInboundSyncResult(status="success")
         created_message_ids: set[int] = set()
         try:
+            order_identifier_index = self.build_order_identifier_index(db, user)
             starred_max_messages = max(0, min(max_messages, get_settings().gmail_starred_max_messages_per_sync))
             payloads = merge_unique_payloads(
                 self.fetch_payloads(db, user, account, query=query, max_messages=max_messages),
@@ -214,15 +215,16 @@ class GmailInboundSyncService:
                     if self.refresh_existing_message_from_payload(db, user, existing_message, payload):
                         created_message_ids.add(existing_message.id)
                         result.synced_messages += 1
-                        self.reprocess_existing_message(
-                            db,
-                            user,
-                            account,
-                            existing_message,
-                            result,
-                            apply_reviews=apply_reviews,
-                            payload=payload,
-                        )
+                        if analyze_responses:
+                            self.reprocess_existing_message(
+                                db,
+                                user,
+                                account,
+                                existing_message,
+                                result,
+                                apply_reviews=apply_reviews,
+                                payload=payload,
+                            )
                     elif repaired:
                         db.flush()
                     elif self.link_or_create_from_starred_attachment(
@@ -237,7 +239,13 @@ class GmailInboundSyncService:
                     ):
                         db.flush()
                     continue
-                inbound_message = self.create_inbound_message(db, user, account, payload)
+                inbound_message = self.create_inbound_message(
+                    db,
+                    user,
+                    account,
+                    payload,
+                    order_identifier_index=order_identifier_index,
+                )
                 created_message_ids.add(inbound_message.id)
                 result.synced_messages += 1
                 if inbound_message.match_status == "linked":
@@ -696,8 +704,10 @@ class GmailInboundSyncService:
         user: User,
         account: EmailAccount,
         payload: InboundEmailPayload,
+        *,
+        order_identifier_index: OrderIdentifierIndex | None = None,
     ) -> InboundEmailMessage:
-        match = self.match_message(db, user, account, payload)
+        match = self.match_message(db, user, account, payload, order_identifier_index=order_identifier_index)
         inbound_message = InboundEmailMessage(
             email_account_id=account.id,
             order_id=match.order.id if match.order else None,
