@@ -275,13 +275,14 @@ class GmailInboundSyncService:
                         self.analyze_unlinked_message(db, user, inbound_message, result)
 
             if analyze_responses:
+                reprocess_limit = max_messages if reprocess_existing_limit is None else reprocess_existing_limit
                 self.reprocess_unreviewed_messages(
                     db,
                     user,
                     account,
                     result,
                     apply_reviews=apply_reviews,
-                    max_messages=max_messages if reprocess_existing_limit is None else reprocess_existing_limit,
+                    max_messages=reprocess_limit,
                     exclude_message_ids=created_message_ids,
                 )
                 self.reprocess_starred_backlog(
@@ -290,7 +291,7 @@ class GmailInboundSyncService:
                     account,
                     result,
                     apply_reviews=apply_reviews,
-                    max_messages=starred_max_messages,
+                    max_messages=min(starred_max_messages, reprocess_limit),
                     exclude_message_ids=created_message_ids,
                 )
 
