@@ -2000,6 +2000,58 @@ def test_starred_gmail_text_creates_order_when_thread_is_not_linked(
     get_settings.cache_clear()
 
 
+def test_starred_gmail_text_creates_order_without_amount_or_date(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id, "tiramisumaisonfrance@gmail.com")
+    restaurant = create_restaurant(client, name="Big Chicken Burger")
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-unlinked-starred-text-no-amount",
+            thread_id="thread-unlinked-starred-text-no-amount",
+            from_email="tiramisumaisonfrance@gmail.com",
+            to_email="restaurantsfrance@uber.com",
+            subject="Contestation de remboursement de commande",
+            body_text=(
+                "Bonjour je veux contester la demande de remboursement de Yanis M "
+                "numero de commande 09891 car sa commande a bien ete preparee.\n\n"
+                "Big Chicken Burger\n"
+                "0605807385\n"
+                "tiramisumaisonfrance@gmail.com"
+            ),
+            provider_labels=["STARRED"],
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["linked_messages"] == 1
+    assert payload["identity_repaired_messages"] == 1
+    order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "09891"))
+    assert order is not None
+    assert order.restaurant_id == restaurant["id"]
+    assert order.customer_name == "Yanis M"
+    assert order.order_amount is None
+    assert order.order_date is None
+    assert order.status == "refused"
+    message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-unlinked-starred-text-no-amount")
+    )
+    assert message is not None
+    assert message.order_id == order.id
+    assert message.match_status == "linked"
+    get_settings.cache_clear()
+
+
 def test_starred_gmail_text_uses_ai_to_create_order_when_local_text_is_sparse(
     client: TestClient,
     db_session: Session,

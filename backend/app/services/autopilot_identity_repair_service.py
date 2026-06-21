@@ -515,7 +515,7 @@ def case_type_from_text(text: str, ai_case_type: str | None = None) -> str | Non
 def text_identity_has_required_fields(identity: ResolvedOrderIdentity) -> bool:
     return bool(
         clean_order_identifier(identity.order_number or identity.display_id)
-        and identity.order_amount is not None
+        and clean_customer_name(identity.customer_name)
     )
 
 
