@@ -219,6 +219,36 @@ def connect_gmail_account(db_session: Session, user_id: int, email_address: str 
     return account
 
 
+def gmail_text_payload(
+    message_id: str,
+    thread_id: str,
+    subject: str,
+    body: str,
+    *,
+    from_email: str,
+    to_email: str,
+    labels: list[str] | None = None,
+) -> dict:
+    encoded_body = base64.urlsafe_b64encode(body.encode("utf-8")).decode("ascii").rstrip("=")
+    return {
+        "id": message_id,
+        "threadId": thread_id,
+        "historyId": f"history-{message_id}",
+        "labelIds": labels or [],
+        "snippet": body[:120],
+        "internalDate": "1781200000000",
+        "payload": {
+            "mimeType": "text/plain",
+            "headers": [
+                {"name": "From", "value": from_email},
+                {"name": "To", "value": to_email},
+                {"name": "Subject", "value": subject},
+            ],
+            "body": {"data": encoded_body},
+        },
+    }
+
+
 def create_provider_draft_record(
     db_session: Session,
     draft_id: int,
@@ -454,6 +484,69 @@ def test_gmail_provider_lists_all_starred_pages(
     assert len(requested_urls) == 3
     assert "pageToken=page-2" in requested_urls[1]
     assert "pageToken=page-3" in requested_urls[2]
+
+
+def test_gmail_provider_enriches_starred_message_with_full_thread(
+    db_session: Session,
+    gmail_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = User(email="thread-owner@example.com", full_name="Thread Owner", role="owner", hashed_password="hash")
+    db_session.add(owner)
+    db_session.commit()
+    db_session.refresh(owner)
+    account = connect_gmail_account(db_session, owner.id, "tiramisumaisonfrance@gmail.com")
+    original_claim = gmail_text_payload(
+        "msg-original-claim",
+        "thread-starred-context",
+        "Contestation de remboursement de commande",
+        (
+            "Bonjour je veux contester la demande de remboursement de Yoann O "
+            "numéro de commande F93BA car sa commande a bien été préparée.\n\n"
+            "Montant concerné : 24.99 EUR\n\n"
+            "Frit Dodo"
+        ),
+        from_email="tiramisumaisonfrance@gmail.com",
+        to_email="restaurantsfrance@uber.com",
+        labels=["SENT"],
+    )
+    starred_refusal = gmail_text_payload(
+        "msg-starred-refusal",
+        "thread-starred-context",
+        "Re: Contestation de remboursement de commande",
+        "/// pas de remboursement possible pour ce dossier.",
+        from_email="restaurantsfrance@uber.com",
+        to_email="tiramisumaisonfrance@gmail.com",
+        labels=["INBOX", "STARRED"],
+    )
+    provider = GmailEmailProvider()
+    requested_urls: list[str] = []
+
+    monkeypatch.setattr(provider, "access_token_for_external_call", lambda db, account: "access-token")
+
+    def fake_get_json(url: str, headers: dict[str, str]) -> dict:
+        requested_urls.append(url)
+        if "/messages/msg-starred-refusal?format=full" in url:
+            return starred_refusal
+        if "/threads/thread-starred-context?format=full" in url:
+            return {"id": "thread-starred-context", "messages": [original_claim, starred_refusal]}
+        raise AssertionError(f"Unexpected Gmail URL: {url}")
+
+    monkeypatch.setattr(provider, "get_json", fake_get_json)
+
+    message = provider.get_message_for_account(db_session, account, "msg-starred-refusal")
+
+    assert message.provider_message_id == "msg-starred-refusal"
+    assert message.provider_thread_id == "thread-starred-context"
+    assert "STARRED" in message.provider_labels
+    assert message.body_text is not None
+    assert "Yoann O" in message.body_text
+    assert "F93BA" in message.body_text
+    assert "Frit Dodo" in message.body_text
+    assert "pas de remboursement" in message.body_text
+    assert message.snippet is not None
+    assert not message.snippet.startswith(" |")
+    assert any("/threads/thread-starred-context?format=full" in url for url in requested_urls)
 
 
 def test_gmail_provider_disconnects_revoked_authorization(

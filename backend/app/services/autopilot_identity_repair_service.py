@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date
 from decimal import Decimal, InvalidOperation
 
@@ -30,6 +31,17 @@ MIN_AI_IDENTITY_CONFIDENCE = Decimal("0.65")
 MAX_PROOF_IMAGE_BYTES = 8 * 1024 * 1024
 MAX_INBOUND_ATTACHMENT_AI_ANALYSES = 2
 REQUIRED_ATTACHMENT_IDENTITY_FIELDS = ("restaurant", "customer_name", "order_number", "order_date", "order_amount")
+INVALID_ORDER_IDENTIFIERS = {
+    "BODY",
+    "CORPS",
+    "EXTRAIT",
+    "FROM",
+    "MESSAGE",
+    "SNIPPET",
+    "SUBJECT",
+    "SUJET",
+    "THREAD",
+}
 
 
 def repair_order_identity_for_autopilot(db: Session, user: User, order: ClaimOrder) -> bool:
@@ -164,13 +176,13 @@ def find_or_create_order_from_starred_text(db: Session, user: User, text: str) -
         return None
     restaurant_names = known_active_restaurant_names(db)
     restaurant_name = extract_restaurant_name(text, restaurant_names)
-    local_order_number = extract_order_number(text)
-    local_amount = extract_amount(text)
+    local_order_number = extract_order_number_deep(text)
+    local_amount = extract_amount_deep(text)
     identity = ResolvedOrderIdentity(
         order_number=local_order_number,
         display_id=local_order_number,
-        customer_name=extract_customer_name(text),
-        order_date=extract_order_date(text),
+        customer_name=extract_customer_name_deep(text),
+        order_date=extract_order_date_deep(text),
         order_amount=local_amount,
         currency="EUR" if local_amount is not None else None,
         source="starred_gmail_thread_text",
@@ -183,8 +195,8 @@ def find_or_create_order_from_starred_text(db: Session, user: User, text: str) -
     )
     if ai_result is not None and ai_result.confidence >= MIN_AI_IDENTITY_CONFIDENCE:
         ai_identity = identity_from_ai_result(ai_result)
-        merge_identity(identity, ai_identity, prefer_display=True)
-        if ai_result.restaurant_name:
+        merge_identity_without_overriding_local_facts(identity, ai_identity)
+        if ai_result.restaurant_name and not restaurant_name:
             restaurant_name = ai_result.restaurant_name
         identity.source = "openai_starred_gmail_thread_text"
 
@@ -207,6 +219,27 @@ def find_or_create_order_from_starred_text(db: Session, user: User, text: str) -
         case_type=case_type_from_text(text, ai_result.case_type if ai_result else None),
     )
     return order
+
+
+def merge_identity_without_overriding_local_facts(
+    target: ResolvedOrderIdentity,
+    source: ResolvedOrderIdentity | None,
+) -> None:
+    """Let AI fill blanks, but never replace facts already read from Gmail text."""
+    if source is None:
+        return
+    if not target.customer_name and source.customer_name:
+        target.customer_name = source.customer_name
+    if not target.order_number and source.order_number:
+        target.order_number = source.order_number
+    if not target.display_id and source.display_id:
+        target.display_id = source.display_id
+    if not target.order_date and source.order_date:
+        target.order_date = source.order_date
+    if target.order_amount is None and source.order_amount is not None:
+        target.order_amount = source.order_amount
+    if not target.currency and source.currency:
+        target.currency = source.currency
 
 
 def repair_appeal_workflow_for_autopilot(db: Session, user: User, workflow: AppealWorkflow) -> bool:
@@ -251,16 +284,16 @@ def extract_identity_from_linked_text(db: Session, order: ClaimOrder) -> Resolve
     if not text:
         return identity
 
-    identity.customer_name = extract_customer_name(text)
-    order_number = extract_order_number(text)
+    identity.customer_name = extract_customer_name_deep(text)
+    order_number = extract_order_number_deep(text)
     if order_number:
         if is_uuid_like(order.uber_order_number):
             identity.display_id = order_number
         else:
             identity.order_number = order_number
             identity.display_id = order_number
-    identity.order_date = extract_order_date(text)
-    identity.order_amount = extract_amount(text)
+    identity.order_date = extract_order_date_deep(text)
+    identity.order_amount = extract_amount_deep(text)
     identity.currency = "EUR" if identity.order_amount is not None else None
 
     restaurant = extract_restaurant_name(text, known_restaurant_names(db, order))
@@ -765,6 +798,88 @@ def compact_text(text: str) -> str:
     return re.sub(r"[ \t\r\f\v]+", " ", text.replace("\xa0", " ")).strip()
 
 
+def normalize_search_text(text: str) -> str:
+    compacted = compact_text(text)
+    normalized = unicodedata.normalize("NFKD", compacted)
+    without_accents = "".join(char for char in normalized if not unicodedata.combining(char))
+    return without_accents.replace("’", "'").replace("`", "'")
+
+
+ORDER_NUMBER_LABEL_RE = r"(?:num\S{0,4}ro|numero|n\s*[°o])"
+ORDER_NUMBER_DELIMITER_RE = rf"(?:{ORDER_NUMBER_LABEL_RE}\s+(?:de\s+)?commande|\border\s*(?:id|number|no|#)|\bcommande\s*(?:id|number|no|#))"
+
+
+def extract_customer_name_deep(text: str) -> str | None:
+    normalized = normalize_search_text(text)
+    patterns = [
+        rf"(?:je\s+veux\s+)?contester\s+la\s+demande\s+de\s+remboursement\s+de\s+(.{{2,80}}?)(?:\s*,?\s*{ORDER_NUMBER_DELIMITER_RE}|\s+car\b|\s+pour\b)",
+        rf"(?:demande|contestation)\s+de\s+remboursement\s+de\s+commande\s+de\s+(.{{2,80}}?)(?:\s*,?\s*{ORDER_NUMBER_DELIMITER_RE}|\s+car\b|\s+pour\b)",
+        rf"(?:demande|contestation)\s+de\s+remboursement\s+de\s+(.{{2,80}}?)(?:\s*,?\s*{ORDER_NUMBER_DELIMITER_RE}|\s+car\b|\s+pour\b)",
+        rf"(?:je\s+veux\s+)?contester\s+l[' ]annulation\s+de\s+commande\s+de\s+(.{{2,80}}?)(?:\s*,?\s*{ORDER_NUMBER_DELIMITER_RE}|\s+car\b|\s+pour\b)",
+        rf"(?:annulation\s+de\s+commande|contestation\s+d[' ]annulation\s+de\s+commande)\s+de\s+(.{{2,80}}?)(?:\s*,?\s*{ORDER_NUMBER_DELIMITER_RE}|\s+car\b|\s+pour\b)",
+        rf"commande\s+uber\s+eats\s+de\s+(.{{2,80}}?)(?:\s*,?\s*{ORDER_NUMBER_DELIMITER_RE}|\s+du\b|\s+car\b)",
+        rf"commande\s+de\s+(.{{2,80}}?)(?:\s*,?\s*{ORDER_NUMBER_DELIMITER_RE}|\s+car\b|\s+pour\b)",
+        r"(?:client|nom\s+client|customer)\s*[:\-]\s*(.{2,80}?)(?:\n|,|;|$)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if not match:
+            continue
+        name = cleanup_name_candidate(match.group(1))
+        if name:
+            return name
+    return extract_customer_name(text)
+
+
+def extract_order_number_deep(text: str) -> str | None:
+    normalized = normalize_search_text(text)
+    patterns = [
+        rf"{ORDER_NUMBER_DELIMITER_RE}\s*[:#\-]?\s*([A-Z0-9][A-Z0-9\-]{{3,40}})",
+        r"\b[A-Z][A-Za-z]{1,30}\s+[A-Z]\.?\s+([A-Z0-9]{4,12})\b",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
+            identifier = clean_order_identifier(match.group(1))
+            if identifier:
+                return identifier
+    return extract_order_number(text)
+
+
+def extract_order_date_deep(text: str) -> date | None:
+    normalized = normalize_search_text(text)
+    for pattern in (r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b", r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b"):
+        match = re.search(pattern, normalized)
+        if not match:
+            continue
+        try:
+            if len(match.group(1)) == 4:
+                return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+            year = int(match.group(3))
+            if year < 100:
+                year += 2000
+            return date(year, int(match.group(2)), int(match.group(1)))
+        except ValueError:
+            continue
+    return extract_order_date(text)
+
+
+def extract_amount_deep(text: str) -> Decimal | None:
+    normalized = normalize_search_text(text)
+    patterns = [
+        r"(?:montant\s+(?:concerne|de\s+la\s+commande|commande)|montant\s+paye|total)\s*[:\-]?\s*(\d{1,5}(?:[,.]\d{1,2})?)\s*(?:eur|euro|euros|\u20ac)",
+        r"\b(\d{1,5}(?:[,.]\d{1,2})?)\s*(?:eur|\u20ac)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, normalized, flags=re.IGNORECASE)
+        if not match:
+            continue
+        try:
+            return abs(Decimal(match.group(1).replace(",", "."))).quantize(Decimal("0.01"))
+        except InvalidOperation:
+            continue
+    return extract_amount(text)
+
+
 def cleanup_name_candidate(value: str) -> str | None:
     cleaned = re.sub(r"\s+", " ", value).strip(" .,:;-")
     cleaned = re.sub(r"\b(num[eé]ro|numero|commande|order|uber|eats)\b.*$", "", cleaned, flags=re.IGNORECASE).strip(" .,:;-")
@@ -778,6 +893,8 @@ def clean_order_identifier(value: str | None) -> str | None:
         return None
     cleaned = re.sub(r"[^A-Z0-9\-]", "", value.upper()).strip("-")
     if len(cleaned) < 4 or len(cleaned) > 40:
+        return None
+    if cleaned in INVALID_ORDER_IDENTIFIERS:
         return None
     return cleaned
 

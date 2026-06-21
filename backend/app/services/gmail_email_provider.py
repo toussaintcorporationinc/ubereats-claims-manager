@@ -321,7 +321,85 @@ class GmailEmailProvider:
         url = f"{GMAIL_MESSAGES_URL}/{quote(message_id, safe='')}?format=full"
         payload = self.get_json(url, {"Authorization": f"Bearer {access_token}"})
         attachments = self.extract_inbound_attachments(access_token, payload)
-        return self.parse_gmail_message(payload, attachments=attachments)
+        message = self.parse_gmail_message(payload, attachments=attachments)
+        if "STARRED" in {str(label).strip().upper() for label in message.provider_labels} and message.provider_thread_id:
+            return self.enrich_starred_message_with_thread_context(access_token, message)
+        return message
+
+    def enrich_starred_message_with_thread_context(
+        self,
+        access_token: str,
+        message: InboundEmailPayload,
+    ) -> InboundEmailPayload:
+        """Give starred Gmail automations the whole thread, not only the starred message.
+
+        Gmail labels are applied to individual messages. In the mobile app the user
+        stars a conversation because the whole thread is urgent, but the starred
+        message may be a short Uber refusal. TENNET needs the original sent claim
+        in the same thread to recover customer/order identity before replying.
+        """
+        try:
+            thread_payload = self.get_json(
+                f"{GMAIL_THREADS_URL}/{quote(message.provider_thread_id, safe='')}?format=full",
+                {"Authorization": f"Bearer {access_token}"},
+            )
+        except EmailProviderError:
+            return message
+
+        messages = thread_payload.get("messages")
+        if not isinstance(messages, list) or not messages:
+            return message
+
+        body_chunks: list[str] = []
+        snippet_chunks: list[str] = []
+        attachments = list(message.attachments)
+        seen_attachment_keys = {
+            (attachment.filename, attachment.mime_type, len(attachment.content)) for attachment in attachments
+        }
+        total_attachment_bytes = sum(len(attachment.content) for attachment in attachments)
+        for item in messages:
+            if not isinstance(item, dict):
+                continue
+            parsed = self.parse_gmail_message(item, attachments=[])
+            if parsed.subject and parsed.subject not in body_chunks:
+                body_chunks.append(f"Subject: {parsed.subject}")
+            if parsed.from_email or parsed.to_email:
+                body_chunks.append(f"From: {parsed.from_email or ''} To: {parsed.to_email or ''}".strip())
+            if parsed.snippet:
+                snippet_chunks.append(parsed.snippet)
+            if parsed.body_text:
+                body_chunks.append(parsed.body_text)
+            if len(attachments) >= MAX_INBOUND_ATTACHMENTS:
+                continue
+            for attachment in self.extract_inbound_attachments(access_token, item):
+                key = (attachment.filename, attachment.mime_type, len(attachment.content))
+                if key in seen_attachment_keys:
+                    continue
+                if total_attachment_bytes + len(attachment.content) > MAX_INBOUND_ATTACHMENT_TOTAL_BYTES:
+                    break
+                seen_attachment_keys.add(key)
+                total_attachment_bytes += len(attachment.content)
+                attachments.append(attachment)
+                if len(attachments) >= MAX_INBOUND_ATTACHMENTS:
+                    break
+
+        thread_body = "\n\n--- Gmail thread message ---\n\n".join(chunk for chunk in body_chunks if chunk)
+        merged_body = "\n\n".join(chunk for chunk in [message.body_text, thread_body] if chunk)
+        merged_snippet = " | ".join(dict.fromkeys(chunk for chunk in [message.snippet or "", *snippet_chunks] if chunk))
+        return InboundEmailPayload(
+            provider_message_id=message.provider_message_id,
+            provider_thread_id=message.provider_thread_id,
+            gmail_history_id=message.gmail_history_id,
+            from_email=message.from_email,
+            to_email=message.to_email,
+            subject=message.subject,
+            snippet=merged_snippet[:2000] if merged_snippet else message.snippet,
+            body_text=merged_body[:20000] if merged_body else message.body_text,
+            received_at=message.received_at,
+            raw_headers=message.raw_headers,
+            provider_labels=message.provider_labels,
+            attachments=attachments,
+        )
 
     def remove_message_label_for_account(
         self,
