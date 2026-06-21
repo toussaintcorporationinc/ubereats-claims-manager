@@ -70,6 +70,22 @@ class GmailReplyContext:
     subject: str | None = None
 
 
+def inbound_message_has_label(message: InboundEmailMessage, label: str) -> bool:
+    expected = label.strip().casefold()
+    labels = {str(item).strip().casefold() for item in (message.provider_labels_json or [])}
+    return expected in labels
+
+
+def reply_context_from_inbound_message(message: InboundEmailMessage) -> GmailReplyContext:
+    headers = message.raw_headers_json or {}
+    return GmailReplyContext(
+        thread_id=message.provider_thread_id or "",
+        message_id=extract_header_value(headers, "message-id"),
+        references=extract_header_value(headers, "references"),
+        subject=message.subject,
+    )
+
+
 class GmailEmailProvider:
     provider = "gmail"
 
@@ -549,7 +565,7 @@ class GmailEmailProvider:
         if email_draft.order_id is None:
             return None
 
-        inbound_message = db.scalar(
+        inbound_messages = db.scalars(
             select(InboundEmailMessage)
             .where(
                 InboundEmailMessage.email_account_id == account.id,
@@ -557,16 +573,16 @@ class GmailEmailProvider:
                 InboundEmailMessage.provider == self.provider,
                 InboundEmailMessage.provider_thread_id.is_not(None),
             )
-            .order_by(InboundEmailMessage.id.desc())
-        )
+            .order_by(InboundEmailMessage.received_at.desc().nullslast(), InboundEmailMessage.id.desc())
+            .limit(50)
+        ).all()
+        starred_message = next((message for message in inbound_messages if inbound_message_has_label(message, "STARRED")), None)
+        if starred_message and starred_message.provider_thread_id:
+            return reply_context_from_inbound_message(starred_message)
+
+        inbound_message = inbound_messages[0] if inbound_messages else None
         if inbound_message and inbound_message.provider_thread_id:
-            headers = inbound_message.raw_headers_json or {}
-            return GmailReplyContext(
-                thread_id=inbound_message.provider_thread_id,
-                message_id=extract_header_value(headers, "message-id"),
-                references=extract_header_value(headers, "references"),
-                subject=inbound_message.subject,
-            )
+            return reply_context_from_inbound_message(inbound_message)
 
         email_thread = db.scalar(
             select(EmailThread)

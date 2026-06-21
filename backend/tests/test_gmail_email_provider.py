@@ -611,6 +611,67 @@ def test_real_gmail_provider_replies_in_existing_uber_thread(
     assert "<uber-reply-123@mail.gmail.com>" in parsed["References"]
 
 
+def test_real_gmail_provider_prefers_starred_thread_over_newer_unstarred_message(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    account = connect_gmail_account(db_session, owner.id, "claims-starred@example.com")
+    restaurant = create_restaurant(client)
+    draft_payload = create_ready_order_and_draft(client, restaurant["id"], "UBER-GMAIL-STARRED")
+    email_draft = db_session.get(EmailDraft, draft_payload["id"])
+    assert email_draft is not None
+    db_session.add_all(
+        [
+            InboundEmailMessage(
+                email_account_id=account.id,
+                order_id=email_draft.order_id,
+                provider="gmail",
+                provider_message_id="gmail-msg-starred-refusal",
+                provider_thread_id="gmail-thread-starred-refusal",
+                from_email="restaurantsfrance@uber.com",
+                to_email=account.email_address,
+                subject="Re: contestation remboursement de commande",
+                body_text="Nous ne pouvons pas rembourser cette commande.",
+                raw_headers_json={
+                    "message-id": "<starred-refusal@mail.gmail.com>",
+                    "references": "<first-claim-starred@mail.gmail.com>",
+                },
+                provider_labels_json=["STARRED"],
+                match_status="linked",
+                match_reason="thread_id_match",
+                received_at=utc_now() - timedelta(hours=2),
+            ),
+            InboundEmailMessage(
+                email_account_id=account.id,
+                order_id=email_draft.order_id,
+                provider="gmail",
+                provider_message_id="gmail-msg-newer-info",
+                provider_thread_id="gmail-thread-newer-info",
+                from_email="newsletter@example.com",
+                to_email=account.email_address,
+                subject="Information plus recente",
+                body_text="Message non urgent.",
+                raw_headers_json={"message-id": "<newer-info@mail.gmail.com>"},
+                provider_labels_json=[],
+                match_status="linked",
+                match_reason="thread_id_match",
+                received_at=utc_now(),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    context = GmailEmailProvider().find_reply_context(db_session, account, email_draft)
+
+    assert context is not None
+    assert context.thread_id == "gmail-thread-starred-refusal"
+    assert context.subject == "Re: contestation remboursement de commande"
+    assert context.message_id == "<starred-refusal@mail.gmail.com>"
+    assert context.references == "<first-claim-starred@mail.gmail.com>"
+
+
 def test_create_gmail_draft_refused_without_connected_account(
     client: TestClient,
     gmail_enabled: None,
