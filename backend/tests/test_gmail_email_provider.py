@@ -411,6 +411,51 @@ def test_gmail_provider_commits_refreshed_access_token(
     assert account.access_token_encrypted == "encrypted-new-access-token"
 
 
+def test_gmail_provider_lists_all_starred_pages(
+    db_session: Session,
+    gmail_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = User(email="paged-owner@example.com", full_name="Paged Owner", role="owner", hashed_password="hash")
+    db_session.add(owner)
+    db_session.commit()
+    db_session.refresh(owner)
+    account = connect_gmail_account(db_session, owner.id, "paged-gmail@example.com")
+    provider = GmailEmailProvider()
+    requested_urls: list[str] = []
+
+    monkeypatch.setattr(provider, "access_token_for_external_call", lambda db, account: "access-token")
+
+    def fake_get_json(url: str, headers: dict[str, str]) -> dict:
+        requested_urls.append(url)
+        if "pageToken=page-2" in url:
+            return {
+                "messages": [{"id": "msg-3"}],
+                "nextPageToken": "page-3",
+            }
+        if "pageToken=page-3" in url:
+            return {"messages": [{"id": "msg-4"}]}
+        return {
+            "messages": [{"id": "msg-1"}, {"id": "msg-2"}],
+            "nextPageToken": "page-2",
+        }
+
+    monkeypatch.setattr(provider, "get_json", fake_get_json)
+
+    message_ids = provider.list_all_messages_for_account(
+        db_session,
+        account,
+        query="is:starred",
+        page_size=2,
+        max_pages=0,
+    )
+
+    assert message_ids == ["msg-1", "msg-2", "msg-3", "msg-4"]
+    assert len(requested_urls) == 3
+    assert "pageToken=page-2" in requested_urls[1]
+    assert "pageToken=page-3" in requested_urls[2]
+
+
 def test_gmail_provider_disconnects_revoked_authorization(
     db_session: Session,
     gmail_enabled: None,

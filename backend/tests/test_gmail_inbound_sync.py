@@ -53,6 +53,8 @@ class FakeInboundGmailProvider:
         self.messages: list[InboundEmailPayload] = []
         self.queries: list[str] = []
         self.query_limits: list[tuple[str, int]] = []
+        self.all_queries: list[str] = []
+        self.all_query_options: list[tuple[str, int, int]] = []
         self.removed_labels: list[tuple[int, str, str]] = []
 
     def get_connection_status(self, db: Session, user: User) -> EmailConnectionStatus:
@@ -103,12 +105,15 @@ class FakeInboundGmailProvider:
     def list_messages(self, db: Session, user: User, query: str, max_results: int) -> list[str]:
         self.queries.append(query)
         self.query_limits.append((query, max_results))
+        return self.filtered_message_ids(query)[:max_results]
+
+    def filtered_message_ids(self, query: str) -> list[str]:
         messages = self.messages
         if "is:starred" in query:
             messages = [message for message in messages if "STARRED" in message.provider_labels]
         if "has:attachment" in query:
             messages = [message for message in messages if message.attachments]
-        return [message.provider_message_id for message in messages[:max_results]]
+        return [message.provider_message_id for message in messages]
 
     def get_message(self, db: Session, user: User, message_id: str) -> InboundEmailPayload:
         for message in self.messages:
@@ -140,6 +145,24 @@ class FakeInboundGmailProvider:
         max_results: int,
     ) -> list[InboundEmailPayload]:
         return [self.get_message(db, user, message_id) for message_id in self.list_messages(db, user, query, max_results)]
+
+    def sync_all_inbound_replies_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        *,
+        query: str,
+        page_size: int = 500,
+        max_pages: int = 0,
+    ) -> list[InboundEmailPayload]:
+        self.all_queries.append(query)
+        self.all_query_options.append((query, page_size, max_pages))
+        message_ids = self.filtered_message_ids(query)
+        if max_pages > 0:
+            message_ids = message_ids[: page_size * max_pages]
+        user = db.get(User, account.user_id)
+        assert user is not None
+        return [self.get_message(db, user, message_id) for message_id in message_ids]
 
 
 @pytest.fixture()
@@ -788,7 +811,7 @@ def test_sync_starred_gmail_message_is_urgent_refusal_to_follow_up(
     response = sync_inbound(client)
 
     assert response.status_code == 200
-    assert "is:starred" in fake_gmail_provider.queries
+    assert "is:starred" in fake_gmail_provider.all_queries
     payload = response.json()
     assert payload["applied_reviews"] == 1
     assert payload["negative_responses_detected"] == 1
@@ -809,7 +832,7 @@ def test_sync_starred_gmail_message_is_urgent_refusal_to_follow_up(
     assert workflow.status == "appeal_needed"
 
 
-def test_sync_starred_gmail_query_respects_cycle_limit(
+def test_sync_starred_gmail_query_reads_full_history_by_default(
     client: TestClient,
     db_session: Session,
     gmail_inbound_enabled: None,
@@ -817,6 +840,7 @@ def test_sync_starred_gmail_query_respects_cycle_limit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GMAIL_STARRED_MAX_MESSAGES_PER_SYNC", "1000")
+    monkeypatch.setenv("GMAIL_STARRED_FULL_HISTORY_ENABLED", "true")
     get_settings.cache_clear()
     owner = get_user(db_session, "owner@example.com")
     connect_gmail_account(db_session, owner.id)
@@ -828,9 +852,37 @@ def test_sync_starred_gmail_query_respects_cycle_limit(
     response = sync_inbound(client, payload={"lookback_days": 30, "max_messages": 2})
 
     assert response.status_code == 200
+    assert response.json()["synced_messages"] == 5
+    assert "is:starred has:attachment" in fake_gmail_provider.all_queries
+    assert "is:starred" in fake_gmail_provider.all_queries
+    assert all(limit == 2 for query, limit in fake_gmail_provider.query_limits if query.startswith("newer_than:"))
+    assert not [query for query, _ in fake_gmail_provider.query_limits if "is:starred" in query]
+    get_settings.cache_clear()
+
+
+def test_sync_starred_gmail_query_can_be_limited_when_full_history_disabled(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GMAIL_STARRED_FULL_HISTORY_ENABLED", "false")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    fake_gmail_provider.messages = [
+        inbound_payload(f"msg-starred-limited-mode-{index}", provider_labels=["STARRED"])
+        for index in range(5)
+    ]
+
+    response = sync_inbound(client, payload={"lookback_days": 30, "max_messages": 2})
+
+    assert response.status_code == 200
     starred_limits = {query: limit for query, limit in fake_gmail_provider.query_limits if "is:starred" in query}
     assert starred_limits["is:starred has:attachment"] == 2
     assert starred_limits["is:starred"] == 2
+    assert fake_gmail_provider.all_queries == []
     get_settings.cache_clear()
 
 
@@ -1048,6 +1100,7 @@ def test_auto_sync_limits_existing_reprocess_backlog(
 ) -> None:
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_EXISTING_REPROCESS_LIMIT", "3")
+    monkeypatch.setenv("GMAIL_STARRED_FULL_HISTORY_ENABLED", "false")
     get_settings.cache_clear()
     owner = get_user(db_session, "owner@example.com")
     connect_gmail_account(db_session, owner.id)
@@ -1091,6 +1144,64 @@ def test_auto_sync_limits_existing_reprocess_backlog(
     assert result.accounts_checked == 1
     assert recorded_limits == [3]
     assert recorded_starred_limits == [3]
+    get_settings.cache_clear()
+
+
+def test_auto_sync_reprocesses_full_existing_starred_backlog_by_default(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_EXISTING_REPROCESS_LIMIT", "3")
+    monkeypatch.setenv("GMAIL_STARRED_FULL_HISTORY_ENABLED", "true")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    account = get_active_account(db_session, owner.id)
+    assert account is not None
+    recorded_starred_limits: list[int | None] = []
+    original_starred_reprocess = GmailInboundSyncService.reprocess_starred_backlog
+
+    def spy_starred_reprocess(self, db, user, account, result, *, apply_reviews, max_messages, exclude_message_ids):
+        recorded_starred_limits.append(max_messages)
+        return original_starred_reprocess(
+            self,
+            db,
+            user,
+            account,
+            result,
+            apply_reviews=apply_reviews,
+            max_messages=max_messages,
+            exclude_message_ids=exclude_message_ids,
+        )
+
+    for index in range(5):
+        db_session.add(
+            InboundEmailMessage(
+                email_account_id=account.id,
+                provider="gmail",
+                provider_message_id=f"existing-starred-full-{index}",
+                provider_thread_id=f"thread-existing-starred-full-{index}",
+                from_email="restaurants@uber.com",
+                to_email=account.email_address,
+                subject=f"Refus commande TEST-FULL-{index}",
+                body_text=f"Pas de remboursement pour TEST-FULL-{index}",
+                provider_labels_json=["STARRED"],
+                match_status="unlinked",
+                match_reason="no_match",
+            )
+        )
+    db_session.flush()
+
+    monkeypatch.setattr(GmailInboundSyncService, "reprocess_starred_backlog", spy_starred_reprocess)
+
+    result = GmailInboundAutoSyncService(fake_gmail_provider).sync_due_accounts(db_session)
+
+    assert result.status == "success"
+    assert recorded_starred_limits == [None]
     get_settings.cache_clear()
 
 
@@ -1937,7 +2048,7 @@ def test_starred_gmail_attachment_creates_order_when_thread_is_not_linked(
 
     assert response.status_code == 200
     payload = response.json()
-    assert "is:starred has:attachment" in fake_gmail_provider.queries
+    assert "is:starred has:attachment" in fake_gmail_provider.all_queries
     assert payload["linked_messages"] == 1
     assert payload["identity_repaired_messages"] == 1
     order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "BAEF7"))

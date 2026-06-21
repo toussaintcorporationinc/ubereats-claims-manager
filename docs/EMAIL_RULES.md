@@ -99,10 +99,10 @@ Regles :
 - une reponse `refused` fiable peut declencher AutoPilot `appeals` si les flags, Gmail et le restaurant sont actifs ;
 - la sync peut etre planifiee cote backend avec `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true` ;
 - l'intervalle recommande est `GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS=300` pour un traitement 24/7 ;
-- en auto-sync, TENNET garde les cycles courts : les nouveaux mails et fils etoiles sont prioritaires, puis seuls `GMAIL_INBOUND_AUTO_SYNC_EXISTING_REPROCESS_LIMIT` anciens mails non revus sont repris par passage ;
-- un fil Gmail etoile est traite comme une relance urgente, mais aucun envoi automatique ne part sans client, numero de commande, date, restaurant et signature restaurant complete ;
+- en auto-sync, TENNET lit les nouveaux mails puis la file Gmail etoilee complete page par page quand `GMAIL_STARRED_FULL_HISTORY_ENABLED=true` ;
+- un fil Gmail etoile est traite comme une relance urgente et reste dans la file tant qu'Uber n'a pas donne de signal positif clair ;
 - aucune relance automatique n'est creee hors AutoPilot controle ;
-- les messages Gmail etoiles (`STARRED`, messages suivis) sont resynchronises avec `GMAIL_STARRED_MAX_MESSAGES_PER_SYNC` et un message deja connu est reanalyse si l'etoile est ajoutee apres coup ;
+- les messages Gmail etoiles (`STARRED`, messages suivis) sont resynchronises avec pagination Gmail (`GMAIL_STARRED_PAGE_SIZE`, `GMAIL_STARRED_MAX_PAGES_PER_SYNC`) ; `GMAIL_STARRED_MAX_PAGES_PER_SYNC=0` signifie lecture jusqu'a epuisement des pages disponibles ;
 - la classification IA Gmail peut etre executee si `AI_GMAIL_ANALYSIS_ENABLED=true` et `OPENAI_API_KEY` est configuree ; elle classe sans inventer de paiement, de refus ou de montant ;
 - la sync peut etre lancee manuellement par `owner` ou `manager`, ou automatiquement par le scheduler backend quand `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true` ;
 - `staff` ne peut pas lancer la sync ;

@@ -182,22 +182,23 @@ class GmailInboundSyncService:
         created_message_ids: set[int] = set()
         try:
             order_identifier_index = self.build_order_identifier_index(db, user)
-            starred_max_messages = max(0, min(max_messages, get_settings().gmail_starred_max_messages_per_sync))
+            settings = get_settings()
+            starred_max_messages = max(0, min(max_messages, settings.gmail_starred_max_messages_per_sync))
             payloads = merge_unique_payloads(
                 self.fetch_payloads(db, user, account, query=query, max_messages=max_messages),
-                self.fetch_payloads(
+                self.fetch_starred_payloads(
                     db,
                     user,
                     account,
                     query=GMAIL_STARRED_WITH_ATTACHMENT_QUERY,
-                    max_messages=starred_max_messages,
+                    fallback_max_messages=starred_max_messages,
                 ),
-                self.fetch_payloads(
+                self.fetch_starred_payloads(
                     db,
                     user,
                     account,
                     query=GMAIL_STARRED_URGENT_QUERY,
-                    max_messages=starred_max_messages,
+                    fallback_max_messages=starred_max_messages,
                 ),
             )
             for payload in payloads:
@@ -299,7 +300,9 @@ class GmailInboundSyncService:
                     account,
                     result,
                     apply_reviews=apply_reviews,
-                    max_messages=min(starred_max_messages, reprocess_limit),
+                    max_messages=None
+                    if settings.gmail_starred_full_history_enabled
+                    else min(starred_max_messages, reprocess_limit),
                     exclude_message_ids=created_message_ids,
                 )
 
@@ -354,6 +357,28 @@ class GmailInboundSyncService:
         if callable(sync_for_account):
             return sync_for_account(db, account, query=query, max_results=max_messages)
         return self.provider.sync_inbound_replies(db, user, query=query, max_results=max_messages)
+
+    def fetch_starred_payloads(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        *,
+        query: str,
+        fallback_max_messages: int,
+    ) -> list[InboundEmailPayload]:
+        settings = get_settings()
+        if settings.gmail_starred_full_history_enabled:
+            sync_all_for_account = getattr(self.provider, "sync_all_inbound_replies_for_account", None)
+            if callable(sync_all_for_account):
+                return sync_all_for_account(
+                    db,
+                    account,
+                    query=query,
+                    page_size=settings.gmail_starred_page_size,
+                    max_pages=settings.gmail_starred_max_pages_per_sync,
+                )
+        return self.fetch_payloads(db, user, account, query=query, max_messages=fallback_max_messages)
 
     def analyze_linked_message(
         self,
@@ -488,11 +513,11 @@ class GmailInboundSyncService:
         result: GmailInboundSyncResult,
         *,
         apply_reviews: bool,
-        max_messages: int,
+        max_messages: int | None,
         exclude_message_ids: set[int],
     ) -> None:
         labels_text = cast(InboundEmailMessage.provider_labels_json, String)
-        messages = db.scalars(
+        query = (
             select(InboundEmailMessage)
             .where(
                 InboundEmailMessage.email_account_id == account.id,
@@ -500,8 +525,10 @@ class GmailInboundSyncService:
                 InboundEmailMessage.match_status.in_(["unlinked", "ignored"]),
             )
             .order_by(InboundEmailMessage.received_at.desc().nullslast(), InboundEmailMessage.id.desc())
-            .limit(max(0, min(max_messages, MAX_EXISTING_REPROCESS_MESSAGES)))
-        ).all()
+        )
+        if max_messages is not None:
+            query = query.limit(max(0, min(max_messages, MAX_EXISTING_REPROCESS_MESSAGES)))
+        messages = db.scalars(query).all()
         for message in messages:
             if message.id in exclude_message_ids:
                 continue
