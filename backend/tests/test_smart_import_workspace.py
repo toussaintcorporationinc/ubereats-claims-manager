@@ -12,6 +12,8 @@ from app.models import (
     AuditLog,
     ClaimOrder,
     EmailAccount,
+    EmailDraft,
+    EmailProviderDraft,
     EvidenceAnalysisResult,
     EvidenceFile,
     EvidenceImportBatch,
@@ -1172,22 +1174,58 @@ def test_owner_can_reset_business_history_without_deleting_restaurants_or_gmail(
     assert owner is not None
     db_session.add(restaurant)
     db_session.flush()
-    db_session.add(
-        EmailAccount(
-            user_id=owner.id,
-            provider="gmail",
-            email_address="reset-gmail@example.com",
-            access_token_encrypted="encrypted-access-token",
-            refresh_token_encrypted="encrypted-refresh-token",
-        )
+    email_account = EmailAccount(
+        user_id=owner.id,
+        provider="gmail",
+        email_address="reset-gmail@example.com",
+        access_token_encrypted="encrypted-access-token",
+        refresh_token_encrypted="encrypted-refresh-token",
     )
+    db_session.add(email_account)
+    order = ClaimOrder(
+        restaurant_id=restaurant.id,
+        uber_order_number="RESET123",
+        order_amount=Decimal("12.00"),
+        currency="EUR",
+        status="sent",
+    )
+    db_session.add(order)
+    db_session.flush()
+    email_draft = EmailDraft(
+        order_id=order.id,
+        draft_type="customer_refund_generic",
+        subject="Reset draft",
+        body="Reset body",
+        status="created",
+    )
+    db_session.add(email_draft)
+    db_session.flush()
+    provider_draft = EmailProviderDraft(
+        email_draft_id=email_draft.id,
+        email_account_id=email_account.id,
+        provider="gmail",
+        provider_draft_id="provider-reset",
+        to_email="restaurantsfrance@uber.com",
+        subject="Reset provider draft",
+        status="provider_draft_created",
+        created_by_user_id=owner.id,
+    )
+    db_session.add(provider_draft)
+    db_session.flush()
     db_session.add(
-        ClaimOrder(
+        UberCustomerRefundDispute(
             restaurant_id=restaurant.id,
-            uber_order_number="RESET123",
-            order_amount=Decimal("12.00"),
+            uber_order_id="RESET123",
+            claim_order_id=order.id,
+            dispute_type="customer_refund",
+            reason="refund_without_sufficient_proof",
+            status="gmail_draft_created",
+            customer_refund_amount=Decimal("12.00"),
             currency="EUR",
-            status="sent",
+            evidence_status="missing",
+            dispute_email_draft_id=email_draft.id,
+            provider_draft_id=provider_draft.id,
+            created_by_user_id=owner.id,
         )
     )
     db_session.add(
@@ -1216,6 +1254,9 @@ def test_owner_can_reset_business_history_without_deleting_restaurants_or_gmail(
     assert db_session.scalar(select(Restaurant).where(Restaurant.name == "Reset Restaurant")) is not None
     assert db_session.scalar(select(EmailAccount).where(EmailAccount.email_address == "reset-gmail@example.com")) is not None
     assert db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "RESET123")) is None
+    assert db_session.scalar(select(UberCustomerRefundDispute).where(UberCustomerRefundDispute.uber_order_id == "RESET123")) is None
+    assert db_session.scalar(select(EmailDraft).where(EmailDraft.subject == "Reset draft")) is None
+    assert db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.provider_draft_id == "provider-reset")) is None
     reset_log = db_session.scalar(select(AuditLog).where(AuditLog.action == "business_history.reset"))
     assert reset_log is not None
 
