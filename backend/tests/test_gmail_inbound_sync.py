@@ -1037,7 +1037,9 @@ def test_auto_sync_limits_existing_reprocess_backlog(
     owner = get_user(db_session, "owner@example.com")
     connect_gmail_account(db_session, owner.id)
     recorded_limits: list[int] = []
+    recorded_starred_limits: list[int] = []
     original_reprocess = GmailInboundSyncService.reprocess_unreviewed_messages
+    original_starred_reprocess = GmailInboundSyncService.reprocess_starred_backlog
 
     def spy_reprocess(self, db, user, account, result, *, apply_reviews, max_messages, exclude_message_ids):
         recorded_limits.append(max_messages)
@@ -1052,13 +1054,28 @@ def test_auto_sync_limits_existing_reprocess_backlog(
             exclude_message_ids=exclude_message_ids,
         )
 
+    def spy_starred_reprocess(self, db, user, account, result, *, apply_reviews, max_messages, exclude_message_ids):
+        recorded_starred_limits.append(max_messages)
+        return original_starred_reprocess(
+            self,
+            db,
+            user,
+            account,
+            result,
+            apply_reviews=apply_reviews,
+            max_messages=max_messages,
+            exclude_message_ids=exclude_message_ids,
+        )
+
     monkeypatch.setattr(GmailInboundSyncService, "reprocess_unreviewed_messages", spy_reprocess)
+    monkeypatch.setattr(GmailInboundSyncService, "reprocess_starred_backlog", spy_starred_reprocess)
 
     result = GmailInboundAutoSyncService(fake_gmail_provider).sync_due_accounts(db_session)
 
     assert result.status == "success"
     assert result.accounts_checked == 1
     assert recorded_limits == [3]
+    assert recorded_starred_limits == [3]
     get_settings.cache_clear()
 
 
