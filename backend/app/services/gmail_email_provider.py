@@ -399,7 +399,18 @@ class GmailEmailProvider:
         if not refresh_token:
             return access_token
 
-        token_payload = self.refresh_access_token(refresh_token)
+        try:
+            token_payload = self.refresh_access_token(refresh_token)
+        except EmailProviderError as exc:
+            if gmail_authorization_needs_reconnect(exc.message):
+                account.disconnected_at = utc_now()
+                account.access_token_encrypted = None
+                account.refresh_token_encrypted = None
+                account.updated_at = utc_now()
+                db.flush()
+                db.commit()
+                raise EmailProviderError("Gmail authorization expired or was revoked. Reconnect Gmail.", 409) from exc
+            raise
         refreshed_token = token_payload.get("access_token")
         if not refreshed_token:
             raise EmailProviderError("Gmail refresh response did not include an access token", 502)
@@ -483,7 +494,8 @@ class GmailEmailProvider:
             with urlopen(request, timeout=20) as response:
                 return json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
-            raise EmailProviderError(f"Gmail API error: HTTP {exc.code}", 502) from exc
+            body = exc.read().decode("utf-8", errors="replace")
+            raise EmailProviderError(format_gmail_http_error(exc.code, body), 502) from exc
         except (URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise EmailProviderError("Gmail API request failed", 502) from exc
 
@@ -748,6 +760,28 @@ def normalize_datetime(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value
+
+
+def format_gmail_http_error(status_code: int, body: str) -> str:
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return f"Gmail API error: HTTP {status_code}"
+    error = payload.get("error")
+    if isinstance(error, dict):
+        code = str(error.get("status") or error.get("code") or status_code)
+        message = str(error.get("message") or "").strip()
+    else:
+        code = str(error or status_code)
+        message = str(payload.get("error_description") or "").strip()
+    if message:
+        return f"Gmail API error: {code} - {message[:240]}"
+    return f"Gmail API error: {code}"
+
+
+def gmail_authorization_needs_reconnect(message: str) -> bool:
+    normalized = message.casefold()
+    return "invalid_grant" in normalized or "expired or revoked" in normalized
 
 
 def extract_headers(payload: dict[str, Any]) -> dict[str, str]:
