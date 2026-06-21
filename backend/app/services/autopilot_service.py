@@ -574,8 +574,6 @@ def starred_thread_reply_skip_reason(db: Session, workflow: AppealWorkflow) -> s
         return "missing_claim_order"
     if not str(order.uber_order_number or "").strip() and not str(order.internal_reference or "").strip():
         return "missing_uber_order_number"
-    if order.order_amount is None:
-        return "missing_amount"
     signature_reason = restaurant_signature_skip_reason(order.restaurant)
     if signature_reason is not None:
         return signature_reason
@@ -1042,17 +1040,20 @@ def build_starred_thread_reply_body(
             "\n\nLe dossier a deja ete relance sans regularisation claire. "
             "Merci de transmettre la demande a un niveau de traitement superieur si necessaire."
         )
-    amount_line = f"Montant concerne : {format_amount(order.order_amount or 0)} {order.currency or 'EUR'}"
-    return "\n\n".join(
+    paragraphs = [
+        "Bonjour,",
+        opening,
+    ]
+    if order.order_amount is not None:
+        paragraphs.append(f"Montant concerne : {format_amount(order.order_amount)} {order.currency or 'EUR'}")
+    paragraphs.extend(
         [
-            "Bonjour,",
-            opening,
-            amount_line,
             argument,
             "Merci de revoir ce dossier et de nous confirmer la suite donnee a la demande.",
             f"Cordialement,\n{format_restaurant_signature(restaurant) if restaurant else 'Restaurant'}",
         ]
     )
+    return "\n\n".join(paragraphs)
 
 
 def latest_draft(db: Session, order_id: int, draft_type: str) -> EmailDraft | None:
