@@ -989,8 +989,8 @@ def test_auto_sync_recovers_stale_running_state(
     service = GmailInboundAutoSyncService(fake_gmail_provider)
     now = utc_now()
 
-    recent_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=120))
-    stale_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=301))
+    recent_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=600))
+    stale_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=1801))
 
     assert service.account_is_due(recent_running, now) is False
     assert service.account_is_due(stale_running, now) is True
