@@ -12,10 +12,10 @@ import PaymentSuccessNotifier from "@/components/PaymentSuccessNotifier";
 import { useAuth } from "@/lib/auth";
 
 const navigation: NavItem[] = [
-  { href: "/dashboard", label: "A faire", group: "main" },
-  { href: "/smart-import", label: "Deposer fichiers", group: "main", ownerOrManagerOnly: true },
-  { href: "/remboursements", label: "Remboursements", group: "main", ownerOrManagerOnly: true },
-  { href: "/annulations", label: "Annulations", group: "main", ownerOrManagerOnly: true },
+  { href: "/dashboard", label: "Accueil", group: "main" },
+  { href: "/remboursements", label: "Remboursement", group: "main", ownerOrManagerOnly: true },
+  { href: "/annulations", label: "Annulation", group: "main", ownerOrManagerOnly: true },
+  { href: "/smart-import", label: "Depot avance", group: "work", ownerOrManagerOnly: true },
   { href: "/evidence-tasks", label: "Preuves", group: "main" },
   { href: "/live-evidence", label: "Camera + tickets", group: "main" },
   { href: "/recovery", label: "Recuperation", group: "main", ownerOrManagerOnly: true },
@@ -45,9 +45,6 @@ const primaryNavigationHrefs = new Set([
   "/dashboard",
   "/remboursements",
   "/annulations",
-  "/evidence-tasks",
-  "/live-evidence",
-  "/restaurants",
 ]);
 
 const publicPaths = new Set(["/login", "/setup-owner"]);

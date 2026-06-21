@@ -53,6 +53,7 @@ class FakeInboundGmailProvider:
         self.messages: list[InboundEmailPayload] = []
         self.queries: list[str] = []
         self.query_limits: list[tuple[str, int]] = []
+        self.removed_labels: list[tuple[int, str, str]] = []
 
     def get_connection_status(self, db: Session, user: User) -> EmailConnectionStatus:
         if not get_settings().email_provider_enabled:
@@ -114,6 +115,19 @@ class FakeInboundGmailProvider:
             if message.provider_message_id == message_id:
                 return message
         raise EmailProviderError("Fake message not found", 404)
+
+    def remove_message_label_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        message_id: str,
+        label_id: str,
+    ) -> None:
+        self.removed_labels.append((account.id, message_id, label_id))
+        for message in self.messages:
+            if message.provider_message_id == message_id and label_id in message.provider_labels:
+                message.provider_labels.remove(label_id)
+                return
 
     def get_thread(self, db: Session, user: User, thread_id: str) -> dict:
         return {"id": thread_id}
@@ -785,6 +799,7 @@ def test_sync_starred_gmail_message_is_urgent_refusal_to_follow_up(
     )
     assert inbound_message is not None
     assert inbound_message.provider_labels_json == ["STARRED"]
+    assert fake_gmail_provider.removed_labels == []
     analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
     assert analysis is not None
     assert analysis.recommended_review_type == "refused"
@@ -1196,6 +1211,14 @@ def test_sync_payment_signal_wins_over_starred_gmail_label(
     db_session.refresh(order)
     assert order.status == "payment_confirmed"
     assert str(order.recovered_amount) == "19.99"
+    account = get_active_account(db_session, owner.id)
+    assert account is not None
+    assert fake_gmail_provider.removed_labels == [(account.id, "msg-starred-paid", "STARRED")]
+    inbound_message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-starred-paid")
+    )
+    assert inbound_message is not None
+    assert inbound_message.provider_labels_json == []
     analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
     assert analysis is not None
     assert analysis.recommended_review_type == "payment_confirmed"

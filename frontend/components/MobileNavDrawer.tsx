@@ -23,9 +23,6 @@ const primaryNavigationHrefs = new Set([
   "/dashboard",
   "/remboursements",
   "/annulations",
-  "/evidence-tasks",
-  "/live-evidence",
-  "/restaurants",
 ]);
 
 type Props = {

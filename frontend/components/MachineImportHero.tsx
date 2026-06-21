@@ -97,7 +97,7 @@ export default function MachineImportHero({
             disabled={running || files.length === 0}
             onClick={() => void runMachine()}
           >
-            {running ? "TENNET travaille" : "Lancer TENNET"}
+            {running ? "TENNET travaille" : "GO"}
           </button>
           <p className="machine-action-note">
             {files.length > 0

@@ -280,6 +280,20 @@ class GmailEmailProvider:
         attachments = self.extract_inbound_attachments(access_token, payload)
         return self.parse_gmail_message(payload, attachments=attachments)
 
+    def remove_message_label_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        message_id: str,
+        label_id: str,
+    ) -> None:
+        access_token = self.access_token_for_external_call(db, account)
+        self.post_json(
+            f"{GMAIL_MESSAGES_URL}/{quote(message_id, safe='')}/modify",
+            {"removeLabelIds": [label_id]},
+            {"Authorization": f"Bearer {access_token}"},
+        )
+
     def get_thread(self, db: Session, user: User, thread_id: str) -> dict[str, Any]:
         self.ensure_enabled_and_configured(require_secret=True)
         account = self.get_active_account(db, user.id)
