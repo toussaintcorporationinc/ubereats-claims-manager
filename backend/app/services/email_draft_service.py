@@ -212,9 +212,16 @@ def build_order_identity_phrase(order: ClaimOrder) -> str:
 
 def display_order_number(order: ClaimOrder) -> str:
     reference = str(order.internal_reference or "").strip()
-    if reference and not is_uuid_like(reference):
+    if reference and not is_uuid_like(reference) and not is_internal_tracking_reference(reference):
         return reference
     return order.uber_order_number
+
+
+def is_internal_tracking_reference(value: str | None) -> bool:
+    if not value:
+        return False
+    cleaned = value.strip().upper()
+    return cleaned.startswith(("CUST-REFUND-", "REFUND-", "AUTO-", "CLAIM-", "PROOF-"))
 
 
 def is_uuid_like(value: str | None) -> bool:
