@@ -36,6 +36,7 @@ export default function DashboardPage() {
   const [unclassified, setUnclassified] = useState<WorkspaceUnclassifiedResponse | null>(null);
   const [recoveryMachine, setRecoveryMachine] = useState<RecoveryMachineResponse | null>(null);
   const [gmailWorker, setGmailWorker] = useState<GmailInboundStatus | null>(null);
+  const [gmailWorkerError, setGmailWorkerError] = useState<unknown>(null);
   const [machineResult, setMachineResult] = useState<WorkspaceMachineRunResponse | null>(null);
   const [railFiles, setRailFiles] = useState<Record<RecoveryMachineRailKey, File[]>>({
     refunds: [],
@@ -50,18 +51,25 @@ export default function DashboardPage() {
   const canRunRecoveryMachine = user?.role === "owner" || user?.role === "manager";
 
   const loadDashboard = useCallback(async () => {
-    const [summaryData, actionsData, recoveryMachineData, unclassifiedData, gmailWorkerData] = await Promise.all([
+    setGmailWorkerError(null);
+    const [summaryData, actionsData, recoveryMachineData, unclassifiedData, gmailWorkerResult] = await Promise.all([
       api.getDashboardSummary(),
       api.getWorkspaceNextActions(),
       api.getWorkspaceRecoveryMachine(),
       api.getWorkspaceUnclassified(),
-      canRunRecoveryMachine ? api.getInboundStatus().catch(() => null) : Promise.resolve(null),
+      canRunRecoveryMachine
+        ? api
+            .getInboundStatus()
+            .then((data) => ({ data, error: null }))
+            .catch((apiError) => ({ data: null, error: apiError }))
+        : Promise.resolve({ data: null, error: null }),
     ]);
     setSummary(summaryData);
     setNextActions(actionsData);
     setRecoveryMachine(recoveryMachineData);
     setUnclassified(unclassifiedData);
-    setGmailWorker(gmailWorkerData);
+    setGmailWorker(gmailWorkerResult.data);
+    setGmailWorkerError(gmailWorkerResult.error);
   }, [canRunRecoveryMachine]);
 
   useEffect(() => {
@@ -215,6 +223,9 @@ export default function DashboardPage() {
       </div>
 
       {canSeeBusinessMetrics && gmailWorker ? <GmailWorkerPanel status={gmailWorker} /> : null}
+      {canSeeBusinessMetrics && !gmailWorker && gmailWorkerError ? (
+        <GmailWorkerUnavailablePanel error={gmailWorkerError} />
+      ) : null}
 
       <ApiError error={error} />
       <ApiError error={pilotError} />
@@ -510,6 +521,46 @@ function GmailWorkerPanel({ status }: { status: GmailInboundStatus }) {
       {status.last_error ? <p className="muted">Derniere erreur sync: {status.last_error}</p> : null}
     </section>
   );
+}
+
+function GmailWorkerUnavailablePanel({ error }: { error: unknown }) {
+  return (
+    <section className="gmail-worker-card gmail-worker-card--attention">
+      <div className="gmail-worker-card__header">
+        <div>
+          <p className="eyebrow">Gmail / IA 24-7</p>
+          <h2>Statut Gmail indisponible</h2>
+          <p>
+            TENNET n'arrive pas a lire l'etat du worker Gmail depuis cette session. Ce bloc doit apparaitre au lieu de
+            cacher le probleme.
+          </p>
+        </div>
+        <StatusBadge status="manual_review" />
+      </div>
+      <div className="gmail-worker-grid">
+        <div>
+          <span>Controle</span>
+          <strong>A verifier</strong>
+          <small>{getErrorMessage(error)}</small>
+        </div>
+        <div>
+          <span>Action</span>
+          <strong>Reconnecter / verifier API</strong>
+          <small>Si tu es connecte, cette erreur signale un vrai blocage API ou session.</small>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  return "Erreur inconnue pendant la lecture du statut Gmail.";
 }
 
 function formatAutopilotActionType(actionType: string) {
