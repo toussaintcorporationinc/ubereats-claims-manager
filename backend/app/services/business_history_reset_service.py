@@ -1,48 +1,24 @@
 from __future__ import annotations
 
+from sqlalchemy import Table, func, select
 from sqlalchemy.orm import Session
 
-from app.models import (
-    AppealAttempt,
-    AppealWorkflow,
-    AutopilotAction,
-    AutopilotRun,
-    ClaimOrder,
-    ClaimResponseReview,
-    CustomerRefundDisputeReview,
-    CustomerRefundEvidenceRequirement,
-    EmailDraft,
-    EmailProviderDraft,
-    EmailThread,
-    EvidenceAnalysisResult,
-    EvidenceAttachmentDecision,
-    EvidenceFile,
-    EvidenceImportBatch,
-    EvidenceImportedFile,
-    EvidenceMatchCandidate,
-    EvidenceRequestTask,
-    EvidenceUploadLink,
-    FollowUpTask,
-    GmailResponseAnalysis,
-    GmailSyncState,
-    ImportBatch,
-    ImportRow,
-    InboundEmailMessage,
-    RefusalAnalysis,
-    SmartImportPreviewBatch,
-    SmartImportPreviewFile,
-    UberCustomerRefundDispute,
-    UberFinancialTransaction,
-    UberOrderSnapshot,
-    UberReportingImportBatch,
-    UberReportingImportRow,
-    UberReconciliationResult,
-    UberReconciliationRun,
-)
+from app.models import Base
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 
 RESET_CONFIRMATION = "RESET_TENNET_BUSINESS_HISTORY"
+PRESERVED_TABLES = {
+    "users",
+    "restaurants",
+    "user_restaurant_access",
+    "email_accounts",
+    "email_account_restaurant_mappings",
+    "uber_store_mappings",
+    "uber_integration_accounts",
+    "audit_logs",
+}
+IGNORED_TABLES = {"alembic_version"}
 
 
 class BusinessHistoryResetError(Exception):
@@ -56,8 +32,9 @@ def reset_business_history(db: Session, *, user_id: int, confirmation: str) -> d
     if confirmation != RESET_CONFIRMATION:
         raise BusinessHistoryResetError("Confirmation phrase is invalid", 400)
     counts: dict[str, int] = {}
-    for model in reset_order():
-        counts[model.__tablename__] = db.query(model).delete(synchronize_session=False)
+    for table in reset_order():
+        counts[table.name] = int(db.scalar(select(func.count()).select_from(table)) or 0)
+        db.execute(table.delete())
     add_audit_log(
         db,
         entity_type="business_history_reset",
@@ -65,15 +42,7 @@ def reset_business_history(db: Session, *, user_id: int, confirmation: str) -> d
         action="business_history.reset",
         user_id=user_id,
         new_value={
-            "preserved": [
-                "users",
-                "restaurants",
-                "user_restaurant_access",
-                "email_accounts",
-                "email_account_restaurant_mappings",
-                "uber_store_mappings",
-                "uber_integration_accounts",
-            ],
+            "preserved": sorted(PRESERVED_TABLES),
             "deleted_counts": counts,
             "reset_at": utc_now().isoformat(),
         },
@@ -82,41 +51,9 @@ def reset_business_history(db: Session, *, user_id: int, confirmation: str) -> d
     return counts
 
 
-def reset_order() -> list[type]:
+def reset_order() -> list[Table]:
     return [
-        EvidenceAttachmentDecision,
-        EvidenceMatchCandidate,
-        EvidenceAnalysisResult,
-        EvidenceImportedFile,
-        EvidenceImportBatch,
-        EvidenceUploadLink,
-        EvidenceRequestTask,
-        CustomerRefundDisputeReview,
-        CustomerRefundEvidenceRequirement,
-        RefusalAnalysis,
-        AppealAttempt,
-        AppealWorkflow,
-        AutopilotAction,
-        AutopilotRun,
-        FollowUpTask,
-        GmailResponseAnalysis,
-        ClaimResponseReview,
-        InboundEmailMessage,
-        EmailProviderDraft,
-        EmailDraft,
-        EmailThread,
-        EvidenceFile,
-        UberCustomerRefundDispute,
-        UberReconciliationResult,
-        UberReconciliationRun,
-        UberReportingImportRow,
-        UberReportingImportBatch,
-        UberFinancialTransaction,
-        UberOrderSnapshot,
-        ImportRow,
-        ImportBatch,
-        SmartImportPreviewFile,
-        SmartImportPreviewBatch,
-        ClaimOrder,
-        GmailSyncState,
+        table
+        for table in reversed(Base.metadata.sorted_tables)
+        if table.name not in PRESERVED_TABLES and table.name not in IGNORED_TABLES
     ]
