@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     gmail_inbound_sync_lookback_days: int = 30
     gmail_inbound_max_messages_per_sync: int = 250
     gmail_starred_max_messages_per_sync: int = 1000
+    gmail_starred_full_history_enabled: bool = True
+    gmail_starred_page_size: int = 500
+    gmail_starred_max_pages_per_sync: int = 0
     gmail_inbound_auto_sync_enabled: bool = False
     gmail_inbound_auto_sync_interval_seconds: int = 300
     gmail_inbound_auto_sync_initial_delay_seconds: int = 30

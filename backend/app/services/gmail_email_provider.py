@@ -257,9 +257,52 @@ class GmailEmailProvider:
         max_results: int,
     ) -> list[str]:
         access_token = self.access_token_for_external_call(db, account)
-        params = urlencode({"q": query, "maxResults": max_results})
-        payload = self.get_json(f"{GMAIL_MESSAGES_URL}?{params}", {"Authorization": f"Bearer {access_token}"})
+        payload = self.list_messages_page(access_token, query=query, max_results=max_results)
         return [str(message["id"]) for message in payload.get("messages", []) if message.get("id")]
+
+    def list_messages_page(
+        self,
+        access_token: str,
+        *,
+        query: str,
+        max_results: int,
+        page_token: str | None = None,
+    ) -> dict[str, Any]:
+        params_payload: dict[str, object] = {"q": query, "maxResults": max(1, min(max_results, 500))}
+        if page_token:
+            params_payload["pageToken"] = page_token
+        params = urlencode(params_payload)
+        payload = self.get_json(f"{GMAIL_MESSAGES_URL}?{params}", {"Authorization": f"Bearer {access_token}"})
+        return payload
+
+    def list_all_messages_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        *,
+        query: str,
+        page_size: int = 500,
+        max_pages: int = 0,
+    ) -> list[str]:
+        access_token = self.access_token_for_external_call(db, account)
+        message_ids: list[str] = []
+        page_token: str | None = None
+        pages_read = 0
+        while True:
+            if max_pages > 0 and pages_read >= max_pages:
+                break
+            payload = self.list_messages_page(
+                access_token,
+                query=query,
+                max_results=page_size,
+                page_token=page_token,
+            )
+            pages_read += 1
+            message_ids.extend(str(message["id"]) for message in payload.get("messages", []) if message.get("id"))
+            page_token = payload.get("nextPageToken")
+            if not page_token:
+                break
+        return message_ids
 
     def get_message(self, db: Session, user: User, message_id: str) -> InboundEmailPayload:
         self.ensure_enabled_and_configured(require_secret=True)
@@ -324,6 +367,24 @@ class GmailEmailProvider:
         max_results: int,
     ) -> list[InboundEmailPayload]:
         message_ids = self.list_messages_for_account(db, account, query=query, max_results=max_results)
+        return [self.get_message_for_account(db, account, message_id) for message_id in message_ids]
+
+    def sync_all_inbound_replies_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        *,
+        query: str,
+        page_size: int = 500,
+        max_pages: int = 0,
+    ) -> list[InboundEmailPayload]:
+        message_ids = self.list_all_messages_for_account(
+            db,
+            account,
+            query=query,
+            page_size=page_size,
+            max_pages=max_pages,
+        )
         return [self.get_message_for_account(db, account, message_id) for message_id in message_ids]
 
     def build_evidence_attachments(self, email_draft: EmailDraft, include_evidence: bool) -> list[EvidenceAttachment]:
