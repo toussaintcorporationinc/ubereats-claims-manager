@@ -30,15 +30,15 @@ export default function MachineImportHero({
   const [error, setError] = useState<unknown>(null);
   const inputId = `machine-files-${trigger}`;
 
-  async function runMachine() {
-    if (files.length === 0) {
+  async function runMachine(selectedFiles: File[]) {
+    if (selectedFiles.length === 0 || running) {
       return;
     }
     setRunning(true);
     setResult(null);
     setError(null);
     try {
-      const preview = await api.previewSmartImport(files);
+      const preview = await api.previewSmartImport(selectedFiles);
       const decisions = buildMachineSmartImportDecisions(preview.files, trigger);
       await api.confirmSmartImport(preview.batch_preview_id, decisions);
       const machineResult = await api.runWorkspaceMachine({
@@ -54,6 +54,14 @@ export default function MachineImportHero({
       setError(apiError);
     } finally {
       setRunning(false);
+    }
+  }
+
+  function handleFileSelection(fileList: FileList | null) {
+    const selectedFiles = Array.from(fileList ?? []);
+    setFiles(selectedFiles);
+    if (selectedFiles.length > 0) {
+      void runMachine(selectedFiles);
     }
   }
 
@@ -89,20 +97,15 @@ export default function MachineImportHero({
             type="file"
             multiple
             accept={acceptedTypes}
-            onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
+            disabled={running}
+            onChange={(event) => handleFileSelection(event.target.files)}
           />
-          <button
-            type="button"
-            className="button button--hero machine-go-button"
-            disabled={running || files.length === 0}
-            onClick={() => void runMachine()}
-          >
-            {running ? "TENNET travaille" : "GO"}
-          </button>
           <p className="machine-action-note">
-            {files.length > 0
+            {running
+              ? "Traitement en cours : TENNET lit, classe, rattache, prepare les emails et suit Gmail."
+              : files.length > 0
               ? `${files.length} preuve(s) prete(s). TENNET lit, classe, rattache, prepare les emails et suit Gmail.`
-              : "Importe les photos de tickets agrafes, PDF ou ZIP. TENNET lance ensuite toute la machine automatiquement."}
+              : "Importe les photos de tickets agrafes, PDF ou ZIP. Le traitement demarre automatiquement."}
           </p>
         </div>
       </div>
