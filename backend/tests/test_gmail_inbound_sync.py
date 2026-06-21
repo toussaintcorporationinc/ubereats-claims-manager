@@ -2092,7 +2092,7 @@ def test_starred_gmail_text_creates_order_when_thread_is_not_linked(
             subject="Contestation de remboursement de commande",
             body_text=(
                 "Bonjour je veux contester la demande de remboursement de Yoann O "
-                "numero de commande F93BA car sa commande a bien ete preparee.\n\n"
+                "numéro de commande F93BA, du 18/06/2026, car sa commande a bien ete preparee.\n\n"
                 "Montant concerne : 24.99 EUR\n\n"
                 "Frit Dodo\n"
                 "108 Avenue du Marechal Foch, Meaux, 77100\n"
@@ -2113,13 +2113,81 @@ def test_starred_gmail_text_creates_order_when_thread_is_not_linked(
     assert order is not None
     assert order.restaurant_id == restaurant["id"]
     assert order.customer_name == "Yoann O"
+    assert order.order_date == date(2026, 6, 18)
     assert order.order_amount == Decimal("24.99")
+    assert order.loss_type == "customer_refund"
     assert order.status == "refused"
     workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
     assert workflow is not None
     assert workflow.status == "appeal_needed"
     message = db_session.scalar(
         select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-unlinked-starred-text")
+    )
+    assert message is not None
+    assert message.order_id == order.id
+    assert message.match_status == "linked"
+    assert message.match_reason == "order_number_match"
+    analysis = db_session.scalar(
+        select(GmailResponseAnalysis).where(GmailResponseAnalysis.inbound_message_id == message.id)
+    )
+    assert analysis is not None
+    assert analysis.recommended_review_type == "refused"
+    assert analysis.reason == "gmail_starred_urgent_followup"
+    get_settings.cache_clear()
+
+
+def test_starred_gmail_text_creates_cancellation_order_when_thread_is_not_linked(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id, "tiramisumaisonfrance@gmail.com")
+    restaurant = create_restaurant(client, name="Frit Dodo")
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-unlinked-starred-cancellation-text",
+            thread_id="thread-unlinked-starred-cancellation-text",
+            from_email="tiramisumaisonfrance@gmail.com",
+            to_email="restaurantsfrance@uber.com",
+            subject="contestation d'annulation de commande",
+            body_text=(
+                "Bonsoir je veux contester l'annulation de commande de Inaki A "
+                "numéro de commande BAEF7 car nous l'avons préparé et le client a annulé.\n\n"
+                "Montant concerné : 19.99 EUR\n\n"
+                "Frit Dodo\n"
+                "108 Avenue du Marechal Foch, Meaux, 77100\n"
+                "0605807385\n"
+                "tiramisumaisonfrance@gmail.com"
+            ),
+            provider_labels=["STARRED"],
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["linked_messages"] == 1
+    assert payload["identity_repaired_messages"] == 1
+    order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "BAEF7"))
+    assert order is not None
+    assert order.restaurant_id == restaurant["id"]
+    assert order.customer_name == "Inaki A"
+    assert order.order_amount == Decimal("19.99")
+    assert order.loss_type == "cancellation"
+    assert order.status == "refused"
+    workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
+    assert workflow is not None
+    assert workflow.status == "appeal_needed"
+    message = db_session.scalar(
+        select(InboundEmailMessage).where(
+            InboundEmailMessage.provider_message_id == "msg-unlinked-starred-cancellation-text"
+        )
     )
     assert message is not None
     assert message.order_id == order.id

@@ -833,6 +833,23 @@ class GmailInboundSyncService:
             thread_order = self.match_by_thread(db, user, payload.provider_thread_id)
             if thread_order is not None:
                 return MatchResult(thread_order, "linked", "thread_id_match")
+            order_from_subject = self.match_by_order_number(
+                db,
+                user,
+                payload.subject or "",
+                order_identifier_index=order_identifier_index,
+            )
+            if order_from_subject is not None:
+                return MatchResult(order_from_subject, "linked", "subject_match")
+            order_from_body = self.match_by_order_number(
+                db,
+                user,
+                payload.body_text or "",
+                order_identifier_index=order_identifier_index,
+            )
+            if order_from_body is not None:
+                return MatchResult(order_from_body, "linked", "order_number_match")
+            return MatchResult(None, "unlinked", "no_match")
 
         if own_sender:
             return MatchResult(None, "ignored", "ignored_sender")
@@ -841,7 +858,7 @@ class GmailInboundSyncService:
         if thread_order is not None:
             return MatchResult(thread_order, "linked", "thread_id_match")
 
-        if not sender_matches_filter(payload.from_email, get_settings().gmail_support_sender_filter):
+        if "STARRED" not in labels and not sender_matches_filter(payload.from_email, get_settings().gmail_support_sender_filter):
             return MatchResult(None, "ignored", "ignored_sender")
 
         order_from_subject = self.match_by_order_number(
