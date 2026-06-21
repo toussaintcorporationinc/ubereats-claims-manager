@@ -102,11 +102,14 @@ class GmailInboundAutoSyncService:
                 users_needing_workspace_machine[user.id] = user
             except EmailProviderError as exc:
                 db.rollback()
+                self.mark_sync_failure(db, sync_service, account_id, user.id, exc.message)
                 result.errors.append(f"email_account:{account_id}:{exc.message}")
             except Exception as exc:  # noqa: BLE001 - background sync must not kill the scheduler loop.
                 db.rollback()
                 logger.exception("Gmail auto-sync failed for account %s", account_id)
-                result.errors.append(f"email_account:{account_id}:{str(exc)[:200]}")
+                error_message = str(exc)[:2000]
+                self.mark_sync_failure(db, sync_service, account_id, user.id, error_message)
+                result.errors.append(f"email_account:{account_id}:{error_message[:200]}")
 
         if self.settings.gmail_inbound_auto_sync_run_workspace_machine:
             for user in users_needing_workspace_machine.values():
@@ -207,6 +210,30 @@ class GmailInboundAutoSyncService:
         elif machine_result.status == "failed":
             result.workspace_machine_failures += 1
 
+    def mark_sync_failure(
+        self,
+        db: Session,
+        sync_service: GmailInboundSyncService,
+        account_id: int,
+        user_id: int,
+        error_message: str,
+    ) -> None:
+        account = db.get(EmailAccount, account_id)
+        if account is None:
+            return
+        sync_state = sync_service.get_or_create_sync_state(db, account)
+        sync_state.status = "failed"
+        sync_state.last_error = error_message[:2000]
+        add_audit_log(
+            db,
+            entity_type="gmail_sync_state",
+            entity_id=sync_state.id,
+            action="gmail_inbound_sync.failed",
+            user_id=user_id,
+            new_value={"error": error_message[:2000]},
+        )
+        db.flush()
+
 
 class GmailInboundAutoSyncScheduler:
     def __init__(
@@ -246,7 +273,10 @@ class GmailInboundAutoSyncScheduler:
         if initial_delay:
             await asyncio.sleep(initial_delay)
         while True:
-            await self.run_once()
+            try:
+                await self.run_once()
+            except Exception:
+                logger.exception("Gmail auto-sync loop iteration failed")
             await asyncio.sleep(max(60, self.settings.gmail_inbound_auto_sync_interval_seconds))
 
     async def run_once(self) -> GmailInboundAutoSyncResult | None:
