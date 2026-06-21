@@ -997,6 +997,33 @@ def test_auto_sync_recovers_stale_running_state(
     get_settings.cache_clear()
 
 
+def test_auto_sync_marks_unexpected_sync_failure_failed(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BrokenGmailProvider(FakeInboundGmailProvider):
+        def list_messages(self, db: Session, user: User, query: str, max_results: int) -> list[str]:
+            raise RuntimeError("gmail worker exploded")
+
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+
+    result = GmailInboundAutoSyncService(BrokenGmailProvider()).sync_due_accounts(db_session)
+
+    sync_state = db_session.scalar(select(GmailSyncState))
+    assert sync_state is not None
+    assert result.status == "failed"
+    assert result.accounts_checked == 1
+    assert result.errors == ["email_account:1:gmail worker exploded"]
+    assert sync_state.status == "failed"
+    assert sync_state.last_error == "gmail worker exploded"
+    get_settings.cache_clear()
+
+
 def test_auto_sync_limits_existing_reprocess_backlog(
     client: TestClient,
     db_session: Session,

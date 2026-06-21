@@ -309,6 +309,18 @@ class GmailInboundSyncService:
                 new_value={"error": exc.message},
             )
             raise
+        except Exception as exc:
+            sync_state.status = "failed"
+            sync_state.last_error = str(exc)[:2000]
+            add_audit_log(
+                db,
+                entity_type="gmail_sync_state",
+                entity_id=sync_state.id,
+                action="gmail_inbound_sync.failed",
+                user_id=user.id,
+                new_value={"error": str(exc)[:2000]},
+            )
+            raise
 
         return result
 
@@ -470,7 +482,7 @@ class GmailInboundSyncService:
             if callable(get_for_account):
                 return get_for_account(db, account, provider_message_id)
             return self.provider.get_message(db, user, provider_message_id)
-        except EmailProviderError:
+        except Exception:
             return None
 
     def run_autopilot_for_negative_responses(
