@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     resend_api_url: str = "https://api.resend.com/emails"
     gmail_inbound_sync_enabled: bool = False
     gmail_inbound_sync_lookback_days: int = 30
-    gmail_inbound_max_messages_per_sync: int = 100
+    gmail_inbound_max_messages_per_sync: int = 250
     gmail_starred_max_messages_per_sync: int = 1000
     gmail_inbound_auto_sync_enabled: bool = False
     gmail_inbound_auto_sync_interval_seconds: int = 300
@@ -90,8 +90,8 @@ class Settings(BaseSettings):
     autopilot_initial_claims_enabled: bool = False
     autopilot_followups_enabled: bool = False
     autopilot_appeals_enabled: bool = False
-    autopilot_daily_send_limit: int = 50
-    autopilot_per_restaurant_daily_limit: int = 20
+    autopilot_daily_send_limit: int = 1000
+    autopilot_per_restaurant_daily_limit: int = 250
     autopilot_min_amount: float = 5
     autopilot_max_amount_without_owner_review: float = 150
     autopilot_require_complete_evidence: bool = True

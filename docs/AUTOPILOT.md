@@ -61,6 +61,8 @@ Avec `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true`, cette sync peut tourner sans clic u
 
 Pour les relances et appels Gmail, AutoPilot exige un fil Gmail etoile et une identite complete : client, numero de commande, date, restaurant. Si `AUTOPILOT_REQUIRE_COMPLETE_RESTAURANT_SIGNATURE=true`, la fiche restaurant doit aussi contenir nom, adresse, telephone et email expediteur. Sinon l'action est bloquee avec une raison explicite au lieu d'envoyer un mail incomplet.
 
+Un fil Gmail etoile reste l'indicateur terrain d'une relance urgente. Quand une reponse Uber est classee en paiement accorde, paiement a verifier ou paiement confirme, TENNET applique la review puis retire le label Gmail `STARRED`. Si la reponse est un refus, l'etoile est conservee pour que le fil continue d'etre repris par la boucle AutoPilot.
+
 ## Limites anti-spam
 
 - `AUTOPILOT_DAILY_SEND_LIMIT` limite le volume global quotidien.

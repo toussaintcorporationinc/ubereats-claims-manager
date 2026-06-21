@@ -251,6 +251,8 @@ Regles :
 - les limites `AUTOPILOT_DAILY_SEND_LIMIT` et `AUTOPILOT_PER_RESTAURANT_DAILY_LIMIT` limitent le volume ;
 - `AUTOPILOT_COOLDOWN_HOURS` espace les relances et appels ;
 - un refus Uber ne cloture jamais automatiquement un dossier ;
+- un fil Gmail etoile signifie dossier a pousser ; si Uber confirme un paiement, TENNET retire l'etoile Gmail apres application de la review positive ;
+- si Uber refuse, TENNET conserve l'etoile Gmail afin que le fil reste dans la file de relance urgente ;
 - les emails hors sujet, non rattaches, ambigus ou venant d'un mauvais expediteur ne declenchent pas d'envoi ;
 - le destinataire AutoPilot est bloque s'il ne correspond pas au filtre support Uber configure ;
 - un renvoi identique sans nouvel argument est bloque quand `APPEAL_ALLOW_SAME_TEMPLATE_RESEND=false` ;
@@ -281,9 +283,7 @@ Regles :
 - SMTP ;
 - envoi automatique hors AutoPilot controle ;
 - relances automatiques hors AutoPilot controle ;
-- generation OpenAI de contenu d'email.
-- classification IA de reponses Uber ;
-- reponse automatique aux emails entrants.
+- reponse automatique aux emails non etoiles, non Uber, ambigus ou non rattaches.
 
 ## Donnees minimales futures
 

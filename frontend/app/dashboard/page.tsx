@@ -37,7 +37,6 @@ export default function DashboardPage() {
   const [recoveryMachine, setRecoveryMachine] = useState<RecoveryMachineResponse | null>(null);
   const [gmailWorker, setGmailWorker] = useState<GmailInboundStatus | null>(null);
   const [machineResult, setMachineResult] = useState<WorkspaceMachineRunResponse | null>(null);
-  const [homeFiles, setHomeFiles] = useState<File[]>([]);
   const [railFiles, setRailFiles] = useState<Record<RecoveryMachineRailKey, File[]>>({
     refunds: [],
     cancellations: [],
@@ -46,7 +45,6 @@ export default function DashboardPage() {
   const [pilotError, setPilotError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [pilotRunning, setPilotRunning] = useState(false);
-  const [importRunning, setImportRunning] = useState(false);
   const [railRunning, setRailRunning] = useState<RecoveryMachineRailKey | null>(null);
   const autoPassageStarted = useRef(false);
   const canRunRecoveryMachine = user?.role === "owner" || user?.role === "manager";
@@ -109,36 +107,6 @@ export default function DashboardPage() {
     }
   }
 
-  async function runSmartImportFromDashboard() {
-    if (homeFiles.length === 0) {
-      setPilotError(new Error("Ajoute au moins un fichier."));
-      return;
-    }
-    setImportRunning(true);
-    setPilotError(null);
-    setMachineResult(null);
-    try {
-      const preview = await api.previewSmartImport(homeFiles);
-      const decisions = buildMachineSmartImportDecisions(preview.files, "smart_import");
-      await api.confirmSmartImport(preview.batch_preview_id, decisions);
-      const result = await api.runWorkspaceMachine({
-        trigger: "smart_import",
-        smart_import_batch_id: preview.batch_preview_id,
-        sync_gmail: true,
-        run_autopilot: true,
-        run_historical_cleanup: true,
-      });
-      setMachineResult(result);
-      setNextActions(result.next_actions);
-      setHomeFiles([]);
-      await loadDashboard();
-    } catch (apiError) {
-      setPilotError(apiError);
-    } finally {
-      setImportRunning(false);
-    }
-  }
-
   async function runRecoveryRailImport(trigger: RecoveryMachineRailKey) {
     const files = railFiles[trigger];
     if (files.length === 0) {
@@ -198,22 +166,18 @@ export default function DashboardPage() {
           </div>
           {canSeeBusinessMetrics ? (
             <div
-              className={`machine-command ${
-                pilotRunning || importRunning || railRunning ? "machine-command--running" : ""
-              }`}
+              className={`machine-command ${pilotRunning || railRunning ? "machine-command--running" : ""}`}
             >
               <div className="machine-ring" aria-hidden="true">
                 <span />
               </div>
               <div className="machine-command__content">
-                <strong>{pilotRunning || importRunning || railRunning ? "TENNET travaille" : "Machine active"}</strong>
+                <strong>{pilotRunning || railRunning ? "TENNET travaille" : "Machine active"}</strong>
                 <span>
                   {railRunning === "refunds"
                     ? "Remboursements en cours"
                     : railRunning === "cancellations"
                       ? "Annulations en cours"
-                      : homeFiles.length > 0
-                        ? `${homeFiles.length} fichier(s) prets`
                     : recoveryMachine
                       ? `${recoveryMachine.global_progress_percent}% du parcours`
                       : "Surveillance continue"}
@@ -239,47 +203,10 @@ export default function DashboardPage() {
             machine={recoveryMachine}
             filesByRail={railFiles}
             runningRail={railRunning}
-            busy={pilotRunning || importRunning}
+            busy={pilotRunning}
             onFilesChange={(railKey, files) => setRailFiles((current) => ({ ...current, [railKey]: files }))}
             onRun={(railKey) => void runRecoveryRailImport(railKey)}
           />
-        ) : null}
-        {canSeeBusinessMetrics ? (
-          <section className="home-general-import" aria-label="Depot general">
-            <div>
-              <strong>Depot general</strong>
-              <p>
-                Pour un lot melange, depose tout ici. TENNET route ensuite vers remboursements, annulations, preuves,
-                imports Uber ou non classes avec la raison exacte.
-              </p>
-            </div>
-            <div className="home-general-import__actions">
-              <label className="secondary-button" htmlFor="dashboard-smart-files">
-                Deposer tout
-              </label>
-              <input
-                id="dashboard-smart-files"
-                className="machine-file-input"
-                type="file"
-                multiple
-                accept={acceptedTypes}
-                onChange={(event) => setHomeFiles(Array.from(event.target.files ?? []))}
-              />
-              <button
-                type="button"
-                className="button"
-                disabled={pilotRunning || importRunning || railRunning !== null || homeFiles.length === 0}
-                onClick={() => void runSmartImportFromDashboard()}
-              >
-                {importRunning ? "TENNET travaille" : "Lancer TENNET"}
-              </button>
-            </div>
-            <small>
-              {homeFiles.length > 0
-                ? `${homeFiles.length} fichier(s) prets pour depot general.`
-                : "Option secondaire : utile si tu melanges plusieurs photos, PDF ou ZIP."}
-            </small>
-          </section>
         ) : null}
       </div>
 
@@ -703,14 +630,14 @@ function RecoveryMachineLane({
           helper:
             "Photos de ticket agrafe, PDF ou ZIP lies aux remboursements client. TENNET rattache au bon client, commande, restaurant et dossier.",
           fileButtonLabel: "Deposer preuves de remboursement",
-          goLabel: "Lancer TENNET",
+          goLabel: "GO",
         }
       : {
           instruction: "IMPORTEZ LES PREUVES DE DEMANDE D'ANNULATION",
           helper:
             "Photos de ticket agrafe, preuves terrain, PDF ou ZIP lies aux annulations. TENNET verifie paiement, doublons et preuves avant action.",
           fileButtonLabel: "Deposer preuves d'annulation",
-          goLabel: "Lancer TENNET",
+          goLabel: "GO",
         };
 
   return (
