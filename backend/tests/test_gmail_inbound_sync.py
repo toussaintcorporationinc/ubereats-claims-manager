@@ -1052,13 +1052,14 @@ def test_auto_sync_recovers_stale_running_state(
     fake_gmail_provider: FakeInboundGmailProvider,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_CONTINUOUS_ENABLED", "false")
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS", "300")
     get_settings.cache_clear()
     service = GmailInboundAutoSyncService(fake_gmail_provider)
     now = utc_now()
 
-    recent_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=120))
-    stale_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=301))
+    recent_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=600))
+    stale_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=1201))
 
     assert service.account_is_due(recent_running, now) is False
     assert service.account_is_due(stale_running, now) is True
@@ -1079,6 +1080,24 @@ def test_auto_sync_continuous_mode_keeps_accounts_due(
 
     assert service.account_is_due(recently_synced, now) is True
     assert service.effective_interval_seconds() == 1
+    get_settings.cache_clear()
+
+
+def test_auto_sync_continuous_mode_recovers_running_state_quickly(
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_CONTINUOUS_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_IDLE_SLEEP_SECONDS", "1")
+    get_settings.cache_clear()
+    service = GmailInboundAutoSyncService(fake_gmail_provider)
+    now = utc_now()
+
+    recent_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=30))
+    stale_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=61))
+
+    assert service.account_is_due(recent_running, now) is False
+    assert service.account_is_due(stale_running, now) is True
     get_settings.cache_clear()
 
 

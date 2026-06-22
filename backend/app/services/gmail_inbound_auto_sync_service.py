@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 MIN_AUTO_SYNC_INTERVAL_SECONDS = 15
 MIN_CONTINUOUS_IDLE_SLEEP_SECONDS = 1
+CONTINUOUS_RUNNING_STALE_AFTER_SECONDS = 60
 
 
 @dataclass
@@ -165,7 +166,11 @@ class GmailInboundAutoSyncService:
         if sync_state.status == "running":
             if last_sync_at is None:
                 return True
-            stale_after_seconds = max(interval_seconds * 4, 300)
+            stale_after_seconds = (
+                max(CONTINUOUS_RUNNING_STALE_AFTER_SECONDS, interval_seconds * 4)
+                if self.settings.gmail_inbound_auto_sync_continuous_enabled
+                else max(interval_seconds * 4, 300)
+            )
             return now >= last_sync_at + timedelta(seconds=stale_after_seconds)
         if self.settings.gmail_inbound_auto_sync_continuous_enabled:
             return True

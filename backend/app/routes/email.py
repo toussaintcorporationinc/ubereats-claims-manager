@@ -706,7 +706,11 @@ def gmail_inbound_status(
         connected=connection_status.connected,
         auto_sync_enabled=settings.gmail_inbound_auto_sync_enabled,
         auto_sync_continuous_enabled=continuous_enabled,
-        auto_sync_interval_seconds=settings.gmail_inbound_auto_sync_interval_seconds,
+        auto_sync_interval_seconds=(
+            None
+            if settings.gmail_inbound_auto_sync_enabled and continuous_enabled
+            else settings.gmail_inbound_auto_sync_interval_seconds
+        ),
         auto_sync_run_autopilot=settings.gmail_inbound_auto_sync_run_autopilot,
         auto_sync_run_workspace_machine=settings.gmail_inbound_auto_sync_run_workspace_machine,
         autopilot_enabled=settings.autopilot_enabled,
