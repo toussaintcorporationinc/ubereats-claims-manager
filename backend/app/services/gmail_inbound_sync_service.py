@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass, field
+from datetime import timezone
 
 from sqlalchemy import String, cast, select
 from sqlalchemy.orm import Session, selectinload
@@ -23,6 +24,7 @@ from app.services.autopilot_identity_repair_service import (
     repair_order_identity_from_inbound_attachments,
 )
 from app.services.autopilot_service import AutopilotError, iter_candidates, run_autopilot
+from app.services.appeal_workflow_service import ensure_workflow_for_claim_order
 from app.services.email_provider import EmailProvider, EmailProviderError, InboundEmailPayload
 from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
 
@@ -546,6 +548,7 @@ class GmailInboundSyncService:
                     self.repair_identity_from_payload_attachments(db, user, message, payload, result)
                 if message.review_status == "unreviewed" and should_analyze_message(message, account):
                     self.analyze_linked_message(db, user, account, message, result, apply_reviews=apply_reviews)
+                self.ensure_starred_linked_message_is_actionable(db, user, message, result)
                 continue
             if payload is None:
                 continue
@@ -575,6 +578,80 @@ class GmailInboundSyncService:
         if not settings.autopilot_enabled or not settings.autopilot_appeals_enabled:
             return False
         return bool(iter_candidates(db, user, "appeals", None))
+
+    def ensure_starred_linked_message_is_actionable(
+        self,
+        db: Session,
+        user: User,
+        message: InboundEmailMessage,
+        result: GmailInboundSyncResult,
+    ) -> bool:
+        """A starred Gmail thread is an explicit instruction to keep relaunching it.
+
+        Older cycles could leave a linked starred message as already reviewed with
+        no active appeal workflow, so the worker looked active but had nothing to
+        send. Keep the existing facts, do not invent missing evidence, but make the
+        linked thread actionable for AutoPilot.
+        """
+        labels = {str(label).strip().casefold() for label in (message.provider_labels_json or [])}
+        if "starred" not in labels or message.order_id is None:
+            return False
+        order = db.get(ClaimOrder, message.order_id)
+        if order is None or order.status in {"accepted", "payment_confirmed", "closed"}:
+            return False
+        if not can_access_restaurant(db, user, order.restaurant_id):
+            return False
+
+        before = {
+            "status": order.status,
+        }
+        changed = False
+        if order.status not in {"refused", "appeal_needed", "appeal_sent", "response_received"}:
+            order.status = "refused"
+            order.updated_at = utc_now()
+            changed = True
+
+        workflow = ensure_workflow_for_claim_order(db, order, user)
+        previous_workflow = {
+            "status": workflow.status,
+            "next_action_type": workflow.next_action_type,
+            "next_action_at": workflow.next_action_at,
+        }
+        if workflow.status not in {"accepted", "payment_confirmed", "manually_closed"}:
+            if workflow.status in {"paused"}:
+                workflow.status = "appeal_needed"
+                changed = True
+            if workflow.next_action_type == "manual_review":
+                workflow.next_action_type = "review_refusal"
+                changed = True
+            now = utc_now()
+            next_action_at = workflow.next_action_at
+            if next_action_at is not None and next_action_at.tzinfo is None:
+                next_action_at = next_action_at.replace(tzinfo=timezone.utc)
+            if next_action_at is None or next_action_at > now:
+                workflow.next_action_at = now
+                changed = True
+            workflow.updated_at = now
+
+        if changed:
+            result.identity_repaired_messages += 1
+            add_audit_log(
+                db,
+                entity_type="inbound_email_message",
+                entity_id=message.id,
+                action="gmail_starred_thread.made_actionable",
+                user_id=user.id,
+                old_value={"order": before, "workflow": previous_workflow},
+                new_value={
+                    "order_id": order.id,
+                    "workflow_id": workflow.id,
+                    "order_status": order.status,
+                    "workflow_status": workflow.status,
+                    "next_action_type": workflow.next_action_type,
+                },
+            )
+            db.flush()
+        return changed
 
     def fetch_single_payload(
         self,

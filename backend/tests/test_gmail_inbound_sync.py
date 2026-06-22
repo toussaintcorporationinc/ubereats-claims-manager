@@ -1365,6 +1365,69 @@ def test_auto_sync_runs_autopilot_for_existing_linked_starred_thread(
     get_settings.cache_clear()
 
 
+def test_auto_sync_makes_existing_linked_starred_thread_actionable_without_workflow(
+    client: TestClient,
+    db_session: Session,
+    gmail_autopilot_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    account = get_active_account(db_session, owner.id)
+    assert account is not None
+    restaurant = create_restaurant(client, "Auto Sync Starred Wakeup Restaurant")
+    restaurant_record = db_session.get(Restaurant, restaurant["id"])
+    assert restaurant_record is not None
+    restaurant_record.autopilot_enabled = True
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-STARRED-WAKEUP",
+        thread_id="thread-starred-wakeup",
+        order_status="sent",
+    )
+    db_session.add(
+        InboundEmailMessage(
+            email_account_id=account.id,
+            order_id=order.id,
+            provider="gmail",
+            provider_message_id="msg-starred-wakeup",
+            provider_thread_id="thread-starred-wakeup",
+            from_email="restaurants@uber.com",
+            to_email=account.email_address,
+            subject="Re: Contestation remboursement UBER-STARRED-WAKEUP",
+            body_text="Pas de remboursement pour cette commande.",
+            provider_labels_json=["STARRED"],
+            match_status="linked",
+            match_reason="thread_id_match",
+            review_status="reviewed",
+            reviewed_at=utc_now(),
+            reviewed_by_user_id=owner.id,
+        )
+    )
+    db_session.commit()
+
+    result = GmailInboundAutoSyncService(fake_gmail_provider).sync_due_accounts(db_session)
+
+    assert result.status == "success"
+    assert result.starred_messages_seen == 1
+    assert result.identity_repaired_messages == 1
+    assert result.autopilot_sent_count == 1
+    db_session.refresh(order)
+    assert order.status == "refused"
+    workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
+    assert workflow is not None
+    assert workflow.status == "appeal_sent"
+    sent_draft = db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent"))
+    assert sent_draft is not None
+    get_settings.cache_clear()
+
+
 def test_sync_payment_confirmed_response_updates_recovered_amount(
     client: TestClient,
     db_session: Session,
