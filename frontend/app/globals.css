@@ -937,6 +937,167 @@ button {
   color: #8c5200;
 }
 
+.relance-gmail-page {
+  gap: 18px;
+}
+
+.relance-gmail-heading {
+  align-items: flex-start;
+}
+
+.status-pill {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 6px 11px;
+  font-size: 0.82rem;
+  font-weight: 950;
+  white-space: nowrap;
+}
+
+.status-pill--positive {
+  background: rgba(16, 185, 129, 0.12);
+  color: #08745d;
+}
+
+.status-pill--warning {
+  background: rgba(255, 168, 42, 0.16);
+  color: #8c5200;
+}
+
+.status-pill--neutral {
+  background: rgba(44, 132, 178, 0.12);
+  color: #0b6287;
+}
+
+.relance-gmail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.relance-feed {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  border: 1px solid rgba(34, 186, 214, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 18px;
+  box-shadow: 0 18px 44px rgba(20, 96, 128, 0.06);
+}
+
+.relance-feed--wide {
+  grid-row: span 2;
+}
+
+.relance-feed__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.relance-feed__header h2 {
+  margin: 0;
+  color: #102b35;
+  font-size: 1.18rem;
+}
+
+.relance-feed__header span {
+  display: inline-flex;
+  min-width: 36px;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: rgba(19, 198, 178, 0.12);
+  color: #08745d;
+  font-weight: 950;
+}
+
+.relance-card-list {
+  display: grid;
+  gap: 10px;
+  max-height: 720px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.relance-card {
+  display: grid;
+  gap: 10px;
+  border: 1px solid rgba(58, 159, 190, 0.16);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(249, 253, 255, 0.98));
+  padding: 14px;
+}
+
+.relance-card__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.relance-card__top div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.relance-card__top strong {
+  color: #102b35;
+  line-height: 1.24;
+  overflow-wrap: anywhere;
+}
+
+.relance-card__top span:not(.status-pill),
+.relance-card p,
+.relance-meta,
+.relance-note {
+  color: #5f7180;
+}
+
+.relance-card p {
+  margin: 0;
+  line-height: 1.42;
+}
+
+.relance-order {
+  color: #18333f !important;
+  font-weight: 850;
+}
+
+.relance-order--missing {
+  color: #8c5200 !important;
+}
+
+.relance-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 0.84rem;
+}
+
+.relance-meta span {
+  display: inline-flex;
+  border-radius: 999px;
+  background: rgba(237, 248, 255, 0.95);
+  padding: 5px 9px;
+}
+
+.relance-note {
+  line-height: 1.35;
+}
+
+.relance-note--warning {
+  color: #8c5200;
+}
+
 .machine-action-note {
   margin: 0;
   color: #60737d;
@@ -2092,11 +2253,16 @@ textarea {
   .recovery-machine-panel__summary,
   .recovery-rail-grid,
   .machine-hero__main,
+  .relance-gmail-grid,
   .gmail-worker-grid,
   .machine-lane-grid,
   .home-general-import,
   .machine-lane__command {
     grid-template-columns: 1fr;
+  }
+
+  .relance-feed--wide {
+    grid-row: auto;
   }
 
   .home-general-import__actions {
@@ -2207,6 +2373,7 @@ textarea {
 
   .simple-hero,
   .machine-hero,
+  .relance-card__top,
   .page-heading,
   .section-heading {
     display: grid;

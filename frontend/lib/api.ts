@@ -476,6 +476,99 @@ export type GmailInboundStatus = {
   last_error: string | null;
 };
 
+export type GmailRelanceOrderSummary = {
+  order_id: number | null;
+  restaurant_id: number | null;
+  restaurant_name: string | null;
+  uber_order_number: string | null;
+  customer_name: string | null;
+  order_date: string | null;
+  order_amount: MoneyValue;
+  currency: string | null;
+  status: string | null;
+};
+
+export type GmailRelanceSummary = {
+  connected_accounts_count: number;
+  starred_threads_seen: number;
+  unlinked_starred_threads: number;
+  sent_relances_last_24h: number;
+  blocked_actions_last_24h: number;
+  payment_signals_last_24h: number;
+  latest_cycle_sent_count: number;
+  latest_cycle_skipped_count: number;
+  latest_cycle_failed_count: number;
+};
+
+export type GmailRelanceMessageItem = {
+  id: number;
+  email_account_id: number;
+  account_email: string | null;
+  provider_thread_id: string | null;
+  provider_message_id: string;
+  subject: string | null;
+  from_email: string | null;
+  to_email: string | null;
+  snippet: string | null;
+  received_at: string | null;
+  is_starred: boolean;
+  match_status: string;
+  match_reason: string;
+  review_status: string;
+  order: GmailRelanceOrderSummary | null;
+  analysis_type: string | null;
+  analysis_status: string | null;
+  analysis_reason: string | null;
+  detected_amount: MoneyValue;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GmailRelanceSentItem = {
+  id: number;
+  email_account_id: number | null;
+  account_email: string | null;
+  provider_thread_id: string | null;
+  provider_message_id: string | null;
+  to_email: string;
+  subject: string;
+  status: string;
+  sent_at: string | null;
+  error_message: string | null;
+  last_error: string | null;
+  order: GmailRelanceOrderSummary | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GmailRelanceActionItem = {
+  id: number;
+  run_id: number;
+  case_type: string;
+  case_id: number;
+  restaurant_id: number;
+  restaurant_name: string | null;
+  action_type: string;
+  status: string;
+  reason: string;
+  skipped_reason: string | null;
+  email_draft_id: number | null;
+  provider_draft_id: number | null;
+  sent_at: string | null;
+  order: GmailRelanceOrderSummary | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GmailRelanceDashboard = {
+  updated_at: string;
+  worker: GmailInboundStatus;
+  summary: GmailRelanceSummary;
+  starred_threads: GmailRelanceMessageItem[];
+  sent_relances: GmailRelanceSentItem[];
+  recent_actions: GmailRelanceActionItem[];
+};
+
 export type GmailInboundSyncPayload = {
   lookback_days?: number;
   max_messages?: number;
@@ -2487,6 +2580,8 @@ export const api = {
   sendResendDraft: (draftId: number, payload: ResendSendPayload) =>
     postJson<EmailProviderDraft, ResendSendPayload>(`/v1/drafts/${draftId}/resend-send`, payload),
   getInboundStatus: () => request<GmailInboundStatus>("/v1/email/gmail/inbound/status"),
+  getGmailRelanceDashboard: (limit = 80) =>
+    request<GmailRelanceDashboard>(`/v1/email/gmail/relances?limit=${encodeURIComponent(String(limit))}`),
   syncInboundGmail: (payload: GmailInboundSyncPayload = {}) =>
     postJson<GmailInboundSyncResponse, GmailInboundSyncPayload>("/v1/email/gmail/inbound/sync", payload),
   analyzeInboundGmail: (payload: GmailResponseAnalyzePayload = {}) =>
