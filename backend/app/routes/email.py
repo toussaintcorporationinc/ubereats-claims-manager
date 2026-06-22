@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.auth import (
     can_access_restaurant,
@@ -27,6 +27,7 @@ from app.models import (
     EmailProviderDraft,
     EmailThread,
     GmailSyncState,
+    GmailResponseAnalysis,
     InboundEmailMessage,
     Restaurant,
     User,
@@ -44,6 +45,12 @@ from app.schemas.domain import (
     GmailInboundSyncRequest,
     GmailInboundSyncResponse,
     GmailOAuthStartResponse,
+    GmailRelanceActionItem,
+    GmailRelanceDashboardResponse,
+    GmailRelanceMessageItem,
+    GmailRelanceOrderSummary,
+    GmailRelanceSentItem,
+    GmailRelanceSummary,
     GmailRestaurantMappingRead,
     GmailRestaurantMappingUpdate,
     GmailWorkerBlockerSummary,
@@ -734,6 +741,260 @@ def gmail_inbound_status(
         status=latest_sync_state.status if latest_sync_state else None,
         last_error=next((state.last_error for state in sync_states if state.last_error), None),
         last_autopilot_blockers=_last_autopilot_blockers(db, current_user),
+    )
+
+
+def _labels_include_starred(labels: object) -> bool:
+    if not isinstance(labels, list):
+        return False
+    return any(str(label).upper() == "STARRED" for label in labels)
+
+
+def _short_text(value: str | None, limit: int = 260) -> str | None:
+    if value is None:
+        return None
+    compact = " ".join(value.split())
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[: limit - 1].rstrip()}..."
+
+
+def _gmail_relance_order_summary(order: ClaimOrder | None) -> GmailRelanceOrderSummary | None:
+    if order is None:
+        return None
+    return GmailRelanceOrderSummary(
+        order_id=order.id,
+        restaurant_id=order.restaurant_id,
+        restaurant_name=order.restaurant.name if order.restaurant else None,
+        uber_order_number=order.uber_order_number,
+        customer_name=order.customer_name,
+        order_date=order.order_date,
+        order_amount=order.order_amount,
+        currency=order.currency,
+        status=order.status,
+    )
+
+
+def _accessible_restaurant_filter(db: Session, user: User) -> list[int] | None:
+    accessible_ids = get_accessible_restaurant_ids(db, user)
+    if accessible_ids is None:
+        return None
+    return list(accessible_ids)
+
+
+def _gmail_relance_actions_query(db: Session, user: User):
+    statement = (
+        select(AutopilotAction)
+        .options(
+            selectinload(AutopilotAction.restaurant),
+            selectinload(AutopilotAction.email_draft),
+            selectinload(AutopilotAction.provider_draft),
+        )
+        .order_by(
+            AutopilotAction.sent_at.desc().nullslast(),
+            AutopilotAction.updated_at.desc(),
+            AutopilotAction.id.desc(),
+        )
+    )
+    accessible_ids = _accessible_restaurant_filter(db, user)
+    if accessible_ids is not None:
+        if not accessible_ids:
+            return statement.where(AutopilotAction.id == -1)
+        statement = statement.where(AutopilotAction.restaurant_id.in_(accessible_ids))
+    return statement
+
+
+def _gmail_relance_provider_drafts_query(db: Session, user: User):
+    statement = (
+        select(EmailProviderDraft)
+        .join(EmailProviderDraft.email_draft)
+        .join(EmailDraft.order)
+        .options(
+            selectinload(EmailProviderDraft.email_account),
+            selectinload(EmailProviderDraft.email_draft)
+            .selectinload(EmailDraft.order)
+            .selectinload(ClaimOrder.restaurant),
+        )
+        .where(EmailProviderDraft.provider == "gmail")
+        .order_by(
+            EmailProviderDraft.sent_at.desc().nullslast(),
+            EmailProviderDraft.updated_at.desc(),
+            EmailProviderDraft.id.desc(),
+        )
+    )
+    accessible_ids = _accessible_restaurant_filter(db, user)
+    if accessible_ids is not None:
+        if not accessible_ids:
+            return statement.where(EmailProviderDraft.id == -1)
+        statement = statement.where(ClaimOrder.restaurant_id.in_(accessible_ids))
+    return statement
+
+
+@router.get("/v1/email/gmail/relances", response_model=GmailRelanceDashboardResponse)
+def gmail_relance_dashboard(
+    limit: int = Query(default=80, ge=10, le=200),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+    provider: EmailProvider = Depends(get_gmail_provider),
+) -> GmailRelanceDashboardResponse:
+    worker_status = gmail_inbound_status(db=db, current_user=current_user, provider=provider)
+    connected_accounts = get_connected_gmail_accounts(db, current_user)
+    account_email_by_id = {account.id: account.email_address for account in connected_accounts}
+    since_24h = utc_now() - timedelta(hours=24)
+
+    visible_messages_statement = (
+        visible_inbound_messages_query(db, current_user)
+        .options(
+            selectinload(InboundEmailMessage.email_account),
+            selectinload(InboundEmailMessage.response_analysis),
+            selectinload(InboundEmailMessage.order).selectinload(ClaimOrder.restaurant),
+        )
+        .where(InboundEmailMessage.provider == "gmail")
+        .order_by(InboundEmailMessage.received_at.desc().nullslast(), InboundEmailMessage.id.desc())
+        .limit(min(max(limit * 12, 240), 2500))
+    )
+    visible_messages = list(db.scalars(visible_messages_statement).all())
+    starred_messages = [message for message in visible_messages if _labels_include_starred(message.provider_labels_json)]
+    latest_starred_messages = starred_messages[:limit]
+
+    message_items = [
+        GmailRelanceMessageItem(
+            id=message.id,
+            email_account_id=message.email_account_id,
+            account_email=message.email_account.email_address if message.email_account else account_email_by_id.get(message.email_account_id),
+            provider_thread_id=message.provider_thread_id,
+            provider_message_id=message.provider_message_id,
+            subject=message.subject,
+            from_email=message.from_email,
+            to_email=message.to_email,
+            snippet=_short_text(message.snippet or message.body_text),
+            received_at=message.received_at,
+            is_starred=True,
+            match_status=message.match_status,
+            match_reason=message.match_reason,
+            review_status=message.review_status,
+            order=_gmail_relance_order_summary(message.order),
+            analysis_type=message.response_analysis.recommended_review_type if message.response_analysis else None,
+            analysis_status=message.response_analysis.status if message.response_analysis else None,
+            analysis_reason=message.response_analysis.reason if message.response_analysis else None,
+            detected_amount=message.response_analysis.detected_amount if message.response_analysis else None,
+            created_at=message.created_at,
+            updated_at=message.updated_at,
+        )
+        for message in latest_starred_messages
+    ]
+
+    sent_drafts = list(db.scalars(_gmail_relance_provider_drafts_query(db, current_user).limit(limit)).all())
+    sent_items = [
+        GmailRelanceSentItem(
+            id=draft.id,
+            email_account_id=draft.email_account_id,
+            account_email=draft.email_account.email_address if draft.email_account else None,
+            provider_thread_id=draft.provider_thread_id,
+            provider_message_id=draft.provider_message_id,
+            to_email=draft.to_email,
+            subject=draft.subject,
+            status=draft.status,
+            sent_at=draft.sent_at,
+            error_message=_short_text(draft.error_message, 180),
+            last_error=_short_text(draft.last_error, 180),
+            order=_gmail_relance_order_summary(draft.email_draft.order if draft.email_draft else None),
+            created_at=draft.created_at,
+            updated_at=draft.updated_at,
+        )
+        for draft in sent_drafts
+    ]
+
+    actions = list(db.scalars(_gmail_relance_actions_query(db, current_user).limit(limit)).all())
+    action_order_ids = [action.case_id for action in actions if action.case_type == "claim_order"]
+    action_orders = (
+        list(
+            db.scalars(
+                select(ClaimOrder)
+                .options(selectinload(ClaimOrder.restaurant))
+                .where(ClaimOrder.id.in_(action_order_ids))
+            ).all()
+        )
+        if action_order_ids
+        else []
+    )
+    action_orders_by_id = {order.id: order for order in action_orders}
+    action_items = [
+        GmailRelanceActionItem(
+            id=action.id,
+            run_id=action.run_id,
+            case_type=action.case_type,
+            case_id=action.case_id,
+            restaurant_id=action.restaurant_id,
+            restaurant_name=action.restaurant.name if action.restaurant else None,
+            action_type=action.action_type,
+            status=action.status,
+            reason=action.reason,
+            skipped_reason=_short_text(action.skipped_reason, 180),
+            email_draft_id=action.email_draft_id,
+            provider_draft_id=action.provider_draft_id,
+            sent_at=action.sent_at,
+            order=_gmail_relance_order_summary(action_orders_by_id.get(action.case_id)),
+            created_at=action.created_at,
+            updated_at=action.updated_at,
+        )
+        for action in actions
+    ]
+
+    sent_count_statement = (
+        select(func.count(EmailProviderDraft.id))
+        .join(EmailProviderDraft.email_draft)
+        .join(EmailDraft.order)
+        .where(
+            EmailProviderDraft.provider == "gmail",
+            EmailProviderDraft.status == "sent",
+            EmailProviderDraft.sent_at >= since_24h,
+        )
+    )
+    blocked_count_statement = select(func.count(AutopilotAction.id)).where(
+        AutopilotAction.created_at >= since_24h,
+        AutopilotAction.status.in_(["skipped", "failed", "manual_review"]),
+    )
+    payment_signal_statement = (
+        select(func.count(GmailResponseAnalysis.id))
+        .join(InboundEmailMessage)
+        .where(
+            GmailResponseAnalysis.created_at >= since_24h,
+            GmailResponseAnalysis.recommended_review_type.in_(["accepted", "payment_to_verify", "payment_confirmed"]),
+        )
+    )
+
+    accessible_ids = _accessible_restaurant_filter(db, current_user)
+    if accessible_ids is not None:
+        if not accessible_ids:
+            sent_count_statement = sent_count_statement.where(EmailProviderDraft.id == -1)
+            blocked_count_statement = blocked_count_statement.where(AutopilotAction.id == -1)
+            payment_signal_statement = payment_signal_statement.where(InboundEmailMessage.id == -1)
+        else:
+            sent_count_statement = sent_count_statement.where(ClaimOrder.restaurant_id.in_(accessible_ids))
+            blocked_count_statement = blocked_count_statement.where(AutopilotAction.restaurant_id.in_(accessible_ids))
+            accessible_order_ids = select(ClaimOrder.id).where(ClaimOrder.restaurant_id.in_(accessible_ids))
+            payment_signal_statement = payment_signal_statement.where(InboundEmailMessage.order_id.in_(accessible_order_ids))
+
+    summary = GmailRelanceSummary(
+        connected_accounts_count=len(connected_accounts),
+        starred_threads_seen=len(starred_messages),
+        unlinked_starred_threads=sum(1 for message in starred_messages if message.order_id is None),
+        sent_relances_last_24h=int(db.scalar(sent_count_statement) or 0),
+        blocked_actions_last_24h=int(db.scalar(blocked_count_statement) or 0),
+        payment_signals_last_24h=int(db.scalar(payment_signal_statement) or 0),
+        latest_cycle_sent_count=worker_status.last_cycle.autopilot_sent_count if worker_status.last_cycle else 0,
+        latest_cycle_skipped_count=worker_status.last_cycle.autopilot_skipped_count if worker_status.last_cycle else 0,
+        latest_cycle_failed_count=worker_status.last_cycle.autopilot_failed_count if worker_status.last_cycle else 0,
+    )
+
+    return GmailRelanceDashboardResponse(
+        updated_at=utc_now(),
+        worker=worker_status,
+        summary=summary,
+        starred_threads=message_items,
+        sent_relances=sent_items,
+        recent_actions=action_items,
     )
 
 

@@ -804,6 +804,99 @@ class GmailInboundStatusResponse(BaseModel):
     last_error: str | None
 
 
+class GmailRelanceOrderSummary(BaseModel):
+    order_id: int | None = None
+    restaurant_id: int | None = None
+    restaurant_name: str | None = None
+    uber_order_number: str | None = None
+    customer_name: str | None = None
+    order_date: date | None = None
+    order_amount: Decimal | None = None
+    currency: str | None = None
+    status: str | None = None
+
+
+class GmailRelanceSummary(BaseModel):
+    connected_accounts_count: int = 0
+    starred_threads_seen: int = 0
+    unlinked_starred_threads: int = 0
+    sent_relances_last_24h: int = 0
+    blocked_actions_last_24h: int = 0
+    payment_signals_last_24h: int = 0
+    latest_cycle_sent_count: int = 0
+    latest_cycle_skipped_count: int = 0
+    latest_cycle_failed_count: int = 0
+
+
+class GmailRelanceMessageItem(BaseModel):
+    id: int
+    email_account_id: int
+    account_email: str | None = None
+    provider_thread_id: str | None = None
+    provider_message_id: str
+    subject: str | None = None
+    from_email: str | None = None
+    to_email: str | None = None
+    snippet: str | None = None
+    received_at: datetime | None = None
+    is_starred: bool = False
+    match_status: str
+    match_reason: str
+    review_status: str
+    order: GmailRelanceOrderSummary | None = None
+    analysis_type: str | None = None
+    analysis_status: str | None = None
+    analysis_reason: str | None = None
+    detected_amount: Decimal | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GmailRelanceSentItem(BaseModel):
+    id: int
+    email_account_id: int | None = None
+    account_email: str | None = None
+    provider_thread_id: str | None = None
+    provider_message_id: str | None = None
+    to_email: str
+    subject: str
+    status: str
+    sent_at: datetime | None = None
+    error_message: str | None = None
+    last_error: str | None = None
+    order: GmailRelanceOrderSummary | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GmailRelanceActionItem(BaseModel):
+    id: int
+    run_id: int
+    case_type: str
+    case_id: int
+    restaurant_id: int
+    restaurant_name: str | None = None
+    action_type: str
+    status: str
+    reason: str
+    skipped_reason: str | None = None
+    email_draft_id: int | None = None
+    provider_draft_id: int | None = None
+    sent_at: datetime | None = None
+    order: GmailRelanceOrderSummary | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GmailRelanceDashboardResponse(BaseModel):
+    updated_at: datetime
+    worker: GmailInboundStatusResponse
+    summary: GmailRelanceSummary
+    starred_threads: list[GmailRelanceMessageItem]
+    sent_relances: list[GmailRelanceSentItem]
+    recent_actions: list[GmailRelanceActionItem]
+
+
 class GmailInboundSyncRequest(BaseModel):
     lookback_days: int | None = Field(default=None, ge=1, le=365)
     max_messages: int | None = Field(default=None, ge=1, le=500)
