@@ -584,9 +584,23 @@ def starred_thread_reply_skip_reason(db: Session, workflow: AppealWorkflow) -> s
         return "max_appeal_attempts_reached"
     if not settings.autopilot_refusal_retry_enabled:
         return "refusal_retry_disabled"
-    if cooldown_active(workflow.last_appeal_sent_at, settings.autopilot_cooldown_hours):
+    starred_message = latest_starred_linked_inbound_message(db, order.id)
+    if cooldown_active(workflow.last_appeal_sent_at, settings.autopilot_cooldown_hours) and not (
+        starred_message is not None
+        and message_is_newer_than(starred_message.received_at, workflow.last_appeal_sent_at)
+    ):
         return "cooldown_active"
     return None
+
+
+def message_is_newer_than(message_at: datetime | None, reference_at: datetime | None) -> bool:
+    if message_at is None or reference_at is None:
+        return False
+    if message_at.tzinfo is None:
+        message_at = message_at.replace(tzinfo=timezone.utc)
+    if reference_at.tzinfo is None:
+        reference_at = reference_at.replace(tzinfo=timezone.utc)
+    return message_at > reference_at
 
 
 def cooldown_active(value: datetime | None, cooldown_hours: int) -> bool:
