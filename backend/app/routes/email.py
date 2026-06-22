@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import HTMLResponse
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.auth import (
@@ -68,7 +68,7 @@ from app.services.audit import add_audit_log
 from app.services.email_provider import EmailProvider, EmailProviderError
 from app.services.followup_policy_service import complete_task_for_sent_provider_draft
 from app.services.gmail_email_provider import GmailEmailProvider
-from app.services.gmail_inbound_sync_service import GmailInboundSyncService
+from app.services.gmail_inbound_sync_service import GmailInboundSyncResult, GmailInboundSyncService
 from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
 from app.services.resend_email_provider import ResendEmailProvider
 from app.services.response_review_service import ResponseReviewError
@@ -750,6 +750,86 @@ def _labels_include_starred(labels: object) -> bool:
     return any(str(label).upper() == "STARRED" for label in labels)
 
 
+GMAIL_RELANCE_DASHBOARD_STARRED_REFRESH_LIMIT = 120
+
+
+def _refresh_starred_messages_for_relance_dashboard(
+    db: Session,
+    current_user: User,
+    provider: EmailProvider,
+    connected_accounts: list[EmailAccount],
+    *,
+    limit: int,
+) -> None:
+    """Lightweight Gmail refresh for the operator dashboard.
+
+    The normal worker can take time to walk a large mailbox. The relance page
+    still needs to show what Gmail currently has starred, so refresh a bounded
+    `is:starred` slice without running a full mailbox scan from a GET request.
+    """
+    settings = get_settings()
+    if not settings.email_provider_enabled or not settings.gmail_inbound_sync_enabled:
+        return
+    if not connected_accounts:
+        return
+
+    service = GmailInboundSyncService(provider)
+    order_identifier_index = service.build_order_identifier_index(db, current_user)
+    max_messages = min(max(limit, 10), GMAIL_RELANCE_DASHBOARD_STARRED_REFRESH_LIMIT)
+    result = GmailInboundSyncResult(status="success")
+
+    for account in connected_accounts:
+        try:
+            payloads = service.fetch_payloads(
+                db,
+                current_user,
+                account,
+                query="is:starred",
+                max_messages=max_messages,
+            )
+        except EmailProviderError:
+            continue
+
+        for payload in payloads:
+            if not payload.provider_message_id:
+                continue
+            existing_message = service.get_existing_message(db, account, payload.provider_message_id)
+            if existing_message is not None:
+                service.refresh_existing_message_from_payload(db, current_user, existing_message, payload)
+                service.reprocess_existing_message(
+                    db,
+                    current_user,
+                    account,
+                    existing_message,
+                    result,
+                    apply_reviews=True,
+                    payload=payload,
+                )
+                service.ensure_starred_linked_message_is_actionable(db, current_user, existing_message, result)
+                continue
+
+            inbound_message = service.create_inbound_message(
+                db,
+                current_user,
+                account,
+                payload,
+                order_identifier_index=order_identifier_index,
+            )
+            result.synced_messages += 1
+            service.reprocess_existing_message(
+                db,
+                current_user,
+                account,
+                inbound_message,
+                result,
+                apply_reviews=True,
+                payload=payload,
+            )
+            service.ensure_starred_linked_message_is_actionable(db, current_user, inbound_message, result)
+
+    db.commit()
+
+
 def _short_text(value: str | None, limit: int = 260) -> str | None:
     if value is None:
         return None
@@ -833,29 +913,53 @@ def _gmail_relance_provider_drafts_query(db: Session, user: User):
 @router.get("/v1/email/gmail/relances", response_model=GmailRelanceDashboardResponse)
 def gmail_relance_dashboard(
     limit: int = Query(default=80, ge=10, le=200),
+    refresh: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_owner_or_manager),
     provider: EmailProvider = Depends(get_gmail_provider),
 ) -> GmailRelanceDashboardResponse:
-    worker_status = gmail_inbound_status(db=db, current_user=current_user, provider=provider)
     connected_accounts = get_connected_gmail_accounts(db, current_user)
+    if refresh:
+        _refresh_starred_messages_for_relance_dashboard(
+            db,
+            current_user,
+            provider,
+            connected_accounts,
+            limit=limit,
+        )
+    worker_status = gmail_inbound_status(db=db, current_user=current_user, provider=provider)
     account_email_by_id = {account.id: account.email_address for account in connected_accounts}
     since_24h = utc_now() - timedelta(hours=24)
 
+    labels_text = cast(InboundEmailMessage.provider_labels_json, String)
+    starred_messages_base_statement = visible_inbound_messages_query(db, current_user).where(
+        InboundEmailMessage.provider == "gmail",
+        labels_text.ilike("%STARRED%"),
+    )
+    starred_total = int(
+        db.scalar(starred_messages_base_statement.with_only_columns(func.count(InboundEmailMessage.id)).order_by(None))
+        or 0
+    )
+    unlinked_starred_total = int(
+        db.scalar(
+            starred_messages_base_statement.where(InboundEmailMessage.order_id.is_(None))
+            .with_only_columns(func.count(InboundEmailMessage.id))
+            .order_by(None)
+        )
+        or 0
+    )
     visible_messages_statement = (
-        visible_inbound_messages_query(db, current_user)
+        starred_messages_base_statement
         .options(
             selectinload(InboundEmailMessage.email_account),
             selectinload(InboundEmailMessage.response_analysis),
             selectinload(InboundEmailMessage.order).selectinload(ClaimOrder.restaurant),
         )
-        .where(InboundEmailMessage.provider == "gmail")
         .order_by(InboundEmailMessage.received_at.desc().nullslast(), InboundEmailMessage.id.desc())
-        .limit(min(max(limit * 12, 240), 2500))
+        .limit(limit)
     )
     visible_messages = list(db.scalars(visible_messages_statement).all())
-    starred_messages = [message for message in visible_messages if _labels_include_starred(message.provider_labels_json)]
-    latest_starred_messages = starred_messages[:limit]
+    latest_starred_messages = [message for message in visible_messages if _labels_include_starred(message.provider_labels_json)]
 
     message_items = [
         GmailRelanceMessageItem(
@@ -978,8 +1082,8 @@ def gmail_relance_dashboard(
 
     summary = GmailRelanceSummary(
         connected_accounts_count=len(connected_accounts),
-        starred_threads_seen=len(starred_messages),
-        unlinked_starred_threads=sum(1 for message in starred_messages if message.order_id is None),
+        starred_threads_seen=starred_total,
+        unlinked_starred_threads=unlinked_starred_total,
         sent_relances_last_24h=int(db.scalar(sent_count_statement) or 0),
         blocked_actions_last_24h=int(db.scalar(blocked_count_statement) or 0),
         payment_signals_last_24h=int(db.scalar(payment_signal_statement) or 0),
