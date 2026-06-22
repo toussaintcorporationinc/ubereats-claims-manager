@@ -183,7 +183,7 @@ class GmailInboundSyncService:
         try:
             order_identifier_index = self.build_order_identifier_index(db, user)
             settings = get_settings()
-            starred_max_messages = max(0, min(max_messages, settings.gmail_starred_max_messages_per_sync))
+            starred_max_messages = max(0, settings.gmail_starred_max_messages_per_sync)
             payloads = merge_unique_payloads(
                 self.fetch_payloads(db, user, account, query=query, max_messages=max_messages),
                 self.fetch_starred_payloads(

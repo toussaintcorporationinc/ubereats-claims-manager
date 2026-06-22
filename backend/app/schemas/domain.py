@@ -780,6 +780,7 @@ class GmailInboundStatusResponse(BaseModel):
     enabled: bool
     connected: bool
     auto_sync_enabled: bool = False
+    auto_sync_continuous_enabled: bool = False
     auto_sync_interval_seconds: int | None = None
     auto_sync_run_autopilot: bool = False
     auto_sync_run_workspace_machine: bool = False

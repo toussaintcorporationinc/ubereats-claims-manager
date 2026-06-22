@@ -1022,16 +1022,20 @@ Variables attendues :
 - `EMAIL_PROVIDER_ENABLED=false` par defaut ;
 - `GMAIL_INBOUND_SYNC_ENABLED=false` par defaut ;
 - `GMAIL_INBOUND_SYNC_LOOKBACK_DAYS=30` ;
-- `GMAIL_INBOUND_MAX_MESSAGES_PER_SYNC=100` ;
+- `GMAIL_INBOUND_MAX_MESSAGES_PER_SYNC=1000` ;
+- `GMAIL_STARRED_MAX_MESSAGES_PER_SYNC=5000` ;
+- `GMAIL_STARRED_FULL_HISTORY_ENABLED=true` ;
 - `GMAIL_INBOUND_AUTO_SYNC_ENABLED=false` par defaut ;
-- `GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS=300` ;
+- `GMAIL_INBOUND_AUTO_SYNC_CONTINUOUS_ENABLED=true` pour enchainer les cycles sans attente humaine ;
+- `GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS=30` si le mode continu est desactive ;
+- `GMAIL_INBOUND_AUTO_SYNC_EXISTING_REPROCESS_LIMIT=1000` ;
 - `GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT=true` ;
 - `GMAIL_SUPPORT_SENDER_FILTER=uber.com` ;
 - `GMAIL_SCOPES` doit inclure `https://www.googleapis.com/auth/gmail.readonly` en plus des scopes de brouillon/envoi.
 
 Les comptes connectes avant l'ajout de `gmail.readonly` doivent se reconnecter pour autoriser la lecture.
 
-Quand `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true`, le backend lance automatiquement la meme sync a intervalle regulier pour les comptes Gmail connectes `owner` et `manager`. Les comptes `staff` sont ignores. Les messages restent dedupliques par compte + id Gmail. En production, un intervalle de 300 secondes permet a TENNET de travailler en continu sans clic utilisateur.
+Quand `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true`, le backend lance automatiquement la meme sync pour les comptes Gmail connectes `owner` et `manager`. Les comptes `staff` sont ignores. Les messages restent dedupliques par compte + id Gmail. En production, `GMAIL_INBOUND_AUTO_SYNC_CONTINUOUS_ENABLED=true` permet a TENNET d'enchainer les cycles en arriere-plan pour vider les mails Gmail etoiles sans attendre une action utilisateur.
 
 Les relances automatiques Gmail restent bloquees si le fil Gmail n'est pas etoile, si le client, le numero de commande, la date, le restaurant ou la signature restaurant complete manquent. La signature complete attendue contient le nom, l'adresse, le telephone et l'email expediteur du restaurant.
 

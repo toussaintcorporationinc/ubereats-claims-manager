@@ -420,7 +420,7 @@ def test_inbound_status_connected_and_not_connected(
     assert not_connected_payload["enabled"] is True
     assert not_connected_payload["connected"] is False
     assert not_connected_payload["auto_sync_enabled"] is False
-    assert not_connected_payload["auto_sync_interval_seconds"] == 300
+    assert not_connected_payload["auto_sync_interval_seconds"] == 30
     assert not_connected_payload["auto_sync_run_autopilot"] is True
     assert not_connected_payload["auto_sync_run_workspace_machine"] is True
     assert not_connected_payload["autopilot_enabled"] is False
@@ -868,6 +868,7 @@ def test_sync_starred_gmail_query_can_be_limited_when_full_history_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GMAIL_STARRED_FULL_HISTORY_ENABLED", "false")
+    monkeypatch.setenv("GMAIL_STARRED_MAX_MESSAGES_PER_SYNC", "4")
     get_settings.cache_clear()
     owner = get_user(db_session, "owner@example.com")
     connect_gmail_account(db_session, owner.id)
@@ -880,8 +881,8 @@ def test_sync_starred_gmail_query_can_be_limited_when_full_history_disabled(
 
     assert response.status_code == 200
     starred_limits = {query: limit for query, limit in fake_gmail_provider.query_limits if "is:starred" in query}
-    assert starred_limits["is:starred has:attachment"] == 2
-    assert starred_limits["is:starred"] == 2
+    assert starred_limits["is:starred has:attachment"] == 4
+    assert starred_limits["is:starred"] == 4
     assert fake_gmail_provider.all_queries == []
     get_settings.cache_clear()
 
@@ -1056,11 +1057,28 @@ def test_auto_sync_recovers_stale_running_state(
     service = GmailInboundAutoSyncService(fake_gmail_provider)
     now = utc_now()
 
-    recent_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=600))
-    stale_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=1801))
+    recent_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=120))
+    stale_running = GmailSyncState(status="running", last_sync_at=now - timedelta(seconds=301))
 
     assert service.account_is_due(recent_running, now) is False
     assert service.account_is_due(stale_running, now) is True
+    get_settings.cache_clear()
+
+
+def test_auto_sync_continuous_mode_keeps_accounts_due(
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_CONTINUOUS_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_IDLE_SLEEP_SECONDS", "1")
+    get_settings.cache_clear()
+    service = GmailInboundAutoSyncService(fake_gmail_provider)
+    now = utc_now()
+
+    recently_synced = GmailSyncState(status="success", last_sync_at=now - timedelta(seconds=1))
+
+    assert service.account_is_due(recently_synced, now) is True
+    assert service.effective_interval_seconds() == 1
     get_settings.cache_clear()
 
 

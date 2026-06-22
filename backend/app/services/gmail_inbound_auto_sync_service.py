@@ -21,6 +21,9 @@ from app.services.gmail_inbound_sync_service import GmailInboundSyncResult, Gmai
 
 logger = logging.getLogger(__name__)
 
+MIN_AUTO_SYNC_INTERVAL_SECONDS = 15
+MIN_CONTINUOUS_IDLE_SLEEP_SECONDS = 1
+
 
 @dataclass
 class GmailInboundAutoSyncResult:
@@ -158,15 +161,22 @@ class GmailInboundAutoSyncService:
 
     def account_is_due(self, sync_state: GmailSyncState, now: datetime) -> bool:
         last_sync_at = normalize_datetime(sync_state.last_sync_at) if sync_state.last_sync_at is not None else None
-        interval_seconds = max(60, self.settings.gmail_inbound_auto_sync_interval_seconds)
+        interval_seconds = self.effective_interval_seconds()
         if sync_state.status == "running":
             if last_sync_at is None:
                 return True
-            stale_after_seconds = max(interval_seconds * 4, 1800)
+            stale_after_seconds = max(interval_seconds * 4, 300)
             return now >= last_sync_at + timedelta(seconds=stale_after_seconds)
+        if self.settings.gmail_inbound_auto_sync_continuous_enabled:
+            return True
         if last_sync_at is None:
             return True
         return now >= last_sync_at + timedelta(seconds=interval_seconds)
+
+    def effective_interval_seconds(self) -> int:
+        if self.settings.gmail_inbound_auto_sync_continuous_enabled:
+            return max(MIN_CONTINUOUS_IDLE_SLEEP_SECONDS, self.settings.gmail_inbound_auto_sync_idle_sleep_seconds)
+        return max(MIN_AUTO_SYNC_INTERVAL_SECONDS, self.settings.gmail_inbound_auto_sync_interval_seconds)
 
     def add_account_result(self, result: GmailInboundAutoSyncResult, account_result: GmailInboundSyncResult) -> None:
         result.synced_messages += account_result.synced_messages
@@ -277,7 +287,12 @@ class GmailInboundAutoSyncScheduler:
                 await self.run_once()
             except Exception:
                 logger.exception("Gmail auto-sync loop iteration failed")
-            await asyncio.sleep(max(60, self.settings.gmail_inbound_auto_sync_interval_seconds))
+            await asyncio.sleep(self.effective_sleep_seconds())
+
+    def effective_sleep_seconds(self) -> int:
+        if self.settings.gmail_inbound_auto_sync_continuous_enabled:
+            return max(MIN_CONTINUOUS_IDLE_SLEEP_SECONDS, self.settings.gmail_inbound_auto_sync_idle_sleep_seconds)
+        return max(MIN_AUTO_SYNC_INTERVAL_SECONDS, self.settings.gmail_inbound_auto_sync_interval_seconds)
 
     async def run_once(self) -> GmailInboundAutoSyncResult | None:
         if self._running:

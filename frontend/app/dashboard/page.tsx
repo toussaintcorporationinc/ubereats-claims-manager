@@ -417,14 +417,12 @@ function GmailWorkerPanel({ status }: { status: GmailInboundStatus }) {
   const blockers = status.last_autopilot_blockers ?? [];
   const stateLabel =
     status.worker_state === "active"
-      ? "Surveillance active"
+      ? "Surveillance continue"
       : status.worker_state === "attention"
         ? "Attention requise"
         : "Desactive";
-  const nextSyncLabel =
-    status.seconds_until_next_sync !== null && status.seconds_until_next_sync !== undefined
-      ? `dans ${formatDuration(status.seconds_until_next_sync)}`
-      : formatDateTime(status.next_sync_at);
+  const intervalLabel = status.auto_sync_interval_seconds ? formatDuration(status.auto_sync_interval_seconds) : "-";
+  const continuousLabel = status.auto_sync_continuous_enabled ? "TENNET enchaine les cycles sans attente humaine." : `TENNET relance le traitement toutes les ${intervalLabel}.`;
   const cycleMessage = cycle
     ? `${cycle.accounts_synced}/${cycle.accounts_checked} compte(s), ${cycle.synced_messages} mail(s) lu(s), ${cycle.negative_responses_detected} refus detecte(s), ${cycle.autopilot_sent_count} relance(s) envoyee(s).`
     : "Aucun passage automatique enregistre encore.";
@@ -464,9 +462,13 @@ function GmailWorkerPanel({ status }: { status: GmailInboundStatus }) {
           <small>{cycleMessage}</small>
         </div>
         <div>
-          <span>Prochain passage</span>
-          <strong>{status.auto_sync_enabled ? nextSyncLabel : "sync automatique off"}</strong>
-          <small>Intervalle: {status.auto_sync_interval_seconds ? formatDuration(status.auto_sync_interval_seconds) : "-"}</small>
+          <span>Cycle continu</span>
+          <strong>{status.auto_sync_enabled ? "Actif 24/7" : "sync automatique off"}</strong>
+          <small>
+            {status.auto_sync_enabled
+              ? continuousLabel
+              : "Aucun traitement automatique en arriere-plan."}
+          </small>
         </div>
         <div>
           <span>Relances</span>
