@@ -655,18 +655,32 @@ def gmail_inbound_status(
     latest_success_at = _as_aware_utc(max((state.last_success_at for state in sync_states if state.last_success_at), default=None))
     base_time = latest_success_at or latest_sync_at or _as_aware_utc(last_cycle.created_at if last_cycle else None)
     interval_seconds = settings.gmail_inbound_auto_sync_interval_seconds
-    next_sync_at = base_time + timedelta(seconds=interval_seconds) if base_time and settings.gmail_inbound_auto_sync_enabled else None
+    continuous_enabled = settings.gmail_inbound_auto_sync_continuous_enabled
+    next_sync_at = (
+        base_time + timedelta(seconds=interval_seconds)
+        if base_time and settings.gmail_inbound_auto_sync_enabled and not continuous_enabled
+        else None
+    )
     now = utc_now()
-    seconds_until_next_sync = None
+    seconds_until_next_sync = 0 if settings.gmail_inbound_auto_sync_enabled and continuous_enabled else None
     if next_sync_at is not None:
         seconds_until_next_sync = max(0, int((next_sync_at - now).total_seconds()))
 
     has_cycle_errors = bool(last_cycle and last_cycle.errors)
     has_sync_errors = any(state.last_error for state in sync_states)
     overdue = (
-        next_sync_at is not None
-        and settings.gmail_inbound_auto_sync_enabled
-        and now > next_sync_at + timedelta(seconds=interval_seconds * 2)
+        settings.gmail_inbound_auto_sync_enabled
+        and (
+            (
+                next_sync_at is not None
+                and now > next_sync_at + timedelta(seconds=interval_seconds * 2)
+            )
+            or (
+                continuous_enabled
+                and base_time is not None
+                and now > base_time + timedelta(seconds=600)
+            )
+        )
     )
     if not settings.email_provider_enabled or not settings.gmail_inbound_sync_enabled:
         worker_state = "disabled"
@@ -691,6 +705,7 @@ def gmail_inbound_status(
         enabled=settings.email_provider_enabled and settings.gmail_inbound_sync_enabled,
         connected=connection_status.connected,
         auto_sync_enabled=settings.gmail_inbound_auto_sync_enabled,
+        auto_sync_continuous_enabled=continuous_enabled,
         auto_sync_interval_seconds=settings.gmail_inbound_auto_sync_interval_seconds,
         auto_sync_run_autopilot=settings.gmail_inbound_auto_sync_run_autopilot,
         auto_sync_run_workspace_machine=settings.gmail_inbound_auto_sync_run_workspace_machine,

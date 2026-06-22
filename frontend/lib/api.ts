@@ -452,6 +452,7 @@ export type GmailInboundStatus = {
   enabled: boolean;
   connected: boolean;
   auto_sync_enabled: boolean;
+  auto_sync_continuous_enabled: boolean;
   auto_sync_interval_seconds: number | null;
   auto_sync_run_autopilot: boolean;
   auto_sync_run_workspace_machine: boolean;
