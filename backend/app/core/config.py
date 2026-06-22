@@ -39,14 +39,14 @@ class Settings(BaseSettings):
     gmail_inbound_sync_enabled: bool = False
     gmail_inbound_sync_lookback_days: int = 30
     gmail_inbound_max_messages_per_sync: int = 1000
-    gmail_starred_max_messages_per_sync: int = 5000
+    gmail_starred_max_messages_per_sync: int = 50000
     gmail_starred_full_history_enabled: bool = True
     gmail_starred_page_size: int = 500
     gmail_starred_max_pages_per_sync: int = 0
     gmail_inbound_auto_sync_enabled: bool = False
     gmail_inbound_auto_sync_continuous_enabled: bool = True
     gmail_inbound_auto_sync_interval_seconds: int = 30
-    gmail_inbound_auto_sync_idle_sleep_seconds: int = 2
+    gmail_inbound_auto_sync_idle_sleep_seconds: int = 1
     gmail_inbound_auto_sync_initial_delay_seconds: int = 5
     gmail_inbound_auto_sync_existing_reprocess_limit: int = 1000
     gmail_inbound_auto_sync_run_autopilot: bool = True
