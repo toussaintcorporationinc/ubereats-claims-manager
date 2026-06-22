@@ -2580,8 +2580,10 @@ export const api = {
   sendResendDraft: (draftId: number, payload: ResendSendPayload) =>
     postJson<EmailProviderDraft, ResendSendPayload>(`/v1/drafts/${draftId}/resend-send`, payload),
   getInboundStatus: () => request<GmailInboundStatus>("/v1/email/gmail/inbound/status"),
-  getGmailRelanceDashboard: (limit = 80) =>
-    request<GmailRelanceDashboard>(`/v1/email/gmail/relances?limit=${encodeURIComponent(String(limit))}`),
+  getGmailRelanceDashboard: (limit = 80, refresh = false) =>
+    request<GmailRelanceDashboard>(
+      `/v1/email/gmail/relances?limit=${encodeURIComponent(String(limit))}&refresh=${refresh ? "true" : "false"}`,
+    ),
   syncInboundGmail: (payload: GmailInboundSyncPayload = {}) =>
     postJson<GmailInboundSyncResponse, GmailInboundSyncPayload>("/v1/email/gmail/inbound/sync", payload),
   analyzeInboundGmail: (payload: GmailResponseAnalyzePayload = {}) =>

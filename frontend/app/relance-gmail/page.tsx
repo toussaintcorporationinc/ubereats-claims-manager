@@ -24,24 +24,28 @@ export default function RelanceGmailPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadDashboard = useCallback(async () => {
-    setRefreshing(true);
+  const loadDashboard = useCallback(async (refreshStarred = false) => {
+    if (refreshStarred) {
+      setRefreshing(true);
+    }
     try {
-      const data = await api.getGmailRelanceDashboard(120);
+      const data = await api.getGmailRelanceDashboard(120, refreshStarred);
       setDashboard(data);
       setError(null);
     } catch (apiError) {
       setError(apiError);
     } finally {
       setLoading(false);
-      setRefreshing(false);
+      if (refreshStarred) {
+        setRefreshing(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    void loadDashboard();
+    void loadDashboard(true);
     const interval = window.setInterval(() => {
-      void loadDashboard();
+      void loadDashboard(false);
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(interval);
   }, [loadDashboard]);
@@ -65,7 +69,7 @@ export default function RelanceGmailPage() {
             paiements detectes et comptes connectes.
           </p>
         </div>
-        <button className="secondary-button" type="button" onClick={() => void loadDashboard()} disabled={refreshing}>
+        <button className="secondary-button" type="button" onClick={() => void loadDashboard(true)} disabled={refreshing}>
           {refreshing ? "Actualisation..." : "Actualiser"}
         </button>
       </div>
