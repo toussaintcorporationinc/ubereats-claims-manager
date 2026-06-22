@@ -39,6 +39,7 @@ class GmailInboundAutoSyncResult:
     applied_reviews: int = 0
     negative_responses_detected: int = 0
     identity_repaired_messages: int = 0
+    starred_messages_seen: int = 0
     autopilot_sent_count: int = 0
     autopilot_skipped_count: int = 0
     autopilot_failed_count: int = 0
@@ -95,10 +96,7 @@ class GmailInboundAutoSyncService:
                 )
                 if (
                     self.settings.gmail_inbound_auto_sync_run_autopilot
-                    and (
-                        account_result.negative_responses_detected > 0
-                        or account_result.identity_repaired_messages > 0
-                    )
+                    and sync_service.should_run_autopilot_for_result(db, user, account_result)
                 ):
                     sync_service.run_autopilot_for_negative_responses(db, user, account_result)
                 self.add_account_result(result, account_result)
@@ -134,6 +132,7 @@ class GmailInboundAutoSyncService:
                     "applied_reviews": result.applied_reviews,
                     "negative_responses_detected": result.negative_responses_detected,
                     "identity_repaired_messages": result.identity_repaired_messages,
+                    "starred_messages_seen": result.starred_messages_seen,
                     "autopilot_sent_count": result.autopilot_sent_count,
                     "autopilot_skipped_count": result.autopilot_skipped_count,
                     "autopilot_failed_count": result.autopilot_failed_count,
@@ -191,6 +190,7 @@ class GmailInboundAutoSyncService:
         result.applied_reviews += account_result.applied_reviews
         result.negative_responses_detected += account_result.negative_responses_detected
         result.identity_repaired_messages += account_result.identity_repaired_messages
+        result.starred_messages_seen += account_result.starred_messages_seen
         result.autopilot_sent_count += account_result.autopilot_sent_count
         result.autopilot_skipped_count += account_result.autopilot_skipped_count
         result.autopilot_failed_count += account_result.autopilot_failed_count

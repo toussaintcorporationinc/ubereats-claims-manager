@@ -22,7 +22,7 @@ from app.services.autopilot_identity_repair_service import (
     find_or_create_order_from_starred_text,
     repair_order_identity_from_inbound_attachments,
 )
-from app.services.autopilot_service import AutopilotError, run_autopilot
+from app.services.autopilot_service import AutopilotError, iter_candidates, run_autopilot
 from app.services.email_provider import EmailProvider, EmailProviderError, InboundEmailPayload
 from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
 
@@ -50,6 +50,7 @@ class GmailInboundSyncResult:
     manual_review_messages: int = 0
     negative_responses_detected: int = 0
     identity_repaired_messages: int = 0
+    starred_messages_seen: int = 0
     autopilot_run_id: int | None = None
     autopilot_sent_count: int = 0
     autopilot_skipped_count: int = 0
@@ -142,7 +143,7 @@ class GmailInboundSyncService:
         if (
             run_autopilot_after_sync
             and apply_reviews
-            and (result.negative_responses_detected > 0 or result.identity_repaired_messages > 0)
+            and self.should_run_autopilot_for_result(db, user, result)
         ):
             self.run_autopilot_for_negative_responses(db, user, result)
         return result
@@ -522,7 +523,7 @@ class GmailInboundSyncService:
             .where(
                 InboundEmailMessage.email_account_id == account.id,
                 labels_text.ilike("%STARRED%"),
-                InboundEmailMessage.match_status.in_(["unlinked", "ignored"]),
+                InboundEmailMessage.match_status.in_(["linked", "unlinked", "ignored"]),
             )
             .order_by(InboundEmailMessage.received_at.desc().nullslast(), InboundEmailMessage.id.desc())
         )
@@ -532,11 +533,22 @@ class GmailInboundSyncService:
         for message in messages:
             if message.id in exclude_message_ids:
                 continue
-            payload = self.fetch_single_payload(db, user, account, message.provider_message_id)
+            result.starred_messages_seen += 1
+            payload = (
+                self.fetch_single_payload(db, user, account, message.provider_message_id)
+                if message.provider_message_id
+                else None
+            )
+            if payload is not None and self.refresh_existing_message_from_payload(db, user, message, payload):
+                result.synced_messages += 1
+            if message.match_status == "linked" and message.order_id is not None:
+                if payload is not None:
+                    self.repair_identity_from_payload_attachments(db, user, message, payload, result)
+                if message.review_status == "unreviewed" and should_analyze_message(message, account):
+                    self.analyze_linked_message(db, user, account, message, result, apply_reviews=apply_reviews)
+                continue
             if payload is None:
                 continue
-            if self.refresh_existing_message_from_payload(db, user, message, payload):
-                result.synced_messages += 1
             if self.link_or_create_from_starred_attachment(
                 db,
                 user,
@@ -548,6 +560,21 @@ class GmailInboundSyncService:
                 account=account,
             ):
                 result.linked_messages += 1
+
+    def should_run_autopilot_for_result(
+        self,
+        db: Session,
+        user: User,
+        result: GmailInboundSyncResult,
+    ) -> bool:
+        if result.negative_responses_detected > 0 or result.identity_repaired_messages > 0:
+            return True
+        if result.starred_messages_seen <= 0:
+            return False
+        settings = get_settings()
+        if not settings.autopilot_enabled or not settings.autopilot_appeals_enabled:
+            return False
+        return bool(iter_candidates(db, user, "appeals", None))
 
     def fetch_single_payload(
         self,
