@@ -415,6 +415,29 @@ class GmailEmailProvider:
             {"Authorization": f"Bearer {access_token}"},
         )
 
+    def get_thread_messages_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        thread_id: str,
+    ) -> list[InboundEmailPayload]:
+        access_token = self.access_token_for_external_call(db, account)
+        payload = self.get_json(
+            f"{GMAIL_THREADS_URL}/{quote(thread_id, safe='')}?format=full",
+            {"Authorization": f"Bearer {access_token}"},
+        )
+        raw_messages = payload.get("messages")
+        if not isinstance(raw_messages, list):
+            return []
+
+        messages: list[InboundEmailPayload] = []
+        for item in raw_messages:
+            if not isinstance(item, dict):
+                continue
+            attachments = self.extract_inbound_attachments(access_token, item)
+            messages.append(self.parse_gmail_message(item, attachments=attachments))
+        return messages
+
     def get_thread(self, db: Session, user: User, thread_id: str) -> dict[str, Any]:
         self.ensure_enabled_and_configured(require_secret=True)
         account = self.get_active_account(db, user.id)

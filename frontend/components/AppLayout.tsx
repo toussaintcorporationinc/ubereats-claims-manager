@@ -15,7 +15,7 @@ const navigation: NavItem[] = [
   { href: "/dashboard", label: "Accueil", group: "main" },
   { href: "/remboursements", label: "Remboursement", group: "main", ownerOrManagerOnly: true },
   { href: "/annulations", label: "Annulation", group: "main", ownerOrManagerOnly: true },
-  { href: "/relance-gmail", label: "Relance Gmail", group: "main", ownerOrManagerOnly: true },
+  { href: "/gmail-war-room", label: "Relance Gmail", group: "main", ownerOrManagerOnly: true },
   { href: "/smart-import", label: "Depot avance", group: "work", ownerOrManagerOnly: true },
   { href: "/evidence-tasks", label: "Preuves", group: "main" },
   { href: "/live-evidence", label: "Camera + tickets", group: "main" },
@@ -46,7 +46,7 @@ const primaryNavigationHrefs = new Set([
   "/dashboard",
   "/remboursements",
   "/annulations",
-  "/relance-gmail",
+  "/gmail-war-room",
 ]);
 
 const publicPaths = new Set(["/login", "/setup-owner"]);

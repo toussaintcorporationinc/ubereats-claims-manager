@@ -18,6 +18,10 @@ from app.services.audit import add_audit_log
 from app.services.email_provider import EmailProvider, EmailProviderError
 from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_sync_service import GmailInboundSyncResult, GmailInboundSyncService
+from app.services.gmail_watched_thread_monitor_service import (
+    GmailWatchedThreadMonitorResult,
+    GmailWatchedThreadMonitorService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +44,14 @@ class GmailInboundAutoSyncResult:
     negative_responses_detected: int = 0
     identity_repaired_messages: int = 0
     starred_messages_seen: int = 0
+    watched_threads_seen: int = 0
+    watched_threads_created: int = 0
+    watched_thread_new_messages: int = 0
+    watched_thread_processed_messages: int = 0
+    watched_thread_positive_responses: int = 0
+    watched_thread_refused_responses: int = 0
+    watched_thread_evidence_requests: int = 0
+    watched_thread_manual_reviews: int = 0
     autopilot_sent_count: int = 0
     autopilot_skipped_count: int = 0
     autopilot_failed_count: int = 0
@@ -66,6 +78,11 @@ class GmailInboundAutoSyncService:
             return GmailInboundAutoSyncResult(status="disabled")
 
         sync_service = GmailInboundSyncService(self.provider)
+        watched_thread_monitor = GmailWatchedThreadMonitorService(
+            self.provider,
+            settings=self.settings,
+            sync_service=sync_service,
+        )
         result = GmailInboundAutoSyncResult(status="success")
         now = utc_now()
         accounts = list(db.scalars(self.active_accounts_statement()).all())
@@ -94,6 +111,16 @@ class GmailInboundAutoSyncService:
                     apply_reviews=True,
                     reprocess_existing_limit=self.settings.gmail_inbound_auto_sync_existing_reprocess_limit,
                 )
+                if self.settings.gmail_watched_threads_enabled:
+                    watched_result = watched_thread_monitor.process_account(
+                        db,
+                        user,
+                        account,
+                        max_threads=self.settings.gmail_watched_threads_max_per_cycle,
+                        discover_starred=True,
+                        process_new_messages=self.settings.gmail_watched_threads_process_new_messages,
+                    )
+                    self.add_watched_thread_result(result, watched_result)
                 if (
                     self.settings.gmail_inbound_auto_sync_run_autopilot
                     and sync_service.should_run_autopilot_for_result(db, user, account_result)
@@ -133,6 +160,14 @@ class GmailInboundAutoSyncService:
                     "negative_responses_detected": result.negative_responses_detected,
                     "identity_repaired_messages": result.identity_repaired_messages,
                     "starred_messages_seen": result.starred_messages_seen,
+                    "watched_threads_seen": result.watched_threads_seen,
+                    "watched_threads_created": result.watched_threads_created,
+                    "watched_thread_new_messages": result.watched_thread_new_messages,
+                    "watched_thread_processed_messages": result.watched_thread_processed_messages,
+                    "watched_thread_positive_responses": result.watched_thread_positive_responses,
+                    "watched_thread_refused_responses": result.watched_thread_refused_responses,
+                    "watched_thread_evidence_requests": result.watched_thread_evidence_requests,
+                    "watched_thread_manual_reviews": result.watched_thread_manual_reviews,
                     "autopilot_sent_count": result.autopilot_sent_count,
                     "autopilot_skipped_count": result.autopilot_skipped_count,
                     "autopilot_failed_count": result.autopilot_failed_count,
@@ -195,6 +230,24 @@ class GmailInboundAutoSyncService:
         result.autopilot_skipped_count += account_result.autopilot_skipped_count
         result.autopilot_failed_count += account_result.autopilot_failed_count
         result.errors.extend(account_result.errors)
+
+    def add_watched_thread_result(
+        self,
+        result: GmailInboundAutoSyncResult,
+        watched_result: GmailWatchedThreadMonitorResult,
+    ) -> None:
+        result.watched_threads_seen += watched_result.watched_threads_seen
+        result.watched_threads_created += watched_result.watched_threads_created
+        result.watched_thread_new_messages += watched_result.new_messages_detected
+        result.watched_thread_processed_messages += watched_result.processed_messages
+        result.watched_thread_positive_responses += watched_result.positive_responses
+        result.watched_thread_refused_responses += watched_result.refused_responses
+        result.watched_thread_evidence_requests += watched_result.evidence_requests
+        result.watched_thread_manual_reviews += watched_result.manual_reviews
+        result.autopilot_sent_count += watched_result.autopilot_sent_count
+        result.autopilot_skipped_count += watched_result.autopilot_skipped_count
+        result.autopilot_failed_count += watched_result.autopilot_failed_count
+        result.errors.extend(watched_result.errors)
 
     def run_workspace_machine(self, db: Session, user: User, result: GmailInboundAutoSyncResult) -> None:
         from app.schemas.domain import WorkspaceMachineRunRequest

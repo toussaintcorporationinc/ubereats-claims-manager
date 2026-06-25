@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     gmail_inbound_auto_sync_existing_reprocess_limit: int = 1000
     gmail_inbound_auto_sync_run_autopilot: bool = True
     gmail_inbound_auto_sync_run_workspace_machine: bool = True
+    gmail_watched_threads_enabled: bool = True
+    gmail_watched_threads_poll_seconds: int = 30
+    gmail_watched_threads_full_rescan_minutes: int = 15
+    gmail_watched_threads_max_per_cycle: int = 5000
+    gmail_watched_threads_process_new_messages: bool = True
     gmail_support_sender_filter: str = "uber.com"
     followup_1_delay_days: int = 2
     followup_2_delay_days: int = 5

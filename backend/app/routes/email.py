@@ -28,6 +28,8 @@ from app.models import (
     EmailThread,
     GmailSyncState,
     GmailResponseAnalysis,
+    GmailStarredWorkItem,
+    GmailWatchedThread,
     InboundEmailMessage,
     Restaurant,
     User,
@@ -53,10 +55,14 @@ from app.schemas.domain import (
     GmailRelanceSummary,
     GmailRestaurantMappingRead,
     GmailRestaurantMappingUpdate,
+    GmailWarRoomResponse,
     GmailWorkerBlockerSummary,
     GmailResponseAnalysisRead,
     GmailResponseAnalyzeRequest,
     GmailResponseAnalyzeResponse,
+    GmailWatchedThreadItem,
+    GmailWatchedThreadSummary,
+    GmailWatchedWorkItem,
     GmailWorkerCycleSummary,
     InboundEmailMessageRead,
     InboundManualLinkRequest,
@@ -70,6 +76,7 @@ from app.services.followup_policy_service import complete_task_for_sent_provider
 from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_sync_service import GmailInboundSyncResult, GmailInboundSyncService
 from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
+from app.services.gmail_watched_thread_monitor_service import GmailWatchedThreadMonitorService
 from app.services.resend_email_provider import ResendEmailProvider
 from app.services.response_review_service import ResponseReviewError
 
@@ -142,6 +149,14 @@ def _last_gmail_auto_sync_cycle(db: Session) -> GmailWorkerCycleSummary | None:
         synced_messages=_as_int(payload.get("synced_messages")),
         applied_reviews=_as_int(payload.get("applied_reviews")),
         negative_responses_detected=_as_int(payload.get("negative_responses_detected")),
+        watched_threads_seen=_as_int(payload.get("watched_threads_seen")),
+        watched_threads_created=_as_int(payload.get("watched_threads_created")),
+        watched_thread_new_messages=_as_int(payload.get("watched_thread_new_messages")),
+        watched_thread_processed_messages=_as_int(payload.get("watched_thread_processed_messages")),
+        watched_thread_positive_responses=_as_int(payload.get("watched_thread_positive_responses")),
+        watched_thread_refused_responses=_as_int(payload.get("watched_thread_refused_responses")),
+        watched_thread_evidence_requests=_as_int(payload.get("watched_thread_evidence_requests")),
+        watched_thread_manual_reviews=_as_int(payload.get("watched_thread_manual_reviews")),
         autopilot_sent_count=_as_int(payload.get("autopilot_sent_count")),
         autopilot_skipped_count=_as_int(payload.get("autopilot_skipped_count")),
         autopilot_failed_count=_as_int(payload.get("autopilot_failed_count")),
@@ -827,6 +842,12 @@ def _refresh_starred_messages_for_relance_dashboard(
             )
             service.ensure_starred_linked_message_is_actionable(db, current_user, inbound_message, result)
 
+        GmailWatchedThreadMonitorService(provider, sync_service=service).discover_from_starred_messages(
+            db,
+            current_user,
+            account,
+        )
+
     db.commit()
 
 
@@ -1099,6 +1120,243 @@ def gmail_relance_dashboard(
         starred_threads=message_items,
         sent_relances=sent_items,
         recent_actions=action_items,
+    )
+
+
+@router.get("/v1/email/gmail/war-room", response_model=GmailWarRoomResponse)
+def gmail_war_room(
+    limit: int = Query(default=120, ge=10, le=500),
+    refresh: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+    provider: EmailProvider = Depends(get_gmail_provider),
+) -> GmailWarRoomResponse:
+    connected_accounts = get_connected_gmail_accounts(db, current_user)
+    account_ids = [account.id for account in connected_accounts]
+    account_email_by_id = {account.id: account.email_address for account in connected_accounts}
+    if refresh and connected_accounts:
+        monitor = GmailWatchedThreadMonitorService(provider)
+        for account in connected_accounts:
+            monitor.process_account(
+                db,
+                current_user,
+                account,
+                max_threads=min(limit, get_settings().gmail_watched_threads_max_per_cycle),
+                discover_starred=True,
+                process_new_messages=True,
+            )
+        db.commit()
+
+    worker_status = gmail_inbound_status(db=db, current_user=current_user, provider=provider)
+    since_24h = utc_now() - timedelta(hours=24)
+    watched_base = select(GmailWatchedThread).where(GmailWatchedThread.email_account_id.in_(account_ids))
+    work_base = select(GmailStarredWorkItem).where(GmailStarredWorkItem.email_account_id.in_(account_ids))
+
+    active_watched_threads = int(
+        db.scalar(
+            watched_base.where(
+                GmailWatchedThread.status == "active",
+                GmailWatchedThread.star_active.is_(True),
+            )
+            .with_only_columns(func.count(GmailWatchedThread.id))
+            .order_by(None)
+        )
+        or 0
+    )
+    watched_threads_total = int(
+        db.scalar(watched_base.with_only_columns(func.count(GmailWatchedThread.id)).order_by(None)) or 0
+    )
+    new_messages_24h = int(
+        db.scalar(
+            work_base.where(GmailStarredWorkItem.created_at >= since_24h)
+            .with_only_columns(func.count(GmailStarredWorkItem.id))
+            .order_by(None)
+        )
+        or 0
+    )
+    processed_24h = int(
+        db.scalar(
+            work_base.where(
+                GmailStarredWorkItem.processed_at >= since_24h,
+                GmailStarredWorkItem.status.in_(["processed", "positive", "refused", "evidence_needed", "manual_review"]),
+            )
+            .with_only_columns(func.count(GmailStarredWorkItem.id))
+            .order_by(None)
+        )
+        or 0
+    )
+    positive_24h = int(
+        db.scalar(
+            work_base.where(
+                GmailStarredWorkItem.processed_at >= since_24h,
+                GmailStarredWorkItem.status == "positive",
+            )
+            .with_only_columns(func.count(GmailStarredWorkItem.id))
+            .order_by(None)
+        )
+        or 0
+    )
+    refused_24h = int(
+        db.scalar(
+            work_base.where(
+                GmailStarredWorkItem.processed_at >= since_24h,
+                GmailStarredWorkItem.status == "refused",
+            )
+            .with_only_columns(func.count(GmailStarredWorkItem.id))
+            .order_by(None)
+        )
+        or 0
+    )
+    evidence_24h = int(
+        db.scalar(
+            work_base.where(
+                GmailStarredWorkItem.processed_at >= since_24h,
+                GmailStarredWorkItem.status == "evidence_needed",
+            )
+            .with_only_columns(func.count(GmailStarredWorkItem.id))
+            .order_by(None)
+        )
+        or 0
+    )
+    manual_review_24h = int(
+        db.scalar(
+            work_base.where(
+                GmailStarredWorkItem.updated_at >= since_24h,
+                GmailStarredWorkItem.status.in_(["manual_review", "failed"]),
+            )
+            .with_only_columns(func.count(GmailStarredWorkItem.id))
+            .order_by(None)
+        )
+        or 0
+    )
+    quota_pending_24h = int(
+        db.scalar(
+            select(func.count(AutopilotAction.id)).where(
+                AutopilotAction.created_at >= since_24h,
+                AutopilotAction.status.in_(["skipped", "manual_review"]),
+                or_(
+                    AutopilotAction.skipped_reason.ilike("%quota%"),
+                    AutopilotAction.skipped_reason.ilike("%limit%"),
+                ),
+            )
+        )
+        or 0
+    )
+    backlog_remaining = int(
+        db.scalar(
+            work_base.where(GmailStarredWorkItem.status.in_(["pending", "processing", "manual_review", "failed"]))
+            .with_only_columns(func.count(GmailStarredWorkItem.id))
+            .order_by(None)
+        )
+        or 0
+    )
+
+    watched_threads = list(
+        db.scalars(
+            watched_base.options(selectinload(GmailWatchedThread.claim_order).selectinload(ClaimOrder.restaurant))
+            .order_by(
+                GmailWatchedThread.last_processed_at.asc().nullsfirst(),
+                GmailWatchedThread.last_message_at.desc().nullslast(),
+                GmailWatchedThread.id.desc(),
+            )
+            .limit(limit)
+        ).all()
+    )
+    watched_items = [
+        GmailWatchedThreadItem(
+            id=thread.id,
+            email_account_id=thread.email_account_id,
+            account_email=account_email_by_id.get(thread.email_account_id),
+            gmail_thread_id=thread.gmail_thread_id,
+            first_starred_message_id=thread.first_starred_message_id,
+            status=thread.status,
+            star_active=thread.star_active,
+            linked_case_type=thread.linked_case_type,
+            linked_case_id=thread.linked_case_id,
+            order=_gmail_relance_order_summary(thread.claim_order),
+            last_message_at=thread.last_message_at,
+            last_processed_at=thread.last_processed_at,
+            created_at=thread.created_at,
+            updated_at=thread.updated_at,
+        )
+        for thread in watched_threads
+    ]
+
+    work_items = list(
+        db.scalars(
+            work_base.options(
+                selectinload(GmailStarredWorkItem.inbound_message),
+                selectinload(GmailStarredWorkItem.email_account),
+            )
+            .order_by(GmailStarredWorkItem.created_at.desc(), GmailStarredWorkItem.id.desc())
+            .limit(limit)
+        ).all()
+    )
+    work_item_response = [
+        GmailWatchedWorkItem(
+            id=item.id,
+            watched_thread_id=item.watched_thread_id,
+            email_account_id=item.email_account_id,
+            account_email=item.email_account.email_address if item.email_account else account_email_by_id.get(item.email_account_id),
+            gmail_thread_id=item.gmail_thread_id,
+            provider_message_id=item.provider_message_id,
+            status=item.status,
+            reason=item.reason,
+            subject=item.inbound_message.subject if item.inbound_message else None,
+            from_email=item.inbound_message.from_email if item.inbound_message else None,
+            snippet=_short_text(
+                (item.inbound_message.snippet or item.inbound_message.body_text) if item.inbound_message else None,
+                220,
+            ),
+            processed_at=item.processed_at,
+            created_at=item.created_at,
+            updated_at=item.updated_at,
+        )
+        for item in work_items
+    ]
+    sent_drafts = list(db.scalars(_gmail_relance_provider_drafts_query(db, current_user).limit(limit)).all())
+    sent_items = [
+        GmailRelanceSentItem(
+            id=draft.id,
+            email_account_id=draft.email_account_id,
+            account_email=draft.email_account.email_address if draft.email_account else None,
+            provider_thread_id=draft.provider_thread_id,
+            provider_message_id=draft.provider_message_id,
+            to_email=draft.to_email,
+            subject=draft.subject,
+            status=draft.status,
+            sent_at=draft.sent_at,
+            error_message=_short_text(draft.error_message, 180),
+            last_error=_short_text(draft.last_error, 180),
+            order=_gmail_relance_order_summary(draft.email_draft.order if draft.email_draft else None),
+            created_at=draft.created_at,
+            updated_at=draft.updated_at,
+        )
+        for draft in sent_drafts
+    ]
+
+    latest_cycle = worker_status.last_cycle
+    return GmailWarRoomResponse(
+        updated_at=utc_now(),
+        worker=worker_status,
+        summary=GmailWatchedThreadSummary(
+            connected_accounts_count=len(connected_accounts),
+            active_watched_threads=active_watched_threads,
+            watched_threads_total=watched_threads_total,
+            new_messages_detected_last_24h=new_messages_24h,
+            processed_messages_last_24h=processed_24h,
+            positive_responses_last_24h=positive_24h,
+            refused_responses_last_24h=refused_24h,
+            evidence_requests_last_24h=evidence_24h,
+            quota_pending_last_24h=quota_pending_24h,
+            manual_review_last_24h=manual_review_24h,
+            backlog_remaining=backlog_remaining,
+            latest_cycle_processed_count=latest_cycle.watched_thread_processed_messages if latest_cycle else 0,
+            latest_cycle_new_messages=latest_cycle.watched_thread_new_messages if latest_cycle else 0,
+        ),
+        watched_threads=watched_items,
+        work_items=work_item_response,
+        sent_relances=sent_items,
     )
 
 

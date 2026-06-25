@@ -85,6 +85,25 @@ EMAIL_ACCOUNT_PROVIDERS = ("gmail",)
 EMAIL_PROVIDER_DRAFT_PROVIDERS = ("gmail", "resend")
 EMAIL_PROVIDER_DRAFT_STATUSES = ("provider_draft_created", "send_requested", "sent", "failed")
 GMAIL_SYNC_STATUSES = ("idle", "running", "success", "failed")
+GMAIL_WATCHED_THREAD_STATUSES = (
+    "active",
+    "positive",
+    "payment_confirmed",
+    "manual_review",
+    "paused",
+    "closed",
+)
+GMAIL_STARRED_WORK_ITEM_STATUSES = (
+    "pending",
+    "processing",
+    "processed",
+    "positive",
+    "refused",
+    "evidence_needed",
+    "manual_review",
+    "skipped",
+    "failed",
+)
 INBOUND_EMAIL_MATCH_STATUSES = ("linked", "unlinked", "ignored")
 INBOUND_EMAIL_MATCH_REASONS = (
     "thread_id_match",
@@ -620,6 +639,14 @@ class EmailAccount(TimestampMixin, Base):
         cascade="all, delete-orphan",
     )
     inbound_messages: Mapped[list["InboundEmailMessage"]] = relationship(back_populates="email_account")
+    watched_threads: Mapped[list["GmailWatchedThread"]] = relationship(
+        back_populates="email_account",
+        cascade="all, delete-orphan",
+    )
+    starred_work_items: Mapped[list["GmailStarredWorkItem"]] = relationship(
+        back_populates="email_account",
+        cascade="all, delete-orphan",
+    )
     restaurant_mappings: Mapped[list["EmailAccountRestaurantMapping"]] = relationship(
         back_populates="email_account",
         cascade="all, delete-orphan",
@@ -717,6 +744,83 @@ class InboundEmailMessage(TimestampMixin, Base):
         back_populates="inbound_message",
         uselist=False,
     )
+    starred_work_items: Mapped[list["GmailStarredWorkItem"]] = relationship(back_populates="inbound_message")
+
+
+class GmailWatchedThread(TimestampMixin, Base):
+    __tablename__ = "gmail_watched_threads"
+    __table_args__ = (
+        UniqueConstraint(
+            "email_account_id",
+            "gmail_thread_id",
+            name="uq_gmail_watched_threads_account_thread",
+        ),
+        CheckConstraint(
+            check_in_constraint("status", GMAIL_WATCHED_THREAD_STATUSES),
+            name="ck_gmail_watched_threads_status",
+        ),
+        Index("ix_gmail_watched_threads_email_account_id", "email_account_id"),
+        Index("ix_gmail_watched_threads_status", "status"),
+        Index("ix_gmail_watched_threads_last_message_at", "last_message_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email_account_id: Mapped[int] = mapped_column(ForeignKey("email_accounts.id"), nullable=False)
+    gmail_thread_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    first_starred_message_id: Mapped[str | None] = mapped_column(String(255))
+    linked_case_type: Mapped[str | None] = mapped_column(String(80))
+    linked_case_id: Mapped[int | None] = mapped_column(Integer)
+    claim_order_id: Mapped[int | None] = mapped_column(ForeignKey("claim_orders.id"))
+    customer_refund_dispute_id: Mapped[int | None] = mapped_column(ForeignKey("uber_customer_refund_disputes.id"))
+    appeal_workflow_id: Mapped[int | None] = mapped_column(ForeignKey("appeal_workflows.id"))
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
+    last_seen_history_id: Mapped[str | None] = mapped_column(String(255))
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    star_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    email_account: Mapped[EmailAccount] = relationship(back_populates="watched_threads")
+    claim_order: Mapped[ClaimOrder | None] = relationship()
+    customer_refund_dispute: Mapped["UberCustomerRefundDispute | None"] = relationship()
+    appeal_workflow: Mapped["AppealWorkflow | None"] = relationship()
+    work_items: Mapped[list["GmailStarredWorkItem"]] = relationship(
+        back_populates="watched_thread",
+        cascade="all, delete-orphan",
+    )
+
+
+class GmailStarredWorkItem(TimestampMixin, Base):
+    __tablename__ = "gmail_starred_work_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "email_account_id",
+            "provider_message_id",
+            name="uq_gmail_starred_work_items_account_message",
+        ),
+        CheckConstraint(
+            check_in_constraint("status", GMAIL_STARRED_WORK_ITEM_STATUSES),
+            name="ck_gmail_starred_work_items_status",
+        ),
+        Index("ix_gmail_starred_work_items_watched_thread_id", "watched_thread_id"),
+        Index("ix_gmail_starred_work_items_email_account_id", "email_account_id"),
+        Index("ix_gmail_starred_work_items_gmail_thread_id", "gmail_thread_id"),
+        Index("ix_gmail_starred_work_items_status", "status"),
+        Index("ix_gmail_starred_work_items_processed_at", "processed_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    watched_thread_id: Mapped[int | None] = mapped_column(ForeignKey("gmail_watched_threads.id"))
+    email_account_id: Mapped[int] = mapped_column(ForeignKey("email_accounts.id"), nullable=False)
+    inbound_message_id: Mapped[int | None] = mapped_column(ForeignKey("inbound_email_messages.id"))
+    gmail_thread_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_message_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="pending")
+    reason: Mapped[str | None] = mapped_column(String(255))
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    watched_thread: Mapped[GmailWatchedThread | None] = relationship(back_populates="work_items")
+    email_account: Mapped[EmailAccount] = relationship(back_populates="starred_work_items")
+    inbound_message: Mapped[InboundEmailMessage | None] = relationship(back_populates="starred_work_items")
 
 
 class GmailResponseAnalysis(TimestampMixin, Base):
