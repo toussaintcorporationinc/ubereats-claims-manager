@@ -435,6 +435,14 @@ export type GmailWorkerCycleSummary = {
   synced_messages: number;
   applied_reviews: number;
   negative_responses_detected: number;
+  watched_threads_seen: number;
+  watched_threads_created: number;
+  watched_thread_new_messages: number;
+  watched_thread_processed_messages: number;
+  watched_thread_positive_responses: number;
+  watched_thread_refused_responses: number;
+  watched_thread_evidence_requests: number;
+  watched_thread_manual_reviews: number;
   autopilot_sent_count: number;
   autopilot_skipped_count: number;
   autopilot_failed_count: number;
@@ -567,6 +575,65 @@ export type GmailRelanceDashboard = {
   starred_threads: GmailRelanceMessageItem[];
   sent_relances: GmailRelanceSentItem[];
   recent_actions: GmailRelanceActionItem[];
+};
+
+export type GmailWatchedThreadSummary = {
+  connected_accounts_count: number;
+  active_watched_threads: number;
+  watched_threads_total: number;
+  new_messages_detected_last_24h: number;
+  processed_messages_last_24h: number;
+  positive_responses_last_24h: number;
+  refused_responses_last_24h: number;
+  evidence_requests_last_24h: number;
+  quota_pending_last_24h: number;
+  manual_review_last_24h: number;
+  backlog_remaining: number;
+  latest_cycle_processed_count: number;
+  latest_cycle_new_messages: number;
+};
+
+export type GmailWatchedThreadItem = {
+  id: number;
+  email_account_id: number;
+  account_email: string | null;
+  gmail_thread_id: string;
+  first_starred_message_id: string | null;
+  status: string;
+  star_active: boolean;
+  linked_case_type: string | null;
+  linked_case_id: number | null;
+  order: GmailRelanceOrderSummary | null;
+  last_message_at: string | null;
+  last_processed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GmailWatchedWorkItem = {
+  id: number;
+  watched_thread_id: number | null;
+  email_account_id: number;
+  account_email: string | null;
+  gmail_thread_id: string;
+  provider_message_id: string;
+  status: string;
+  reason: string | null;
+  subject: string | null;
+  from_email: string | null;
+  snippet: string | null;
+  processed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GmailWarRoomDashboard = {
+  updated_at: string;
+  worker: GmailInboundStatus;
+  summary: GmailWatchedThreadSummary;
+  watched_threads: GmailWatchedThreadItem[];
+  work_items: GmailWatchedWorkItem[];
+  sent_relances: GmailRelanceSentItem[];
 };
 
 export type GmailInboundSyncPayload = {
@@ -2583,6 +2650,10 @@ export const api = {
   getGmailRelanceDashboard: (limit = 80, refresh = false) =>
     request<GmailRelanceDashboard>(
       `/v1/email/gmail/relances?limit=${encodeURIComponent(String(limit))}&refresh=${refresh ? "true" : "false"}`,
+    ),
+  getGmailWarRoom: (limit = 120, refresh = false) =>
+    request<GmailWarRoomDashboard>(
+      `/v1/email/gmail/war-room?limit=${encodeURIComponent(String(limit))}&refresh=${refresh ? "true" : "false"}`,
     ),
   syncInboundGmail: (payload: GmailInboundSyncPayload = {}) =>
     postJson<GmailInboundSyncResponse, GmailInboundSyncPayload>("/v1/email/gmail/inbound/sync", payload),

@@ -763,6 +763,14 @@ class GmailWorkerCycleSummary(BaseModel):
     synced_messages: int = 0
     applied_reviews: int = 0
     negative_responses_detected: int = 0
+    watched_threads_seen: int = 0
+    watched_threads_created: int = 0
+    watched_thread_new_messages: int = 0
+    watched_thread_processed_messages: int = 0
+    watched_thread_positive_responses: int = 0
+    watched_thread_refused_responses: int = 0
+    watched_thread_evidence_requests: int = 0
+    watched_thread_manual_reviews: int = 0
     autopilot_sent_count: int = 0
     autopilot_skipped_count: int = 0
     autopilot_failed_count: int = 0
@@ -895,6 +903,65 @@ class GmailRelanceDashboardResponse(BaseModel):
     starred_threads: list[GmailRelanceMessageItem]
     sent_relances: list[GmailRelanceSentItem]
     recent_actions: list[GmailRelanceActionItem]
+
+
+class GmailWatchedThreadSummary(BaseModel):
+    connected_accounts_count: int = 0
+    active_watched_threads: int = 0
+    watched_threads_total: int = 0
+    new_messages_detected_last_24h: int = 0
+    processed_messages_last_24h: int = 0
+    positive_responses_last_24h: int = 0
+    refused_responses_last_24h: int = 0
+    evidence_requests_last_24h: int = 0
+    quota_pending_last_24h: int = 0
+    manual_review_last_24h: int = 0
+    backlog_remaining: int = 0
+    latest_cycle_processed_count: int = 0
+    latest_cycle_new_messages: int = 0
+
+
+class GmailWatchedThreadItem(BaseModel):
+    id: int
+    email_account_id: int
+    account_email: str | None = None
+    gmail_thread_id: str
+    first_starred_message_id: str | None = None
+    status: str
+    star_active: bool
+    linked_case_type: str | None = None
+    linked_case_id: int | None = None
+    order: GmailRelanceOrderSummary | None = None
+    last_message_at: datetime | None = None
+    last_processed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GmailWatchedWorkItem(BaseModel):
+    id: int
+    watched_thread_id: int | None = None
+    email_account_id: int
+    account_email: str | None = None
+    gmail_thread_id: str
+    provider_message_id: str
+    status: str
+    reason: str | None = None
+    subject: str | None = None
+    from_email: str | None = None
+    snippet: str | None = None
+    processed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GmailWarRoomResponse(BaseModel):
+    updated_at: datetime
+    worker: GmailInboundStatusResponse
+    summary: GmailWatchedThreadSummary
+    watched_threads: list[GmailWatchedThreadItem]
+    work_items: list[GmailWatchedWorkItem]
+    sent_relances: list[GmailRelanceSentItem]
 
 
 class GmailInboundSyncRequest(BaseModel):
