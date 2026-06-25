@@ -37,7 +37,16 @@ from app.services.email_provider import (
     InboundEmailPayload,
 )
 from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncService
-from app.services.gmail_inbound_sync_service import GmailInboundSyncResult, GmailInboundSyncService
+from app.services.gmail_inbound_sync_service import (
+    GMAIL_STARRED_URGENT_QUERY,
+    GMAIL_STARRED_WITH_ATTACHMENT_QUERY,
+    GmailInboundSyncResult,
+    GmailInboundSyncService,
+)
+from app.services.gmail_watched_thread_monitor_service import (
+    GmailWatchedThreadMonitorResult,
+    GmailWatchedThreadMonitorService,
+)
 from app.services.openai_structured_analysis_service import (
     AIGmailClassification,
     AIProofExtraction,
@@ -811,7 +820,7 @@ def test_sync_starred_gmail_message_is_urgent_refusal_to_follow_up(
     response = sync_inbound(client)
 
     assert response.status_code == 200
-    assert "is:starred" in fake_gmail_provider.all_queries
+    assert GMAIL_STARRED_URGENT_QUERY in fake_gmail_provider.all_queries
     payload = response.json()
     assert payload["applied_reviews"] == 1
     assert payload["negative_responses_detected"] == 1
@@ -853,8 +862,8 @@ def test_sync_starred_gmail_query_reads_full_history_by_default(
 
     assert response.status_code == 200
     assert response.json()["synced_messages"] == 5
-    assert "is:starred has:attachment" in fake_gmail_provider.all_queries
-    assert "is:starred" in fake_gmail_provider.all_queries
+    assert GMAIL_STARRED_WITH_ATTACHMENT_QUERY in fake_gmail_provider.all_queries
+    assert GMAIL_STARRED_URGENT_QUERY in fake_gmail_provider.all_queries
     assert all(limit == 2 for query, limit in fake_gmail_provider.query_limits if query.startswith("newer_than:"))
     assert not [query for query, _ in fake_gmail_provider.query_limits if "is:starred" in query]
     get_settings.cache_clear()
@@ -881,8 +890,8 @@ def test_sync_starred_gmail_query_can_be_limited_when_full_history_disabled(
 
     assert response.status_code == 200
     starred_limits = {query: limit for query, limit in fake_gmail_provider.query_limits if "is:starred" in query}
-    assert starred_limits["is:starred has:attachment"] == 4
-    assert starred_limits["is:starred"] == 4
+    assert starred_limits[GMAIL_STARRED_WITH_ATTACHMENT_QUERY] == 4
+    assert starred_limits[GMAIL_STARRED_URGENT_QUERY] == 4
     assert fake_gmail_provider.all_queries == []
     get_settings.cache_clear()
 
@@ -1285,6 +1294,58 @@ def test_auto_sync_service_processes_refusals_and_runs_autopilot(
     workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
     assert workflow is not None
     assert workflow.status == "appeal_sent"
+    get_settings.cache_clear()
+
+
+def test_auto_sync_runs_autopilot_when_watched_thread_reports_refusal(
+    client: TestClient,
+    db_session: Session,
+    gmail_autopilot_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    monkeypatch.setenv("GMAIL_WATCHED_THREADS_ENABLED", "true")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    autopilot_runs: list[int] = []
+
+    def fake_sync_account(self, db, user, account, **kwargs):  # noqa: ARG001
+        return GmailInboundSyncResult(status="success")
+
+    def fake_process_account(self, db, user, account, **kwargs):  # noqa: ARG001
+        return GmailWatchedThreadMonitorResult(
+            watched_threads_seen=1,
+            processed_messages=1,
+            refused_responses=1,
+        )
+
+    def fake_should_run(self, db, user, result):  # noqa: ARG001
+        return False
+
+    def fake_run_autopilot(self, db, user, result):  # noqa: ARG001
+        autopilot_runs.append(user.id)
+        result.autopilot_sent_count = 1
+
+    monkeypatch.setattr(GmailInboundSyncService, "sync_account", fake_sync_account)
+    monkeypatch.setattr(GmailWatchedThreadMonitorService, "process_account", fake_process_account)
+    monkeypatch.setattr(GmailInboundSyncService, "should_run_autopilot_for_result", fake_should_run)
+    monkeypatch.setattr(
+        GmailInboundSyncService,
+        "run_autopilot_for_negative_responses",
+        fake_run_autopilot,
+    )
+
+    result = GmailInboundAutoSyncService(fake_gmail_provider).sync_due_accounts(db_session)
+
+    assert result.status == "success"
+    assert result.accounts_checked == 1
+    assert result.negative_responses_detected == 0
+    assert result.watched_thread_refused_responses == 1
+    assert result.autopilot_sent_count == 1
+    assert autopilot_runs == [owner.id]
     get_settings.cache_clear()
 
 
@@ -2225,7 +2286,7 @@ def test_starred_gmail_attachment_creates_order_when_thread_is_not_linked(
 
     assert response.status_code == 200
     payload = response.json()
-    assert "is:starred has:attachment" in fake_gmail_provider.all_queries
+    assert GMAIL_STARRED_WITH_ATTACHMENT_QUERY in fake_gmail_provider.all_queries
     assert payload["linked_messages"] == 1
     assert payload["identity_repaired_messages"] == 1
     order = db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "BAEF7"))

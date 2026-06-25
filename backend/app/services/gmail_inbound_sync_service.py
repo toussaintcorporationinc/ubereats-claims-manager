@@ -35,8 +35,8 @@ MAX_DB_STRING_LENGTH = 255
 ACTIONABLE_NEGATIVE_REVIEW_TYPES = {"refused"}
 POSITIVE_PAYMENT_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confirmed"}
 MAX_EXISTING_REPROCESS_MESSAGES = 1000
-GMAIL_STARRED_URGENT_QUERY = "is:starred"
-GMAIL_STARRED_WITH_ATTACHMENT_QUERY = "is:starred has:attachment"
+GMAIL_STARRED_URGENT_QUERY = "in:anywhere is:starred"
+GMAIL_STARRED_WITH_ATTACHMENT_QUERY = "in:anywhere is:starred has:attachment"
 OrderIdentifierIndex = list[tuple[ClaimOrder, list[str]]]
 
 

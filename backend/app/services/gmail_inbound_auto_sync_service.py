@@ -111,6 +111,7 @@ class GmailInboundAutoSyncService:
                     apply_reviews=True,
                     reprocess_existing_limit=self.settings.gmail_inbound_auto_sync_existing_reprocess_limit,
                 )
+                watched_result = None
                 if self.settings.gmail_watched_threads_enabled:
                     watched_result = watched_thread_monitor.process_account(
                         db,
@@ -121,9 +122,15 @@ class GmailInboundAutoSyncService:
                         process_new_messages=self.settings.gmail_watched_threads_process_new_messages,
                     )
                     self.add_watched_thread_result(result, watched_result)
+                watched_autopilot_already_ran = self.watched_result_ran_autopilot(watched_result)
+                should_run_autopilot = (
+                    sync_service.should_run_autopilot_for_result(db, user, account_result)
+                    or self.watched_result_needs_autopilot(watched_result)
+                )
                 if (
                     self.settings.gmail_inbound_auto_sync_run_autopilot
-                    and sync_service.should_run_autopilot_for_result(db, user, account_result)
+                    and not watched_autopilot_already_ran
+                    and should_run_autopilot
                 ):
                     sync_service.run_autopilot_for_negative_responses(db, user, account_result)
                 self.add_account_result(result, account_result)
@@ -248,6 +255,20 @@ class GmailInboundAutoSyncService:
         result.autopilot_skipped_count += watched_result.autopilot_skipped_count
         result.autopilot_failed_count += watched_result.autopilot_failed_count
         result.errors.extend(watched_result.errors)
+
+    def watched_result_ran_autopilot(self, watched_result: GmailWatchedThreadMonitorResult | None) -> bool:
+        if watched_result is None:
+            return False
+        return (
+            watched_result.autopilot_sent_count > 0
+            or watched_result.autopilot_skipped_count > 0
+            or watched_result.autopilot_failed_count > 0
+        )
+
+    def watched_result_needs_autopilot(self, watched_result: GmailWatchedThreadMonitorResult | None) -> bool:
+        if watched_result is None:
+            return False
+        return watched_result.refused_responses > 0
 
     def run_workspace_machine(self, db: Session, user: User, result: GmailInboundAutoSyncResult) -> None:
         from app.schemas.domain import WorkspaceMachineRunRequest

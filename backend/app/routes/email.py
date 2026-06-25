@@ -74,7 +74,11 @@ from app.services.audit import add_audit_log
 from app.services.email_provider import EmailProvider, EmailProviderError
 from app.services.followup_policy_service import complete_task_for_sent_provider_draft
 from app.services.gmail_email_provider import GmailEmailProvider
-from app.services.gmail_inbound_sync_service import GmailInboundSyncResult, GmailInboundSyncService
+from app.services.gmail_inbound_sync_service import (
+    GMAIL_STARRED_URGENT_QUERY,
+    GmailInboundSyncResult,
+    GmailInboundSyncService,
+)
 from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
 from app.services.gmail_watched_thread_monitor_service import GmailWatchedThreadMonitorService
 from app.services.resend_email_provider import ResendEmailProvider
@@ -780,7 +784,7 @@ def _refresh_starred_messages_for_relance_dashboard(
 
     The normal worker can take time to walk a large mailbox. The relance page
     still needs to show what Gmail currently has starred, so refresh a bounded
-    `is:starred` slice without running a full mailbox scan from a GET request.
+    starred Gmail slice without running a full mailbox scan from a GET request.
     """
     settings = get_settings()
     if not settings.email_provider_enabled or not settings.gmail_inbound_sync_enabled:
@@ -799,7 +803,7 @@ def _refresh_starred_messages_for_relance_dashboard(
                 db,
                 current_user,
                 account,
-                query="is:starred",
+                query=GMAIL_STARRED_URGENT_QUERY,
                 max_messages=max_messages,
             )
         except EmailProviderError:
@@ -1135,16 +1139,33 @@ def gmail_war_room(
     account_ids = [account.id for account in connected_accounts]
     account_email_by_id = {account.id: account.email_address for account in connected_accounts}
     if refresh and connected_accounts:
-        monitor = GmailWatchedThreadMonitorService(provider)
+        settings = get_settings()
+        sync_service = GmailInboundSyncService(provider)
+        monitor = GmailWatchedThreadMonitorService(provider, settings=settings, sync_service=sync_service)
         for account in connected_accounts:
-            monitor.process_account(
+            watched_result = monitor.process_account(
                 db,
                 current_user,
                 account,
-                max_threads=min(limit, get_settings().gmail_watched_threads_max_per_cycle),
+                max_threads=min(limit, settings.gmail_watched_threads_max_per_cycle),
                 discover_starred=True,
                 process_new_messages=True,
             )
+            watched_autopilot_ran = (
+                watched_result.autopilot_sent_count > 0
+                or watched_result.autopilot_skipped_count > 0
+                or watched_result.autopilot_failed_count > 0
+            )
+            if (
+                settings.gmail_inbound_auto_sync_run_autopilot
+                and watched_result.refused_responses > 0
+                and not watched_autopilot_ran
+            ):
+                sync_service.run_autopilot_for_negative_responses(
+                    db,
+                    current_user,
+                    GmailInboundSyncResult(status="success"),
+                )
         db.commit()
 
     worker_status = gmail_inbound_status(db=db, current_user=current_user, provider=provider)
