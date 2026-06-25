@@ -25,6 +25,7 @@ from app.models import (
 from app.models.domain import utc_now
 from app.routes.email import get_gmail_provider
 from app.services.email_provider import EmailConnectionStatus, InboundEmailPayload
+from app.services.gmail_inbound_sync_service import GMAIL_STARRED_URGENT_QUERY
 
 
 class FakeGmailProvider:
@@ -54,7 +55,7 @@ class FakeGmailProvider:
         query: str,
         max_results: int,
     ) -> list[InboundEmailPayload]:
-        if query != "is:starred":
+        if query != GMAIL_STARRED_URGENT_QUERY:
             return []
         return self.payloads_by_account.get(account.email_address or "", [])[:max_results]
 

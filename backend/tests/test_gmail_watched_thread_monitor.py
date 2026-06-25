@@ -22,7 +22,11 @@ from app.models import (
 )
 from app.models.domain import utc_now
 from app.services.email_provider import InboundEmailPayload
-from app.services.gmail_inbound_sync_service import GmailInboundSyncResult, GmailInboundSyncService
+from app.services.gmail_inbound_sync_service import (
+    GMAIL_STARRED_URGENT_QUERY,
+    GmailInboundSyncResult,
+    GmailInboundSyncService,
+)
 from app.services.gmail_watched_thread_monitor_service import GmailWatchedThreadMonitorService
 
 
@@ -43,7 +47,7 @@ class FakeWatchedGmailProvider:
         query: str,
         max_results: int,
     ) -> list[InboundEmailPayload]:
-        if query != "is:starred":
+        if query != GMAIL_STARRED_URGENT_QUERY:
             return []
         return self.starred_payloads[:max_results]
 
@@ -57,7 +61,7 @@ class FakeWatchedGmailProvider:
         max_pages: int,
     ) -> list[InboundEmailPayload]:
         self.full_history_calls.append(query)
-        if query != "is:starred":
+        if query != GMAIL_STARRED_URGENT_QUERY:
             return []
         return self.starred_payloads
 
@@ -254,7 +258,7 @@ def test_starred_discovery_uses_full_history_not_cycle_limit(
         process_new_messages=False,
     )
 
-    assert provider.full_history_calls == ["is:starred"]
+    assert provider.full_history_calls == [GMAIL_STARRED_URGENT_QUERY]
     assert result.watched_threads_created == 5
     assert db_session.scalar(select(func.count(GmailWatchedThread.id))) == 5
 
