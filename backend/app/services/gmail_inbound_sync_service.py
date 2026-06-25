@@ -37,6 +37,18 @@ POSITIVE_PAYMENT_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confi
 MAX_EXISTING_REPROCESS_MESSAGES = 1000
 GMAIL_STARRED_URGENT_QUERY = "in:anywhere is:starred"
 GMAIL_STARRED_WITH_ATTACHMENT_QUERY = "in:anywhere is:starred has:attachment"
+GMAIL_STARRED_URGENT_QUERIES = (
+    GMAIL_STARRED_URGENT_QUERY,
+    "in:anywhere label:starred",
+    "is:starred",
+    "label:starred",
+)
+GMAIL_STARRED_WITH_ATTACHMENT_QUERIES = (
+    GMAIL_STARRED_WITH_ATTACHMENT_QUERY,
+    "in:anywhere label:starred has:attachment",
+    "is:starred has:attachment",
+    "label:starred has:attachment",
+)
 OrderIdentifierIndex = list[tuple[ClaimOrder, list[str]]]
 
 
@@ -189,18 +201,18 @@ class GmailInboundSyncService:
             starred_max_messages = max(0, settings.gmail_starred_max_messages_per_sync)
             payloads = merge_unique_payloads(
                 self.fetch_payloads(db, user, account, query=query, max_messages=max_messages),
-                self.fetch_starred_payloads(
+                self.fetch_starred_payloads_for_queries(
                     db,
                     user,
                     account,
-                    query=GMAIL_STARRED_WITH_ATTACHMENT_QUERY,
+                    queries=GMAIL_STARRED_WITH_ATTACHMENT_QUERIES,
                     fallback_max_messages=starred_max_messages,
                 ),
-                self.fetch_starred_payloads(
+                self.fetch_starred_payloads_for_queries(
                     db,
                     user,
                     account,
-                    query=GMAIL_STARRED_URGENT_QUERY,
+                    queries=GMAIL_STARRED_URGENT_QUERIES,
                     fallback_max_messages=starred_max_messages,
                 ),
             )
@@ -369,9 +381,10 @@ class GmailInboundSyncService:
         *,
         query: str,
         fallback_max_messages: int,
+        use_full_history: bool = True,
     ) -> list[InboundEmailPayload]:
         settings = get_settings()
-        if settings.gmail_starred_full_history_enabled:
+        if use_full_history and settings.gmail_starred_full_history_enabled:
             sync_all_for_account = getattr(self.provider, "sync_all_inbound_replies_for_account", None)
             if callable(sync_all_for_account):
                 return sync_all_for_account(
@@ -382,6 +395,40 @@ class GmailInboundSyncService:
                     max_pages=settings.gmail_starred_max_pages_per_sync,
                 )
         return self.fetch_payloads(db, user, account, query=query, max_messages=fallback_max_messages)
+
+    def fetch_starred_payloads_for_queries(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        *,
+        queries: tuple[str, ...],
+        fallback_max_messages: int,
+        use_full_history: bool = True,
+    ) -> list[InboundEmailPayload]:
+        """Fetch starred Gmail messages using compatible query variants.
+
+        Gmail search has small syntax differences between UI habits and API
+        behavior on some accounts. We stop on the first non-empty result to
+        avoid walking the same large mailbox several times.
+        """
+        for query in queries:
+            try:
+                payloads = self.fetch_starred_payloads(
+                    db,
+                    user,
+                    account,
+                    query=query,
+                    fallback_max_messages=fallback_max_messages,
+                    use_full_history=use_full_history,
+                )
+            except EmailProviderError:
+                continue
+            except Exception:  # noqa: BLE001 - one Gmail query variant must not stop discovery.
+                continue
+            if payloads:
+                return payloads
+        return []
 
     def analyze_linked_message(
         self,

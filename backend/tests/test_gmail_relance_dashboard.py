@@ -31,6 +31,7 @@ from app.services.gmail_inbound_sync_service import GMAIL_STARRED_URGENT_QUERY
 class FakeGmailProvider:
     provider = "gmail"
     payloads_by_account: dict[str, list[InboundEmailPayload]] = {}
+    payloads_by_query: dict[str, dict[str, list[InboundEmailPayload]]] = {}
 
     def get_connection_status(self, db: Session, user: User) -> EmailConnectionStatus:
         account = db.scalar(
@@ -55,6 +56,9 @@ class FakeGmailProvider:
         query: str,
         max_results: int,
     ) -> list[InboundEmailPayload]:
+        if self.payloads_by_query:
+            account_payloads = self.payloads_by_query.get(account.email_address or "", {})
+            return account_payloads.get(query, [])[:max_results]
         if query != GMAIL_STARRED_URGENT_QUERY:
             return []
         return self.payloads_by_account.get(account.email_address or "", [])[:max_results]
@@ -72,10 +76,12 @@ def gmail_dashboard_enabled(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
     get_settings.cache_clear()
     FakeGmailProvider.payloads_by_account = {}
+    FakeGmailProvider.payloads_by_query = {}
     app.dependency_overrides[get_gmail_provider] = lambda: FakeGmailProvider()
     yield
     app.dependency_overrides.pop(get_gmail_provider, None)
     FakeGmailProvider.payloads_by_account = {}
+    FakeGmailProvider.payloads_by_query = {}
     get_settings.cache_clear()
 
 
@@ -348,3 +354,57 @@ def test_gmail_relance_dashboard_refresh_imports_starred_gmail_threads(
     assert db_session.scalar(
         select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "gmail-live-starred-1")
     )
+
+
+def test_gmail_relance_dashboard_refresh_falls_back_to_label_starred(
+    client: TestClient,
+    db_session: Session,
+    gmail_dashboard_enabled: None,
+) -> None:
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+    restaurant = Restaurant(
+        name="Frit Dodo",
+        address="108 Avenue du Marechal Foch, Meaux, 77100",
+        phone_number="0605807385",
+        sender_email="tiramisumaisonfrance@gmail.com",
+        autopilot_enabled=True,
+    )
+    db_session.add(restaurant)
+    db_session.flush()
+    order = ClaimOrder(
+        restaurant_id=restaurant.id,
+        uber_order_number="F93BA",
+        customer_name="Yoann O.",
+        order_date=date(2026, 6, 18),
+        order_amount=Decimal("24.99"),
+        currency="EUR",
+        status="refused",
+    )
+    db_session.add(order)
+    account = EmailAccount(
+        user_id=owner.id,
+        provider="gmail",
+        email_address="tiramisumaisonfrance@gmail.com",
+        connected_at=utc_now(),
+    )
+    db_session.add(account)
+    db_session.commit()
+    FakeGmailProvider.payloads_by_query = {
+        "tiramisumaisonfrance@gmail.com": {
+            "in:anywhere label:starred": [
+                starred_payload(
+                    "gmail-label-starred-1",
+                    body_text="Nous refusons la demande pour la commande F93BA.",
+                )
+            ]
+        }
+    }
+
+    response = client.get("/v1/email/gmail/relances?limit=10&refresh=true")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["starred_threads_seen"] == 1
+    assert payload["starred_threads"][0]["provider_message_id"] == "gmail-label-starred-1"
+    assert payload["starred_threads"][0]["order"]["uber_order_number"] == "F93BA"

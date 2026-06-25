@@ -75,7 +75,7 @@ from app.services.email_provider import EmailProvider, EmailProviderError
 from app.services.followup_policy_service import complete_task_for_sent_provider_draft
 from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_sync_service import (
-    GMAIL_STARRED_URGENT_QUERY,
+    GMAIL_STARRED_URGENT_QUERIES,
     GmailInboundSyncResult,
     GmailInboundSyncService,
 )
@@ -799,12 +799,13 @@ def _refresh_starred_messages_for_relance_dashboard(
 
     for account in connected_accounts:
         try:
-            payloads = service.fetch_payloads(
+            payloads = service.fetch_starred_payloads_for_queries(
                 db,
                 current_user,
                 account,
-                query=GMAIL_STARRED_URGENT_QUERY,
-                max_messages=max_messages,
+                queries=GMAIL_STARRED_URGENT_QUERIES,
+                fallback_max_messages=max_messages,
+                use_full_history=False,
             )
         except EmailProviderError:
             continue
@@ -1158,7 +1159,7 @@ def gmail_war_room(
             )
             if (
                 settings.gmail_inbound_auto_sync_run_autopilot
-                and watched_result.refused_responses > 0
+                and (watched_result.refused_responses > 0 or watched_result.actionable_refused_threads > 0)
                 and not watched_autopilot_ran
             ):
                 sync_service.run_autopilot_for_negative_responses(

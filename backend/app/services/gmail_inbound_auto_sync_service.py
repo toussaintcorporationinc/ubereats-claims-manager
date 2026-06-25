@@ -50,6 +50,7 @@ class GmailInboundAutoSyncResult:
     watched_thread_processed_messages: int = 0
     watched_thread_positive_responses: int = 0
     watched_thread_refused_responses: int = 0
+    watched_thread_actionable_refused_threads: int = 0
     watched_thread_evidence_requests: int = 0
     watched_thread_manual_reviews: int = 0
     autopilot_sent_count: int = 0
@@ -173,6 +174,9 @@ class GmailInboundAutoSyncService:
                     "watched_thread_processed_messages": result.watched_thread_processed_messages,
                     "watched_thread_positive_responses": result.watched_thread_positive_responses,
                     "watched_thread_refused_responses": result.watched_thread_refused_responses,
+                    "watched_thread_actionable_refused_threads": (
+                        result.watched_thread_actionable_refused_threads
+                    ),
                     "watched_thread_evidence_requests": result.watched_thread_evidence_requests,
                     "watched_thread_manual_reviews": result.watched_thread_manual_reviews,
                     "autopilot_sent_count": result.autopilot_sent_count,
@@ -249,6 +253,7 @@ class GmailInboundAutoSyncService:
         result.watched_thread_processed_messages += watched_result.processed_messages
         result.watched_thread_positive_responses += watched_result.positive_responses
         result.watched_thread_refused_responses += watched_result.refused_responses
+        result.watched_thread_actionable_refused_threads += watched_result.actionable_refused_threads
         result.watched_thread_evidence_requests += watched_result.evidence_requests
         result.watched_thread_manual_reviews += watched_result.manual_reviews
         result.autopilot_sent_count += watched_result.autopilot_sent_count
@@ -268,7 +273,7 @@ class GmailInboundAutoSyncService:
     def watched_result_needs_autopilot(self, watched_result: GmailWatchedThreadMonitorResult | None) -> bool:
         if watched_result is None:
             return False
-        return watched_result.refused_responses > 0
+        return watched_result.refused_responses > 0 or watched_result.actionable_refused_threads > 0
 
     def run_workspace_machine(self, db: Session, user: User, result: GmailInboundAutoSyncResult) -> None:
         from app.schemas.domain import WorkspaceMachineRunRequest
