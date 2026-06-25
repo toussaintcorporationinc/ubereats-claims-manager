@@ -33,6 +33,7 @@ class FakeWatchedGmailProvider:
         self.starred_payloads: list[InboundEmailPayload] = []
         self.thread_payloads: dict[str, list[InboundEmailPayload]] = {}
         self.removed_labels: list[tuple[str, str]] = []
+        self.full_history_calls: list[str] = []
 
     def sync_inbound_replies_for_account(
         self,
@@ -45,6 +46,20 @@ class FakeWatchedGmailProvider:
         if query != "is:starred":
             return []
         return self.starred_payloads[:max_results]
+
+    def sync_all_inbound_replies_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        *,
+        query: str,
+        page_size: int,
+        max_pages: int,
+    ) -> list[InboundEmailPayload]:
+        self.full_history_calls.append(query)
+        if query != "is:starred":
+            return []
+        return self.starred_payloads
 
     def get_thread_messages_for_account(
         self,
@@ -212,6 +227,36 @@ def test_starred_message_creates_watched_thread_and_work_item(
     assert watched.star_active is True
     assert result.watched_threads_created == 1
     assert db_session.scalar(select(func.count(GmailStarredWorkItem.id))) == 1
+
+
+def test_starred_discovery_uses_full_history_not_cycle_limit(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    monkeypatch.setenv("GMAIL_STARRED_FULL_HISTORY_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_STARRED_MAX_MESSAGES_PER_SYNC", "2")
+    monkeypatch.setenv("GMAIL_WATCHED_THREADS_MAX_PER_CYCLE", "2")
+    get_settings.cache_clear()
+    provider = FakeWatchedGmailProvider()
+    provider.starred_payloads = [
+        payload(f"star-{index}", thread_id=f"thread-{index}", starred=True)
+        for index in range(5)
+    ]
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=True,
+        process_new_messages=False,
+    )
+
+    assert provider.full_history_calls == ["is:starred"]
+    assert result.watched_threads_created == 5
+    assert db_session.scalar(select(func.count(GmailWatchedThread.id))) == 5
 
 
 def test_non_starred_positive_reply_in_watched_thread_is_processed_and_star_removed(
