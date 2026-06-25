@@ -172,15 +172,12 @@ class GmailWatchedThreadMonitorService:
 
         refreshed_payloads: list[InboundEmailPayload] = []
         try:
-            refreshed_payloads = self.sync_service.fetch_payloads(
+            refreshed_payloads = self.sync_service.fetch_starred_payloads(
                 db,
                 user,
                 account,
                 query=GMAIL_STARRED_URGENT_QUERY,
-                max_messages=min(
-                    self.settings.gmail_starred_max_messages_per_sync,
-                    self.settings.gmail_watched_threads_max_per_cycle,
-                ),
+                fallback_max_messages=self.settings.gmail_starred_max_messages_per_sync,
             )
         except EmailProviderError as exc:
             result.errors.append(f"starred_discovery:{exc.message}")
