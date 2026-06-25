@@ -23,6 +23,7 @@ from app.models import (
 from app.models.domain import utc_now
 from app.services.email_provider import InboundEmailPayload
 from app.services.gmail_inbound_sync_service import (
+    GMAIL_STARRED_URGENT_QUERIES,
     GMAIL_STARRED_URGENT_QUERY,
     GmailInboundSyncResult,
     GmailInboundSyncService,
@@ -35,6 +36,7 @@ class FakeWatchedGmailProvider:
 
     def __init__(self) -> None:
         self.starred_payloads: list[InboundEmailPayload] = []
+        self.starred_payloads_by_query: dict[str, list[InboundEmailPayload]] = {}
         self.thread_payloads: dict[str, list[InboundEmailPayload]] = {}
         self.removed_labels: list[tuple[str, str]] = []
         self.full_history_calls: list[str] = []
@@ -47,6 +49,8 @@ class FakeWatchedGmailProvider:
         query: str,
         max_results: int,
     ) -> list[InboundEmailPayload]:
+        if self.starred_payloads_by_query:
+            return self.starred_payloads_by_query.get(query, [])[:max_results]
         if query != GMAIL_STARRED_URGENT_QUERY:
             return []
         return self.starred_payloads[:max_results]
@@ -61,6 +65,8 @@ class FakeWatchedGmailProvider:
         max_pages: int,
     ) -> list[InboundEmailPayload]:
         self.full_history_calls.append(query)
+        if self.starred_payloads_by_query:
+            return self.starred_payloads_by_query.get(query, [])
         if query != GMAIL_STARRED_URGENT_QUERY:
             return []
         return self.starred_payloads
@@ -261,6 +267,93 @@ def test_starred_discovery_uses_full_history_not_cycle_limit(
     assert provider.full_history_calls == [GMAIL_STARRED_URGENT_QUERY]
     assert result.watched_threads_created == 5
     assert db_session.scalar(select(func.count(GmailWatchedThread.id))) == 5
+
+
+def test_starred_discovery_falls_back_to_label_starred_query(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    monkeypatch.setenv("GMAIL_STARRED_FULL_HISTORY_ENABLED", "true")
+    get_settings.cache_clear()
+    provider = FakeWatchedGmailProvider()
+    provider.starred_payloads_by_query = {
+        "in:anywhere label:starred": [payload("star-fallback", starred=True)]
+    }
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=True,
+        process_new_messages=False,
+    )
+
+    assert provider.full_history_calls[:2] == list(GMAIL_STARRED_URGENT_QUERIES[:2])
+    assert result.watched_threads_created == 1
+    watched = db_session.scalar(select(GmailWatchedThread))
+    assert watched is not None
+    assert watched.first_starred_message_id == "star-fallback"
+
+
+def test_existing_refused_watched_thread_runs_autopilot_again(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    get_settings.cache_clear()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-f93ba",
+        first_starred_message_id="star-1",
+        claim_order_id=order.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.flush()
+    db_session.add(
+        GmailStarredWorkItem(
+            watched_thread_id=watched.id,
+            email_account_id=account.id,
+            gmail_thread_id="thread-f93ba",
+            provider_message_id="star-1",
+            status="refused",
+            reason="uber_refusal",
+            processed_at=utc_now(),
+        )
+    )
+    db_session.commit()
+    provider = FakeWatchedGmailProvider()
+    autopilot_calls: list[int] = []
+
+    def fake_run_autopilot(self, db, user, result):  # noqa: ANN001, ARG001
+        autopilot_calls.append(user.id)
+        result.autopilot_skipped_count = 1
+
+    monkeypatch.setattr(
+        GmailInboundSyncService,
+        "run_autopilot_for_negative_responses",
+        fake_run_autopilot,
+    )
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    assert result.actionable_refused_threads == 1
+    assert result.autopilot_skipped_count == 1
+    assert autopilot_calls == [owner.id]
 
 
 def test_non_starred_positive_reply_in_watched_thread_is_processed_and_star_removed(

@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from sqlalchemy import String, cast, select
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import Settings, get_settings
@@ -22,7 +22,7 @@ from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.email_provider import EmailProvider, EmailProviderError, InboundEmailPayload
 from app.services.gmail_inbound_sync_service import (
-    GMAIL_STARRED_URGENT_QUERY,
+    GMAIL_STARRED_URGENT_QUERIES,
     GmailInboundSyncResult,
     GmailInboundSyncService,
 )
@@ -46,6 +46,7 @@ class GmailWatchedThreadMonitorResult:
     positive_responses: int = 0
     payment_confirmed: int = 0
     refused_responses: int = 0
+    actionable_refused_threads: int = 0
     evidence_requests: int = 0
     manual_reviews: int = 0
     autopilot_sent_count: int = 0
@@ -149,7 +150,12 @@ class GmailWatchedThreadMonitorService:
             watched.last_processed_at = utc_now()
             db.flush()
 
-        if sync_result.negative_responses_detected and self.settings.gmail_inbound_auto_sync_run_autopilot:
+        result.actionable_refused_threads = self.count_actionable_refused_threads(db, account)
+
+        if (
+            (sync_result.negative_responses_detected or result.actionable_refused_threads)
+            and self.settings.gmail_inbound_auto_sync_run_autopilot
+        ):
             self.sync_service.run_autopilot_for_negative_responses(db, user, sync_result)
             result.autopilot_sent_count += sync_result.autopilot_sent_count
             result.autopilot_skipped_count += sync_result.autopilot_skipped_count
@@ -172,11 +178,11 @@ class GmailWatchedThreadMonitorService:
 
         refreshed_payloads: list[InboundEmailPayload] = []
         try:
-            refreshed_payloads = self.sync_service.fetch_starred_payloads(
+            refreshed_payloads = self.sync_service.fetch_starred_payloads_for_queries(
                 db,
                 user,
                 account,
-                query=GMAIL_STARRED_URGENT_QUERY,
+                queries=GMAIL_STARRED_URGENT_QUERIES,
                 fallback_max_messages=self.settings.gmail_starred_max_messages_per_sync,
             )
         except EmailProviderError as exc:
@@ -242,6 +248,24 @@ class GmailWatchedThreadMonitorService:
         result.errors.extend(sync_result.errors)
         db.flush()
         return result
+
+    def count_actionable_refused_threads(self, db: Session, account: EmailAccount) -> int:
+        return int(
+            db.scalar(
+                select(func.count(func.distinct(GmailWatchedThread.id)))
+                .join(
+                    GmailStarredWorkItem,
+                    GmailStarredWorkItem.watched_thread_id == GmailWatchedThread.id,
+                )
+                .where(
+                    GmailWatchedThread.email_account_id == account.id,
+                    GmailWatchedThread.status == "active",
+                    GmailWatchedThread.star_active.is_(True),
+                    GmailStarredWorkItem.status == "refused",
+                )
+            )
+            or 0
+        )
 
     def get_active_watched_threads(
         self,
