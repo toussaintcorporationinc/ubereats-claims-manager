@@ -23,7 +23,7 @@ const primaryNavigationHrefs = new Set([
   "/dashboard",
   "/remboursements",
   "/annulations",
-  "/gmail-war-room",
+  "/relance-gmail",
 ]);
 
 type Props = {
