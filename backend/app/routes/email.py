@@ -886,6 +886,8 @@ def _refresh_starred_messages_for_relance_dashboard(
             db,
             current_user,
             account,
+            use_full_history=False,
+            max_messages=max_messages,
         )
 
     db.commit()
@@ -1178,19 +1180,36 @@ def gmail_war_room(
         settings = get_settings()
         sync_service = GmailInboundSyncService(provider)
         monitor = GmailWatchedThreadMonitorService(provider, settings=settings, sync_service=sync_service)
+        refresh_batch_limit = min(
+            limit,
+            settings.gmail_watched_threads_batch_per_cycle,
+            settings.gmail_watched_threads_max_per_cycle,
+        )
         for account in connected_accounts:
-            watched_result = monitor.process_account(
-                db,
-                current_user,
-                account,
-                max_threads=min(
-                    limit,
-                    settings.gmail_watched_threads_batch_per_cycle,
-                    settings.gmail_watched_threads_max_per_cycle,
-                ),
-                discover_starred=True,
-                process_new_messages=True,
-            )
+            try:
+                watched_result = monitor.process_account(
+                    db,
+                    current_user,
+                    account,
+                    max_threads=refresh_batch_limit,
+                    discover_starred=True,
+                    discover_full_history=False,
+                    starred_discovery_max_messages=refresh_batch_limit,
+                    process_new_messages=True,
+                )
+            except Exception as exc:  # noqa: BLE001 - one Gmail account must not break the live dashboard.
+                add_audit_log(
+                    db,
+                    user_id=current_user.id,
+                    action="gmail_war_room_refresh_failed",
+                    entity_type="email_account",
+                    entity_id=account.id,
+                    new_value={
+                        "account_id": account.id,
+                        "error": str(exc)[:240],
+                    },
+                )
+                continue
             watched_autopilot_ran = (
                 watched_result.autopilot_sent_count > 0
                 or watched_result.autopilot_skipped_count > 0

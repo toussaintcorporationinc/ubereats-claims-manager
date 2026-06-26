@@ -420,6 +420,8 @@ class GmailEmailProvider:
         db: Session,
         account: EmailAccount,
         thread_id: str,
+        *,
+        include_attachments: bool = True,
     ) -> list[InboundEmailPayload]:
         access_token = self.access_token_for_external_call(db, account)
         payload = self.get_json(
@@ -434,7 +436,7 @@ class GmailEmailProvider:
         for item in raw_messages:
             if not isinstance(item, dict):
                 continue
-            attachments = self.extract_inbound_attachments(access_token, item)
+            attachments = self.extract_inbound_attachments(access_token, item) if include_attachments else []
             messages.append(self.parse_gmail_message(item, attachments=attachments))
         return messages
 

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from sqlalchemy import String, cast, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import Settings, get_settings
@@ -25,8 +26,10 @@ from app.services.gmail_inbound_sync_service import (
     GMAIL_STARRED_URGENT_QUERIES,
     GmailInboundSyncResult,
     GmailInboundSyncService,
+    starred_payload_identity_context,
 )
 from app.services.gmail_quota import parse_gmail_retry_after
+from app.services.autopilot_identity_repair_service import find_or_create_order_from_starred_text
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +85,8 @@ class GmailWatchedThreadMonitorService:
         *,
         max_threads: int | None = None,
         discover_starred: bool = True,
+        discover_full_history: bool = True,
+        starred_discovery_max_messages: int | None = None,
         process_new_messages: bool | None = None,
     ) -> GmailWatchedThreadMonitorResult:
         result = GmailWatchedThreadMonitorResult()
@@ -89,13 +94,39 @@ class GmailWatchedThreadMonitorService:
             result.status = "disabled"
             return result
 
-        if discover_starred:
-            self.discover_from_starred_messages(db, user, account, result=result)
-
         if process_new_messages is None:
             process_new_messages = self.settings.gmail_watched_threads_process_new_messages
+
+        if process_new_messages:
+            self.process_watched_threads(db, user, account, result=result, max_threads=max_threads)
+
+        if discover_starred:
+            self.discover_from_starred_messages(
+                db,
+                user,
+                account,
+                result=result,
+                use_full_history=discover_full_history,
+                max_messages=starred_discovery_max_messages,
+            )
+            if process_new_messages and result.watched_threads_created:
+                self.process_watched_threads(db, user, account, result=result, max_threads=max_threads)
+
         if not process_new_messages:
             return result
+
+        return result
+
+    def process_watched_threads(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        *,
+        result: GmailWatchedThreadMonitorResult | None = None,
+        max_threads: int | None = None,
+    ) -> GmailWatchedThreadMonitorResult:
+        result = result or GmailWatchedThreadMonitorResult()
 
         max_per_cycle = max_threads or self.settings.gmail_watched_threads_max_per_cycle
         active_threads = self.get_active_watched_threads(db, account, max_per_cycle=max_per_cycle)
@@ -120,6 +151,7 @@ class GmailWatchedThreadMonitorService:
                 watched.last_processed_at = utc_now()
                 continue
 
+            thread_order = self.repair_watched_thread_from_payloads(db, user, watched, payloads)
             for payload in sorted(payloads, key=lambda item: item.received_at or datetime.min):
                 if not payload.provider_message_id:
                     continue
@@ -131,15 +163,28 @@ class GmailWatchedThreadMonitorService:
                     order_identifier_index=order_identifier_index,
                     sync_result=sync_result,
                 )
+                if thread_order is not None and message.order_id is None:
+                    self.sync_service.record_linked_message(
+                        db,
+                        user,
+                        message,
+                        thread_order,
+                        match_reason="order_number_match",
+                    )
+                    message.review_status = "unreviewed"
+                    message.reviewed_at = None
+                    message.reviewed_by_user_id = None
+                    sync_result.linked_messages += 1
                 if not message.provider_thread_id:
                     continue
                 work_item, created = self.ensure_work_item(db, watched, account, message)
                 if created:
                     result.work_items_created += 1
                     result.new_messages_detected += 1
-                if work_item.status in FINAL_WORK_ITEM_STATUSES and not self.message_changed_after_processing(
-                    message,
-                    work_item,
+                if (
+                    work_item.status in FINAL_WORK_ITEM_STATUSES
+                    and not self.message_changed_after_processing(message, work_item)
+                    and not self.should_reprocess_final_item(watched, work_item, message)
                 ):
                     continue
 
@@ -178,6 +223,8 @@ class GmailWatchedThreadMonitorService:
         account: EmailAccount,
         *,
         result: GmailWatchedThreadMonitorResult | None = None,
+        use_full_history: bool = True,
+        max_messages: int | None = None,
     ) -> GmailWatchedThreadMonitorResult:
         result = result or GmailWatchedThreadMonitorResult()
         if not self.settings.gmail_watched_threads_enabled:
@@ -191,7 +238,8 @@ class GmailWatchedThreadMonitorService:
                 user,
                 account,
                 queries=GMAIL_STARRED_URGENT_QUERIES,
-                fallback_max_messages=self.settings.gmail_starred_max_messages_per_sync,
+                fallback_max_messages=max_messages or self.settings.gmail_starred_max_messages_per_sync,
+                use_full_history=use_full_history,
             )
         except EmailProviderError as exc:
             retry_after = parse_gmail_retry_after(
@@ -322,7 +370,10 @@ class GmailWatchedThreadMonitorService:
     ) -> list[InboundEmailPayload]:
         get_thread_messages = getattr(self.provider, "get_thread_messages_for_account", None)
         if callable(get_thread_messages):
-            return list(get_thread_messages(db, account, watched.gmail_thread_id))
+            try:
+                return list(get_thread_messages(db, account, watched.gmail_thread_id, include_attachments=False))
+            except TypeError:
+                return list(get_thread_messages(db, account, watched.gmail_thread_id))
         return [
             inbound_payload_from_message(message)
             for message in db.scalars(
@@ -332,6 +383,54 @@ class GmailWatchedThreadMonitorService:
                 )
             ).all()
         ]
+
+    def repair_watched_thread_from_payloads(
+        self,
+        db: Session,
+        user: User,
+        watched: GmailWatchedThread,
+        payloads: list[InboundEmailPayload],
+    ) -> ClaimOrder | None:
+        if watched.claim_order_id:
+            return db.get(ClaimOrder, watched.claim_order_id)
+        context = watched_thread_identity_context(payloads)
+        if not context:
+            return None
+        order = find_or_create_order_from_starred_text(db, user, context)
+        if order is None:
+            return None
+        watched.claim_order_id = order.id
+        watched.linked_case_type = "claim_order"
+        watched.linked_case_id = order.id
+        watched.status = "active"
+        watched.star_active = True
+        db.flush()
+        add_audit_log(
+            db,
+            entity_type="gmail_watched_thread",
+            entity_id=watched.id,
+            action="gmail_watched_thread.linked_from_thread_text",
+            user_id=user.id,
+            new_value={
+                "gmail_thread_id": watched.gmail_thread_id,
+                "claim_order_id": order.id,
+            },
+        )
+        return order
+
+    def should_reprocess_final_item(
+        self,
+        watched: GmailWatchedThread,
+        item: GmailStarredWorkItem,
+        message: InboundEmailMessage,
+    ) -> bool:
+        if item.status not in {"manual_review", "skipped"}:
+            return False
+        return bool(
+            watched.claim_order_id
+            and message.match_status == "linked"
+            and message.review_status == "unreviewed"
+        )
 
     def upsert_inbound_message(
         self,
@@ -347,13 +446,21 @@ class GmailWatchedThreadMonitorService:
         if existing_message is not None:
             self.sync_service.refresh_existing_message_from_payload(db, user, existing_message, payload)
             return existing_message
-        message = self.sync_service.create_inbound_message(
-            db,
-            user,
-            account,
-            payload,
-            order_identifier_index=order_identifier_index,
-        )
+        try:
+            with db.begin_nested():
+                message = self.sync_service.create_inbound_message(
+                    db,
+                    user,
+                    account,
+                    payload,
+                    order_identifier_index=order_identifier_index,
+                )
+        except IntegrityError:
+            existing_message = self.sync_service.get_existing_message(db, account, payload.provider_message_id)
+            if existing_message is None:
+                raise
+            self.sync_service.refresh_existing_message_from_payload(db, user, existing_message, payload)
+            return existing_message
         sync_result.synced_messages += 1
         if message.match_status == "linked":
             sync_result.linked_messages += 1
@@ -421,11 +528,27 @@ class GmailWatchedThreadMonitorService:
                 provider_message_id=message.provider_message_id,
                 status="pending",
             )
-            db.add(item)
-            created = True
+            nested = db.begin_nested()
+            try:
+                db.add(item)
+                db.flush()
+                nested.commit()
+                created = True
+            except IntegrityError:
+                nested.rollback()
+                item = db.scalar(
+                    select(GmailStarredWorkItem).where(
+                        GmailStarredWorkItem.email_account_id == account.id,
+                        GmailStarredWorkItem.provider_message_id == message.provider_message_id,
+                    )
+                )
+                if item is None:
+                    raise
+                created = False
         else:
-            if item.watched_thread_id is None:
+            if item.watched_thread_id is None or item.gmail_thread_id == watched.gmail_thread_id:
                 item.watched_thread_id = watched.id
+                item.gmail_thread_id = watched.gmail_thread_id
             if item.inbound_message_id is None:
                 item.inbound_message_id = message.id
         return item, created
@@ -594,6 +717,13 @@ class GmailWatchedThreadMonitorService:
         if message.updated_at is None:
             return False
         return datetime_after(message.updated_at, item.processed_at)
+
+
+def watched_thread_identity_context(payloads: list[InboundEmailPayload]) -> str:
+    parts: list[str] = []
+    for payload in sorted(payloads, key=lambda item: item.received_at or datetime.min):
+        parts.append(starred_payload_identity_context(payload))
+    return "\n\n---\n\n".join(part for part in parts if part.strip())[:20000]
 
 
 def inbound_payload_from_message(message: InboundEmailMessage) -> InboundEmailPayload:

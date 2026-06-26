@@ -338,8 +338,8 @@ def create_sent_email_context(
     draft = EmailDraft(
         order_id=order.id,
         draft_type="initial_claim",
-        subject=f"Réclamation Uber Eats {order_number}",
-        body=f"Bonjour, merci d'étudier la commande {order_number}.",
+        subject=f"RÃ©clamation Uber Eats {order_number}",
+        body=f"Bonjour, merci d'Ã©tudier la commande {order_number}.",
         status="draft",
     )
     db_session.add(draft)
@@ -381,7 +381,7 @@ def inbound_payload(
     thread_id: str | None = None,
     from_email: str = "support@uber.com",
     to_email: str = "claims-owner@example.com",
-    subject: str = "Re: réclamation Uber Eats",
+    subject: str = "Re: rÃ©clamation Uber Eats",
     body_text: str = "Nous revenons vers vous.",
     provider_labels: list[str] | None = None,
     attachments: list[InboundEmailAttachment] | None = None,
@@ -598,8 +598,6 @@ def test_staff_cannot_launch_sync(
     response = sync_inbound(client, staff_token)
 
     assert response.status_code == 403
-
-
 def test_manager_can_launch_sync_for_own_account(
     client: TestClient,
     db_session: Session,
@@ -678,7 +676,7 @@ def test_reprocess_unreviewed_messages_respects_max_messages(
                 provider="gmail",
                 provider_message_id=f"msg-existing-{index}",
                 from_email="support@uber.com",
-                subject=f"Réponse Uber {index}",
+                subject=f"RÃ©ponse Uber {index}",
                 body_text="Nous revenons vers vous.",
                 match_status="unlinked",
                 match_reason="no_match",
@@ -1121,6 +1119,7 @@ def test_auto_sync_marks_unexpected_sync_failure_failed(
             raise RuntimeError("gmail worker exploded")
 
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_WATCHED_THREADS_ENABLED", "false")
     get_settings.cache_clear()
     owner = get_user(db_session, "owner@example.com")
     connect_gmail_account(db_session, owner.id)
@@ -1145,6 +1144,7 @@ def test_auto_sync_limits_existing_reprocess_backlog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_WATCHED_THREADS_ENABLED", "false")
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_EXISTING_REPROCESS_LIMIT", "3")
     monkeypatch.setenv("GMAIL_STARRED_FULL_HISTORY_ENABLED", "false")
     get_settings.cache_clear()
@@ -1201,6 +1201,7 @@ def test_auto_sync_reprocesses_full_existing_starred_backlog_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_WATCHED_THREADS_ENABLED", "false")
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_EXISTING_REPROCESS_LIMIT", "3")
     monkeypatch.setenv("GMAIL_STARRED_FULL_HISTORY_ENABLED", "true")
     get_settings.cache_clear()
@@ -1251,6 +1252,50 @@ def test_auto_sync_reprocesses_full_existing_starred_backlog_by_default(
     get_settings.cache_clear()
 
 
+def test_auto_sync_watched_threads_skips_heavy_full_history_sync(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_WATCHED_THREADS_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_STARRED_FULL_HISTORY_ENABLED", "true")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-watched-light-discovery",
+            thread_id="thread-watched-light-discovery",
+            subject="Re: Contestation remboursement TEST-LIGHT",
+            body_text="Pas de remboursement pour cette commande.",
+            provider_labels=["STARRED"],
+        )
+    ]
+
+    def fail_sync_account(self, db, user, account, **kwargs):  # noqa: ARG001
+        raise AssertionError("watched thread auto-sync must not run the heavy sync_account path")
+
+    monkeypatch.setattr(GmailInboundSyncService, "sync_account", fail_sync_account)
+
+    result = GmailInboundAutoSyncService(fake_gmail_provider).sync_due_accounts(db_session)
+
+    sync_state = db_session.scalar(select(GmailSyncState))
+    assert sync_state is not None
+    assert result.status == "success"
+    assert result.accounts_checked == 1
+    assert result.accounts_synced == 1
+    assert result.watched_threads_created == 1
+    assert fake_gmail_provider.all_query_options == []
+    assert fake_gmail_provider.query_limits
+    assert fake_gmail_provider.query_limits[0][0] == GMAIL_STARRED_URGENT_QUERY
+    assert sync_state.status == "success"
+    assert sync_state.last_error is None
+    get_settings.cache_clear()
+
+
 def test_auto_sync_service_processes_refusals_and_runs_autopilot(
     client: TestClient,
     db_session: Session,
@@ -1261,6 +1306,7 @@ def test_auto_sync_service_processes_refusals_and_runs_autopilot(
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS", "60")
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    monkeypatch.setenv("GMAIL_WATCHED_THREADS_ENABLED", "false")
     get_settings.cache_clear()
     owner = get_user(db_session, "owner@example.com")
     connect_gmail_account(db_session, owner.id)
@@ -1320,6 +1366,7 @@ def test_auto_sync_runs_autopilot_when_watched_thread_reports_refusal(
             watched_threads_seen=1,
             processed_messages=1,
             refused_responses=1,
+            autopilot_sent_count=1,
         )
 
     def fake_should_run(self, db, user, result):  # noqa: ARG001
@@ -1345,7 +1392,7 @@ def test_auto_sync_runs_autopilot_when_watched_thread_reports_refusal(
     assert result.negative_responses_detected == 0
     assert result.watched_thread_refused_responses == 1
     assert result.autopilot_sent_count == 1
-    assert autopilot_runs == [owner.id]
+    assert autopilot_runs == []
     get_settings.cache_clear()
 
 
@@ -1357,6 +1404,7 @@ def test_auto_sync_runs_autopilot_for_existing_linked_starred_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_WATCHED_THREADS_ENABLED", "false")
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
     get_settings.cache_clear()
     owner = get_user(db_session, "owner@example.com")
@@ -1434,6 +1482,7 @@ def test_auto_sync_makes_existing_linked_starred_thread_actionable_without_workf
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_WATCHED_THREADS_ENABLED", "false")
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
     get_settings.cache_clear()
     owner = get_user(db_session, "owner@example.com")
@@ -1746,7 +1795,7 @@ def test_message_with_order_number_in_subject_is_linked(
         inbound_payload(
             "msg-subject",
             thread_id="thread-unknown",
-            subject="Réponse Uber UBER-INBOUND-SUBJECT",
+            subject="RÃ©ponse Uber UBER-INBOUND-SUBJECT",
         )
     ]
 
@@ -1808,7 +1857,7 @@ def test_message_without_match_stays_unlinked(
 ) -> None:
     owner = get_user(db_session, "owner@example.com")
     connect_gmail_account(db_session, owner.id)
-    fake_gmail_provider.messages = [inbound_payload("msg-unlinked", subject="Réponse Uber sans numéro")]
+    fake_gmail_provider.messages = [inbound_payload("msg-unlinked", subject="RÃ©ponse Uber sans numÃ©ro")]
 
     response = sync_inbound(client)
 
@@ -2330,7 +2379,7 @@ def test_starred_gmail_text_creates_order_when_thread_is_not_linked(
             subject="Contestation de remboursement de commande",
             body_text=(
                 "Bonjour je veux contester la demande de remboursement de Yoann O "
-                "numéro de commande F93BA, du 18/06/2026, car sa commande a bien ete preparee.\n\n"
+                "numÃ©ro de commande F93BA, du 18/06/2026, car sa commande a bien ete preparee.\n\n"
                 "Montant concerne : 24.99 EUR\n\n"
                 "Frit Dodo\n"
                 "108 Avenue du Marechal Foch, Meaux, 77100\n"
@@ -2395,8 +2444,8 @@ def test_starred_gmail_text_creates_cancellation_order_when_thread_is_not_linked
             subject="contestation d'annulation de commande",
             body_text=(
                 "Bonsoir je veux contester l'annulation de commande de Inaki A "
-                "numéro de commande BAEF7 car nous l'avons préparé et le client a annulé.\n\n"
-                "Montant concerné : 19.99 EUR\n\n"
+                "numÃ©ro de commande BAEF7 car nous l'avons prÃ©parÃ© et le client a annulÃ©.\n\n"
+                "Montant concernÃ© : 19.99 EUR\n\n"
                 "Frit Dodo\n"
                 "108 Avenue du Marechal Foch, Meaux, 77100\n"
                 "0605807385\n"
@@ -2810,7 +2859,7 @@ def test_owner_can_manually_link_unlinked_message(
         order_number="UBER-INBOUND-MANUAL",
         thread_id="thread-manual",
     )
-    fake_gmail_provider.messages = [inbound_payload("msg-manual", subject="Réponse Uber à rattacher")]
+    fake_gmail_provider.messages = [inbound_payload("msg-manual", subject="RÃ©ponse Uber Ã  rattacher")]
     assert sync_inbound(client).status_code == 200
     inbound_message = db_session.scalar(select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-manual"))
     assert inbound_message is not None
@@ -2838,7 +2887,7 @@ def test_staff_cannot_manually_link_message(
         order_number="UBER-INBOUND-STAFF",
         thread_id="thread-staff",
     )
-    fake_gmail_provider.messages = [inbound_payload("msg-staff", subject="Réponse Uber à rattacher")]
+    fake_gmail_provider.messages = [inbound_payload("msg-staff", subject="RÃ©ponse Uber Ã  rattacher")]
     assert sync_inbound(client).status_code == 200
     inbound_message = db_session.scalar(select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-staff"))
     staff = create_user(client, "staff-link@example.com", "staff")
@@ -2870,7 +2919,7 @@ def test_manager_non_assigned_cannot_manually_link_message(
         order_number="UBER-INBOUND-MANAGER-BLOCKED",
         thread_id="thread-manager-blocked",
     )
-    fake_gmail_provider.messages = [inbound_payload("msg-manager-blocked", subject="Réponse Uber à rattacher")]
+    fake_gmail_provider.messages = [inbound_payload("msg-manager-blocked", subject="RÃ©ponse Uber Ã  rattacher")]
     assert sync_inbound(client).status_code == 200
     inbound_message = db_session.scalar(
         select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-manager-blocked")

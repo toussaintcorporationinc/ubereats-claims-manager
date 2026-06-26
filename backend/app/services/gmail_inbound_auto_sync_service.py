@@ -103,17 +103,6 @@ class GmailInboundAutoSyncService:
 
             result.accounts_checked += 1
             try:
-                account_result = sync_service.sync_account(
-                    db,
-                    user,
-                    account,
-                    lookback_days=self.settings.gmail_inbound_sync_lookback_days,
-                    max_messages=self.settings.gmail_inbound_max_messages_per_sync,
-                    analyze_responses=True,
-                    apply_reviews=True,
-                    reprocess_existing_limit=self.settings.gmail_inbound_auto_sync_existing_reprocess_limit,
-                )
-                watched_result = None
                 if self.settings.gmail_watched_threads_enabled:
                     watched_result = watched_thread_monitor.process_account(
                         db,
@@ -121,6 +110,8 @@ class GmailInboundAutoSyncService:
                         account,
                         max_threads=self.watched_threads_batch_size(),
                         discover_starred=True,
+                        discover_full_history=False,
+                        starred_discovery_max_messages=self.watched_threads_batch_size(),
                         process_new_messages=self.settings.gmail_watched_threads_process_new_messages,
                     )
                     self.add_watched_thread_result(result, watched_result)
@@ -137,15 +128,25 @@ class GmailInboundAutoSyncService:
                             user.id,
                             f"Gmail quota reached. Retry after {retry_after.isoformat()}",
                         )
-                watched_autopilot_already_ran = self.watched_result_ran_autopilot(watched_result)
-                should_run_autopilot = (
-                    sync_service.should_run_autopilot_for_result(db, user, account_result)
-                    or self.watched_result_needs_autopilot(watched_result)
+                    else:
+                        self.mark_sync_success(db, sync_service, account_id, user.id, watched_result)
+                    result.accounts_synced += 1
+                    continue
+
+                account_result = sync_service.sync_account(
+                    db,
+                    user,
+                    account,
+                    lookback_days=self.settings.gmail_inbound_sync_lookback_days,
+                    max_messages=self.settings.gmail_inbound_max_messages_per_sync,
+                    analyze_responses=True,
+                    apply_reviews=True,
+                    reprocess_existing_limit=self.settings.gmail_inbound_auto_sync_existing_reprocess_limit,
                 )
-                if (
-                    self.settings.gmail_inbound_auto_sync_run_autopilot
-                    and not watched_autopilot_already_ran
-                    and should_run_autopilot
+                if self.settings.gmail_inbound_auto_sync_run_autopilot and sync_service.should_run_autopilot_for_result(
+                    db,
+                    user,
+                    account_result,
                 ):
                     sync_service.run_autopilot_for_negative_responses(db, user, account_result)
                 self.add_account_result(result, account_result)
@@ -351,6 +352,43 @@ class GmailInboundAutoSyncService:
             action="gmail_inbound_sync.failed",
             user_id=user_id,
             new_value={"error": error_message[:2000]},
+        )
+        db.flush()
+
+    def mark_sync_success(
+        self,
+        db: Session,
+        sync_service: GmailInboundSyncService,
+        account_id: int,
+        user_id: int,
+        watched_result: GmailWatchedThreadMonitorResult,
+    ) -> None:
+        account = db.get(EmailAccount, account_id)
+        if account is None:
+            return
+        sync_state = sync_service.get_or_create_sync_state(db, account)
+        now = utc_now()
+        sync_state.status = "success"
+        sync_state.last_sync_at = now
+        sync_state.last_success_at = now
+        sync_state.last_error = None
+        add_audit_log(
+            db,
+            entity_type="gmail_sync_state",
+            entity_id=sync_state.id,
+            action="gmail_watched_threads_sync.success",
+            user_id=user_id,
+            new_value={
+                "watched_threads_seen": watched_result.watched_threads_seen,
+                "new_messages_detected": watched_result.new_messages_detected,
+                "processed_messages": watched_result.processed_messages,
+                "positive_responses": watched_result.positive_responses,
+                "refused_responses": watched_result.refused_responses,
+                "actionable_refused_threads": watched_result.actionable_refused_threads,
+                "autopilot_sent_count": watched_result.autopilot_sent_count,
+                "autopilot_skipped_count": watched_result.autopilot_skipped_count,
+                "autopilot_failed_count": watched_result.autopilot_failed_count,
+            },
         )
         db.flush()
 
