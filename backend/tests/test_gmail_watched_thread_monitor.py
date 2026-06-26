@@ -95,6 +95,24 @@ class FakeWatchedGmailProvider:
         self.removed_labels.append((provider_message_id, label))
 
 
+class FakeLightweightWatchedGmailProvider(FakeWatchedGmailProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.starred_refs_by_query: dict[str, list[dict[str, str]]] = {}
+        self.ref_queries: list[str] = []
+
+    def list_message_refs_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        *,
+        query: str,
+        max_results: int,
+    ) -> list[dict[str, str]]:
+        self.ref_queries.append(query)
+        return self.starred_refs_by_query.get(query, [])[:max_results]
+
+
 @pytest.fixture()
 def watched_gmail_settings(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     monkeypatch.setenv("EMAIL_PROVIDER_ENABLED", "true")
@@ -243,6 +261,41 @@ def test_starred_message_creates_watched_thread_and_work_item(
     assert watched.star_active is True
     assert result.watched_threads_created == 1
     assert db_session.scalar(select(func.count(GmailStarredWorkItem.id))) == 1
+
+
+def test_lightweight_starred_discovery_creates_watched_thread_without_payload_fetch(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    provider = FakeLightweightWatchedGmailProvider()
+    provider.starred_refs_by_query = {
+        GMAIL_STARRED_URGENT_QUERY: [{"id": "star-ref-1", "threadId": "thread-ref-1"}]
+    }
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=True,
+        process_new_messages=False,
+    )
+
+    assert provider.ref_queries == [GMAIL_STARRED_URGENT_QUERY]
+    assert provider.full_history_calls == []
+    assert db_session.scalar(select(func.count(InboundEmailMessage.id))) == 0
+    watched = db_session.scalar(select(GmailWatchedThread))
+    assert watched is not None
+    assert watched.gmail_thread_id == "thread-ref-1"
+    assert watched.first_starred_message_id == "star-ref-1"
+    work_item = db_session.scalar(select(GmailStarredWorkItem))
+    assert work_item is not None
+    assert work_item.inbound_message_id is None
+    assert work_item.provider_message_id == "star-ref-1"
+    assert result.watched_threads_created == 1
+    assert result.work_items_created == 1
 
 
 def test_starred_identity_repair_reuses_existing_order_after_duplicate_race(

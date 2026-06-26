@@ -260,6 +260,43 @@ class GmailEmailProvider:
         payload = self.list_messages_page(access_token, query=query, max_results=max_results)
         return [str(message["id"]) for message in payload.get("messages", []) if message.get("id")]
 
+    def list_message_refs_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        *,
+        query: str,
+        max_results: int,
+    ) -> list[dict[str, str]]:
+        """List Gmail message/thread ids without loading message bodies.
+
+        Starred-thread discovery can involve tens of thousands of messages. The
+        heavy payload path downloads full MIME bodies and attachments, which is
+        correct for processing one thread but too slow for discovering the queue.
+        """
+        access_token = self.access_token_for_external_call(db, account)
+        refs: list[dict[str, str]] = []
+        page_token: str | None = None
+        limit = max(1, max_results)
+        while len(refs) < limit:
+            payload = self.list_messages_page(
+                access_token,
+                query=query,
+                max_results=min(500, limit - len(refs)),
+                page_token=page_token,
+            )
+            for message in payload.get("messages", []):
+                if not isinstance(message, dict):
+                    continue
+                message_id = str(message.get("id") or "")
+                thread_id = str(message.get("threadId") or "")
+                if message_id and thread_id:
+                    refs.append({"id": message_id, "threadId": thread_id})
+            page_token = payload.get("nextPageToken")
+            if not page_token:
+                break
+        return refs
+
     def list_messages_page(
         self,
         access_token: str,

@@ -231,6 +231,15 @@ class GmailWatchedThreadMonitorService:
             result.status = "disabled"
             return result
 
+        list_refs_for_account = getattr(self.provider, "list_message_refs_for_account", None)
+        if callable(list_refs_for_account):
+            return self.discover_from_starred_message_refs(
+                db,
+                account,
+                result=result,
+                max_messages=max_messages,
+            )
+
         refreshed_payloads: list[InboundEmailPayload] = []
         try:
             refreshed_payloads = self.sync_service.fetch_starred_payloads_for_queries(
@@ -316,6 +325,92 @@ class GmailWatchedThreadMonitorService:
                 result.new_messages_detected += 1
 
         result.errors.extend(sync_result.errors)
+        db.flush()
+        return result
+
+    def discover_from_starred_message_refs(
+        self,
+        db: Session,
+        account: EmailAccount,
+        *,
+        result: GmailWatchedThreadMonitorResult | None = None,
+        max_messages: int | None = None,
+    ) -> GmailWatchedThreadMonitorResult:
+        """Discover starred Gmail threads with message references only.
+
+        This is intentionally separate from payload processing. For large
+        mailboxes, queue discovery must stay cheap so TENNET can register all
+        starred threads first, then process the actual conversations in bounded
+        cycles.
+        """
+        result = result or GmailWatchedThreadMonitorResult()
+        list_refs_for_account = getattr(self.provider, "list_message_refs_for_account", None)
+        if not callable(list_refs_for_account):
+            return result
+
+        max_results = max_messages or self.settings.gmail_starred_max_messages_per_sync
+        seen_message_ids: set[str] = set()
+        refs: list[dict[str, str]] = []
+        for query in GMAIL_STARRED_URGENT_QUERIES:
+            try:
+                query_refs = list(
+                    list_refs_for_account(
+                        db,
+                        account,
+                        query=query,
+                        max_results=max_results,
+                    )
+                )
+            except EmailProviderError as exc:
+                retry_after = parse_gmail_retry_after(
+                    exc.message,
+                    safety_seconds=self.settings.gmail_quota_retry_safety_seconds,
+                )
+                if retry_after is not None:
+                    result.errors.append(f"gmail_quota_retry_after:{retry_after.isoformat()}")
+                    return result
+                result.errors.append(f"starred_discovery_refs:{exc.message}")
+                continue
+            except Exception as exc:  # noqa: BLE001 - one query variant must not stop discovery.
+                retry_after = parse_gmail_retry_after(
+                    str(exc),
+                    safety_seconds=self.settings.gmail_quota_retry_safety_seconds,
+                )
+                if retry_after is not None:
+                    result.errors.append(f"gmail_quota_retry_after:{retry_after.isoformat()}")
+                    return result
+                result.errors.append(f"starred_discovery_refs:{str(exc)[:160]}")
+                continue
+            for ref in query_refs:
+                message_id = str(ref.get("id") or "")
+                thread_id = str(ref.get("threadId") or "")
+                if not message_id or not thread_id or message_id in seen_message_ids:
+                    continue
+                seen_message_ids.add(message_id)
+                refs.append({"id": message_id, "threadId": thread_id})
+            if refs:
+                break
+
+        for ref in refs:
+            watched, created = self.ensure_watched_thread_ref(
+                db,
+                account,
+                gmail_thread_id=ref["threadId"],
+                provider_message_id=ref["id"],
+            )
+            if created:
+                result.watched_threads_created += 1
+            result.watched_threads_seen += 1
+            _, item_created = self.ensure_work_item_ref(
+                db,
+                watched,
+                account,
+                provider_message_id=ref["id"],
+            )
+            if item_created:
+                result.work_items_created += 1
+                result.new_messages_detected += 1
+
         db.flush()
         return result
 
@@ -505,6 +600,54 @@ class GmailWatchedThreadMonitorService:
         db.flush()
         return watched, created
 
+    def ensure_watched_thread_ref(
+        self,
+        db: Session,
+        account: EmailAccount,
+        *,
+        gmail_thread_id: str,
+        provider_message_id: str,
+    ) -> tuple[GmailWatchedThread, bool]:
+        watched = db.scalar(
+            select(GmailWatchedThread).where(
+                GmailWatchedThread.email_account_id == account.id,
+                GmailWatchedThread.gmail_thread_id == gmail_thread_id,
+            )
+        )
+        created = False
+        if watched is None:
+            watched = GmailWatchedThread(
+                email_account_id=account.id,
+                gmail_thread_id=gmail_thread_id,
+                first_starred_message_id=provider_message_id,
+                status="active",
+                star_active=True,
+            )
+            nested = db.begin_nested()
+            try:
+                db.add(watched)
+                db.flush()
+                nested.commit()
+                created = True
+            except IntegrityError:
+                nested.rollback()
+                watched = db.scalar(
+                    select(GmailWatchedThread).where(
+                        GmailWatchedThread.email_account_id == account.id,
+                        GmailWatchedThread.gmail_thread_id == gmail_thread_id,
+                    )
+                )
+                if watched is None:
+                    raise
+        elif watched.status in {"closed", "paused"}:
+            watched.status = "active"
+            watched.star_active = True
+        if not watched.first_starred_message_id:
+            watched.first_starred_message_id = provider_message_id
+        watched.star_active = True
+        db.flush()
+        return watched, created
+
     def ensure_work_item(
         self,
         db: Session,
@@ -551,6 +694,52 @@ class GmailWatchedThreadMonitorService:
                 item.gmail_thread_id = watched.gmail_thread_id
             if item.inbound_message_id is None:
                 item.inbound_message_id = message.id
+        return item, created
+
+    def ensure_work_item_ref(
+        self,
+        db: Session,
+        watched: GmailWatchedThread,
+        account: EmailAccount,
+        *,
+        provider_message_id: str,
+    ) -> tuple[GmailStarredWorkItem, bool]:
+        item = db.scalar(
+            select(GmailStarredWorkItem).where(
+                GmailStarredWorkItem.email_account_id == account.id,
+                GmailStarredWorkItem.provider_message_id == provider_message_id,
+            )
+        )
+        created = False
+        if item is None:
+            item = GmailStarredWorkItem(
+                watched_thread_id=watched.id,
+                email_account_id=account.id,
+                inbound_message_id=None,
+                gmail_thread_id=watched.gmail_thread_id,
+                provider_message_id=provider_message_id,
+                status="pending",
+            )
+            nested = db.begin_nested()
+            try:
+                db.add(item)
+                db.flush()
+                nested.commit()
+                created = True
+            except IntegrityError:
+                nested.rollback()
+                item = db.scalar(
+                    select(GmailStarredWorkItem).where(
+                        GmailStarredWorkItem.email_account_id == account.id,
+                        GmailStarredWorkItem.provider_message_id == provider_message_id,
+                    )
+                )
+                if item is None:
+                    raise
+                created = False
+        else:
+            item.watched_thread_id = watched.id
+            item.gmail_thread_id = watched.gmail_thread_id
         return item, created
 
     def update_watched_links_from_message(
