@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from sqlalchemy import String, cast, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import Settings, get_settings
@@ -450,11 +451,27 @@ class GmailWatchedThreadMonitorService:
                 provider_message_id=message.provider_message_id,
                 status="pending",
             )
-            db.add(item)
-            created = True
+            nested = db.begin_nested()
+            try:
+                db.add(item)
+                db.flush()
+                nested.commit()
+                created = True
+            except IntegrityError:
+                nested.rollback()
+                item = db.scalar(
+                    select(GmailStarredWorkItem).where(
+                        GmailStarredWorkItem.email_account_id == account.id,
+                        GmailStarredWorkItem.provider_message_id == message.provider_message_id,
+                    )
+                )
+                if item is None:
+                    raise
+                created = False
         else:
-            if item.watched_thread_id is None:
+            if item.watched_thread_id is None or item.gmail_thread_id == watched.gmail_thread_id:
                 item.watched_thread_id = watched.id
+                item.gmail_thread_id = watched.gmail_thread_id
             if item.inbound_message_id is None:
                 item.inbound_message_id = message.id
         return item, created
