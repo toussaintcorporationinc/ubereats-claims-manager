@@ -669,6 +669,74 @@ def test_unlinked_watched_thread_prefers_latest_external_before_full_thread(
     assert positive_item.status == "positive"
 
 
+def test_pending_local_work_item_is_processed_before_fetching_gmail(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    provider = FakeFastWatchedGmailProvider()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-local-backlog",
+        first_starred_message_id="star-local-backlog",
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.flush()
+    message = InboundEmailMessage(
+        email_account_id=account.id,
+        provider="gmail",
+        provider_message_id="reply-local-refusal",
+        provider_thread_id="thread-local-backlog",
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject="Re: Contestation Uber",
+        snippet="Nous maintenons le refus.",
+        body_text="Bonjour, nous maintenons le refus et aucun remboursement ne sera applique.",
+        received_at=utc_now(),
+        raw_headers_json={"from": "restaurantsfrance@uber.com", "to": account.email_address},
+        provider_labels_json=["INBOX"],
+        match_status="unlinked",
+        review_status="unreviewed",
+    )
+    db_session.add(message)
+    db_session.flush()
+    item = GmailStarredWorkItem(
+        watched_thread_id=watched.id,
+        email_account_id=account.id,
+        inbound_message_id=message.id,
+        gmail_thread_id=watched.gmail_thread_id,
+        provider_message_id=message.provider_message_id,
+        status="pending",
+    )
+    db_session.add(item)
+    db_session.commit()
+
+    def fail_reprocess(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("unlinked local backlog must use the fast classifier")
+
+    monkeypatch.setattr(GmailInboundSyncService, "reprocess_existing_message", fail_reprocess)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        max_threads=1,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    assert provider.latest_calls == []
+    assert provider.thread_include_attachments_calls == []
+    assert result.processed_messages == 1
+    assert result.refused_responses == 1
+    db_session.refresh(item)
+    assert item.status == "refused"
+    assert item.reason == "uber_refusal"
+
+
 def test_unlinked_watched_thread_fast_classifies_refusal_without_heavy_reprocess(
     db_session: Session,
     gmail_case,

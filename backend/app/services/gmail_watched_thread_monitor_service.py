@@ -151,7 +151,14 @@ class GmailWatchedThreadMonitorService:
                 max_messages=starred_discovery_max_messages,
             )
             if process_new_messages and result.watched_threads_created:
-                self.process_watched_threads(db, user, account, result=result, max_threads=max_threads)
+                self.process_watched_threads(
+                    db,
+                    user,
+                    account,
+                    result=result,
+                    max_threads=max_threads,
+                    process_local_backlog=False,
+                )
 
         if not process_new_messages:
             return result
@@ -166,14 +173,33 @@ class GmailWatchedThreadMonitorService:
         *,
         result: GmailWatchedThreadMonitorResult | None = None,
         max_threads: int | None = None,
+        process_local_backlog: bool = True,
     ) -> GmailWatchedThreadMonitorResult:
         result = result or GmailWatchedThreadMonitorResult()
 
         max_per_cycle = max_threads or self.settings.gmail_watched_threads_max_per_cycle
-        active_threads = self.get_active_watched_threads(db, account, max_per_cycle=max_per_cycle)
-        result.watched_threads_seen += len(active_threads)
-        order_identifier_index = self.sync_service.build_order_identifier_index(db, user)
         sync_result = GmailInboundSyncResult(status="success")
+        local_processed = (
+            self.process_pending_local_work_items(
+                db,
+                user,
+                account,
+                result=result,
+                sync_result=sync_result,
+                max_items=max_per_cycle,
+            )
+            if process_local_backlog
+            else 0
+        )
+        remaining_thread_budget = max(max_per_cycle - local_processed, 0)
+        if remaining_thread_budget <= 0:
+            active_threads: list[GmailWatchedThread] = []
+        else:
+            active_threads = self.get_active_watched_threads(db, account, max_per_cycle=remaining_thread_budget)
+        result.watched_threads_seen += len(active_threads)
+        order_identifier_index = (
+            self.sync_service.build_order_identifier_index(db, user) if active_threads else {}
+        )
 
         for watched in active_threads:
             try:
@@ -270,6 +296,77 @@ class GmailWatchedThreadMonitorService:
             result.autopilot_failed_count += sync_result.autopilot_failed_count
         result.errors.extend(sync_result.errors)
         return result
+
+    def process_pending_local_work_items(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        *,
+        result: GmailWatchedThreadMonitorResult,
+        sync_result: GmailInboundSyncResult,
+        max_items: int,
+    ) -> int:
+        """Process already-synced Gmail backlog before making remote Gmail calls.
+
+        Large mailboxes can have thousands of starred work items already stored
+        locally. Those must move first; otherwise each cycle spends time fetching
+        Gmail threads while the visible queue still looks stuck at zero.
+        """
+        items = list(
+            db.scalars(
+                select(GmailStarredWorkItem)
+                .options(
+                    selectinload(GmailStarredWorkItem.watched_thread),
+                    selectinload(GmailStarredWorkItem.inbound_message).selectinload(InboundEmailMessage.order),
+                )
+                .join(
+                    GmailWatchedThread,
+                    GmailWatchedThread.id == GmailStarredWorkItem.watched_thread_id,
+                )
+                .where(
+                    GmailStarredWorkItem.email_account_id == account.id,
+                    GmailStarredWorkItem.inbound_message_id.is_not(None),
+                    GmailStarredWorkItem.status.in_(["pending", "processing", "failed"]),
+                    GmailWatchedThread.status.in_(["active", "manual_review"]),
+                    GmailWatchedThread.star_active.is_(True),
+                )
+                .order_by(
+                    GmailStarredWorkItem.processed_at.asc().nullsfirst(),
+                    GmailStarredWorkItem.id.asc(),
+                )
+                .limit(max_items)
+            ).all()
+        )
+        for item in items:
+            watched = item.watched_thread
+            message = item.inbound_message
+            if watched is None or message is None:
+                item.status = "failed"
+                item.reason = "missing_local_message"
+                item.processed_at = utc_now()
+                continue
+            item.status = "processing"
+            thread_order = db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else None
+            if thread_order is None and message.match_status != "linked":
+                self.process_unlinked_watched_message_fast(db, user, message, sync_result)
+            else:
+                self.sync_service.reprocess_existing_message(
+                    db,
+                    user,
+                    account,
+                    message,
+                    sync_result,
+                    apply_reviews=True,
+                    payload=inbound_payload_from_message(message),
+                )
+            self.update_work_item_status(db, user, watched, item, message, result)
+            result.processed_messages += 1
+            watched.last_processed_at = utc_now()
+            db.flush()
+        if items:
+            result.watched_threads_seen += len({item.watched_thread_id for item in items if item.watched_thread_id})
+        return len(items)
 
     def should_skip_already_final_payloads(
         self,
