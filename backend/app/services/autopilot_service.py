@@ -50,6 +50,7 @@ from app.services.email_draft_service import (
 )
 from app.services.email_provider import EmailConnectionStatus, EmailProvider, EmailProviderError
 from app.services.followup_policy_service import complete_task_for_sent_provider_draft
+from app.services.gmail_quota import parse_gmail_retry_after
 
 AUTOPILOT_FINAL_ORDER_STATUSES = FINAL_CLAIM_STATUSES | {"accepted", "payment_to_verify", "payment_confirmed"}
 POSITIVE_PAYMENT_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confirmed"}
@@ -197,6 +198,7 @@ def run_autopilot(
     global_sent = sent_today_count(db)
     per_restaurant_sent: dict[int, int] = {}
     errors: list[str] = []
+    quota_pause_reason: str | None = None
 
     for candidate in iter_candidates(db, user, mode, restaurant_id):
         action = create_candidate_action(db, run, candidate)
@@ -224,6 +226,14 @@ def run_autopilot(
             global_sent += 1
             per_restaurant_sent[candidate.restaurant_id] = per_restaurant_sent.get(candidate.restaurant_id, 0) + 1
         except Exception as exc:  # pragma: no cover - defensive path covered by integration behavior
+            retry_after = parse_gmail_retry_after(
+                str(exc),
+                safety_seconds=settings.gmail_quota_retry_safety_seconds,
+            )
+            if retry_after is not None:
+                quota_pause_reason = f"gmail_quota_retry_after:{retry_after.isoformat()}"
+                mark_skipped(action, quota_pause_reason, dry_run=False)
+                break
             action.status = "failed"
             action.skipped_reason = str(exc)
             action.updated_at = utc_now()
@@ -235,7 +245,7 @@ def run_autopilot(
     run.failed_count = sum(1 for action in actions if action.status == "failed")
     run.status = "failed" if errors and run.sent_count == 0 else "completed"
     run.completed_at = utc_now()
-    run.error_message = "; ".join(errors)[:2000] if errors else None
+    run.error_message = quota_pause_reason or ("; ".join(errors)[:2000] if errors else None)
     add_audit_log(
         db,
         entity_type="autopilot_run",
