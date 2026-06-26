@@ -596,7 +596,7 @@ def test_watched_thread_uses_fast_latest_external_message_when_available(
     ) == 1
 
 
-def test_unlinked_watched_thread_prefers_full_thread_before_latest_fast_path(
+def test_unlinked_watched_thread_prefers_latest_external_before_full_thread(
     db_session: Session,
     gmail_case,
     monkeypatch: pytest.MonkeyPatch,
@@ -616,6 +616,7 @@ def test_unlinked_watched_thread_prefers_full_thread_before_latest_fast_path(
         "thread-unlinked": payload(
             "reply-positive-latest",
             thread_id="thread-unlinked",
+            subject="Re: Contestation Uber sans identifiant local",
             body="Bonjour, un paiement de 24.99 EUR est accorde.",
         )
     }
@@ -626,12 +627,12 @@ def test_unlinked_watched_thread_prefers_full_thread_before_latest_fast_path(
                 thread_id="thread-unlinked",
                 from_email=account.email_address,
                 subject="Re: Contestation Uber",
-                body="Bonjour je conteste la commande F93BA.",
+                body="Bonjour je conteste cette commande.",
             ),
             payload(
                 "reply-positive-full",
                 thread_id="thread-unlinked",
-                subject="Re: Contestation Uber",
+                subject="Re: Contestation Uber sans identifiant local",
                 body="Bonjour, un paiement de 24.99 EUR est accorde.",
             ),
         ]
@@ -658,11 +659,11 @@ def test_unlinked_watched_thread_prefers_full_thread_before_latest_fast_path(
         process_new_messages=True,
     )
 
-    assert provider.latest_calls == []
-    assert provider.thread_include_attachments_calls == [False]
+    assert provider.latest_calls == ["thread-unlinked"]
+    assert provider.thread_include_attachments_calls == []
     assert result.processed_messages == 1
     positive_item = db_session.scalar(
-        select(GmailStarredWorkItem).where(GmailStarredWorkItem.provider_message_id == "reply-positive-full")
+        select(GmailStarredWorkItem).where(GmailStarredWorkItem.provider_message_id == "reply-positive-latest")
     )
     assert positive_item is not None
     assert positive_item.status == "positive"
@@ -792,7 +793,7 @@ def test_watched_thread_skips_final_latest_message_before_identity_repair(
     )
 
     assert provider.latest_calls == ["thread-f93ba"]
-    assert provider.thread_include_attachments_calls == [False]
+    assert provider.thread_include_attachments_calls == []
     assert repair_calls == []
     assert result.processed_messages == 0
     assert result.actionable_refused_threads == 1
