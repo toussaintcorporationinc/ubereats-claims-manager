@@ -198,12 +198,12 @@ class GmailWatchedThreadMonitorService:
                 db.flush()
                 continue
 
-            thread_order = self.repair_watched_thread_from_payloads(
-                db,
-                user,
-                watched,
-                processing_payloads or payloads,
-            )
+            # Keep the hot Gmail worker path cheap. Thousands of starred legacy
+            # threads can be unlinked; trying to repair identity for each one
+            # before classification makes the queue look idle for minutes. Linked
+            # threads still use the full response pipeline below, while unlinked
+            # threads are classified immediately and remain actionable/visible.
+            thread_order = db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else None
             for payload in processing_payloads:
                 if not payload.provider_message_id:
                     continue
