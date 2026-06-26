@@ -347,13 +347,20 @@ class GmailWatchedThreadMonitorService:
             ).all()
         )
         sent_count = 0
+        sent_threads: set[str] = set()
         for item in items:
             watched = item.watched_thread
             message = item.inbound_message
             if watched is None or message is None:
                 result.autopilot_skipped_count += 1
                 continue
+            if watched.gmail_thread_id in sent_threads:
+                item.reason = "thread_already_replied_this_cycle"
+                item.processed_at = utc_now()
+                result.autopilot_skipped_count += 1
+                continue
             if self.send_refused_reply_for_work_item(db, user, account, watched, item, message, result):
+                sent_threads.add(watched.gmail_thread_id)
                 sent_count += 1
         return sent_count
 
@@ -378,7 +385,7 @@ class GmailWatchedThreadMonitorService:
                 db,
                 user,
                 watched,
-                self.fetch_thread_payloads(db, account, watched),
+                self.fetch_thread_payloads(db, account, watched, prefer_full_thread=True),
             )
         if order is None:
             item.reason = "missing_linked_order_for_starred_reply"
@@ -850,14 +857,24 @@ class GmailWatchedThreadMonitorService:
         db: Session,
         account: EmailAccount,
         watched: GmailWatchedThread,
+        *,
+        prefer_full_thread: bool = False,
     ) -> list[InboundEmailPayload]:
+        get_thread_messages = getattr(self.provider, "get_thread_messages_for_account", None)
+        if prefer_full_thread and watched.claim_order_id is None and callable(get_thread_messages):
+            try:
+                payloads = list(get_thread_messages(db, account, watched.gmail_thread_id, include_attachments=False))
+            except TypeError:
+                payloads = list(get_thread_messages(db, account, watched.gmail_thread_id))
+            if payloads:
+                return payloads
+
         get_latest_external_message = getattr(self.provider, "get_latest_external_thread_message_for_account", None)
         if watched.claim_order_id is None and callable(get_latest_external_message):
             latest_payload = get_latest_external_message(db, account, watched.gmail_thread_id)
             if latest_payload is not None:
                 return [latest_payload]
 
-        get_thread_messages = getattr(self.provider, "get_thread_messages_for_account", None)
         if watched.claim_order_id is None and callable(get_thread_messages):
             try:
                 payloads = list(get_thread_messages(db, account, watched.gmail_thread_id, include_attachments=False))
