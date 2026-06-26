@@ -374,6 +374,13 @@ class GmailWatchedThreadMonitorService:
 
         order = message.order or (db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else None)
         if order is None:
+            order = self.repair_watched_thread_from_payloads(
+                db,
+                user,
+                watched,
+                self.fetch_thread_payloads(db, account, watched),
+            )
+        if order is None:
             item.reason = "missing_linked_order_for_starred_reply"
             result.autopilot_skipped_count += 1
             return False

@@ -596,6 +596,119 @@ def test_existing_refused_watched_thread_sends_same_thread_reply_without_global_
     assert work_item.reason == "gmail_reply_sent"
 
 
+def test_refused_watched_thread_repairs_missing_order_from_thread_text_before_reply(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    thread_body = (
+        "Bonjour, je veux contester la demande de remboursement de Yoann O. "
+        "numero de commande F93BA pour le restaurant Frit Dodo. "
+        "Montant concerne : 24.99 EUR. Date commande : 18/06/2026. "
+        "Uber refuse la demande."
+    )
+    inbound = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=None,
+        provider="gmail",
+        provider_message_id="star-unlinked-f93ba",
+        provider_thread_id="thread-unlinked-f93ba",
+        gmail_history_id="history-star-unlinked-f93ba",
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject="Re: Contestation de remboursement de commande F93BA",
+        snippet="Uber refuse la demande pour la commande F93BA.",
+        body_text=thread_body,
+        received_at=utc_now(),
+        raw_headers_json={},
+        provider_labels_json=["INBOX", "STARRED"],
+        match_status="unlinked",
+        match_reason="no_match",
+        review_status="reviewed",
+    )
+    db_session.add(inbound)
+    db_session.flush()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-unlinked-f93ba",
+        first_starred_message_id="star-unlinked-f93ba",
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.flush()
+    db_session.add(
+        GmailStarredWorkItem(
+            watched_thread_id=watched.id,
+            email_account_id=account.id,
+            gmail_thread_id="thread-unlinked-f93ba",
+            provider_message_id="star-unlinked-f93ba",
+            inbound_message_id=inbound.id,
+            status="refused",
+            reason="uber_refusal",
+            processed_at=utc_now(),
+        )
+    )
+    db_session.commit()
+    provider = FakeWatchedGmailProvider()
+    provider.provider_thread_id_for_drafts = "thread-unlinked-f93ba"
+    provider.thread_payloads = {
+        "thread-unlinked-f93ba": [
+            payload(
+                "star-unlinked-f93ba",
+                thread_id="thread-unlinked-f93ba",
+                subject="Re: Contestation de remboursement de commande F93BA",
+                body=thread_body,
+                starred=True,
+            )
+        ]
+    }
+
+    def fail_global_autopilot(self, db, user, result):  # noqa: ANN001, ARG001
+        raise AssertionError("watched Gmail worker must not run the global autopilot scan")
+
+    monkeypatch.setattr(
+        GmailInboundSyncService,
+        "run_autopilot_for_negative_responses",
+        fail_global_autopilot,
+    )
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    assert result.actionable_refused_threads == 1
+    assert result.autopilot_sent_count == 1
+    assert result.autopilot_skipped_count == 0
+    assert len(provider.sent_drafts) == 1
+    db_session.refresh(inbound)
+    db_session.refresh(watched)
+    assert inbound.order_id == order.id
+    assert watched.claim_order_id == order.id
+    assert watched.linked_case_type == "claim_order"
+    assert watched.linked_case_id == order.id
+    attempt = db_session.scalar(select(AppealAttempt))
+    assert attempt is not None
+    assert attempt.status == "sent"
+    assert attempt.based_on_refusal_message_id == inbound.id
+    provider_draft = attempt.provider_draft
+    assert provider_draft is not None
+    assert provider_draft.status == "sent"
+    assert provider_draft.provider_thread_id == "thread-unlinked-f93ba"
+    work_item = db_session.scalar(select(GmailStarredWorkItem))
+    assert work_item is not None
+    assert work_item.reason == "gmail_reply_sent"
+
+
 def test_non_starred_positive_reply_in_watched_thread_is_processed_and_star_removed(
     db_session: Session,
     gmail_case,
