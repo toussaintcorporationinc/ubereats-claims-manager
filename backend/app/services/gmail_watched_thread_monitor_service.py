@@ -152,7 +152,7 @@ class GmailWatchedThreadMonitorService:
                 continue
 
             thread_order = self.repair_watched_thread_from_payloads(db, user, watched, payloads)
-            for payload in sorted(payloads, key=lambda item: item.received_at or datetime.min):
+            for payload in self.select_payloads_for_processing(payloads, account):
                 if not payload.provider_message_id:
                     continue
                 message = self.upsert_inbound_message(
@@ -215,6 +215,36 @@ class GmailWatchedThreadMonitorService:
             result.autopilot_failed_count += sync_result.autopilot_failed_count
         result.errors.extend(sync_result.errors)
         return result
+
+    def select_payloads_for_processing(
+        self,
+        payloads: list[InboundEmailPayload],
+        account: EmailAccount,
+    ) -> list[InboundEmailPayload]:
+        """Keep watched-thread cycles focused on Uber's latest answer.
+
+        The whole thread is fetched so identity repair can read past context.
+        Processing every old sent/received message is expensive and causes the
+        backlog to crawl. For the automation decision, the newest external
+        message is the useful one: positive, refusal, proof request, or unknown.
+        """
+        deduped: dict[str, InboundEmailPayload] = {}
+        for payload in payloads:
+            if not payload.provider_message_id:
+                continue
+            deduped[payload.provider_message_id] = payload
+        candidates = [
+            payload
+            for payload in deduped.values()
+            if not self.payload_from_account(payload, account)
+        ]
+        if not candidates:
+            return []
+        _index, latest = max(
+            enumerate(candidates),
+            key=lambda item: (item[1].received_at or datetime.min, item[0]),
+        )
+        return [latest]
 
     def discover_from_starred_messages(
         self,
@@ -898,6 +928,12 @@ class GmailWatchedThreadMonitorService:
     @staticmethod
     def labels_include_starred(labels: list[str] | None) -> bool:
         return "STARRED" in {str(label).strip().upper() for label in labels or []}
+
+    @staticmethod
+    def payload_from_account(payload: InboundEmailPayload, account: EmailAccount) -> bool:
+        account_email = (account.email_address or "").strip().lower()
+        from_email = (payload.from_email or "").strip().lower()
+        return bool(account_email and account_email in from_email)
 
     @staticmethod
     def message_changed_after_processing(message: InboundEmailMessage, item: GmailStarredWorkItem) -> bool:

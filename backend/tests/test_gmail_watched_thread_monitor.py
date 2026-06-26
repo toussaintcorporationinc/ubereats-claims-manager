@@ -165,6 +165,8 @@ def payload(
     thread_id: str = "thread-f93ba",
     body: str = "Uber refuse la demande pour la commande F93BA.",
     subject: str = "Re: Contestation de remboursement de commande F93BA",
+    from_email: str = "restaurantsfrance@uber.com",
+    to_email: str = "tiramisumaisonfrance@gmail.com",
     starred: bool = False,
 ) -> InboundEmailPayload:
     labels = ["INBOX"]
@@ -174,15 +176,15 @@ def payload(
         provider_message_id=provider_message_id,
         provider_thread_id=thread_id,
         gmail_history_id=f"history-{provider_message_id}",
-        from_email="restaurantsfrance@uber.com",
-        to_email="tiramisumaisonfrance@gmail.com",
+        from_email=from_email,
+        to_email=to_email,
         subject=subject,
         snippet=body[:120],
         body_text=body,
         received_at=utc_now(),
         raw_headers={
-            "from": "restaurantsfrance@uber.com",
-            "to": "tiramisumaisonfrance@gmail.com",
+            "from": from_email,
+            "to": to_email,
             "subject": subject,
         },
         provider_labels=labels,
@@ -493,6 +495,37 @@ def test_non_starred_positive_reply_in_watched_thread_is_processed_and_star_remo
     assert positive_item is not None
     assert positive_item.status == "positive"
     assert result.positive_responses >= 1
+
+
+def test_watched_thread_processes_only_latest_external_reply(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    provider = FakeWatchedGmailProvider()
+    provider.starred_payloads = [payload("star-1", starred=True)]
+    provider.thread_payloads = {
+        "thread-f93ba": [
+            payload("sent-1", from_email=account.email_address, body="Bonjour je conteste F93BA."),
+            payload("reply-old-1", body="Nous maintenons le refus pour F93BA."),
+            payload("sent-2", from_email=account.email_address, body="Merci de reexaminer F93BA."),
+            payload("reply-positive-1", body="Bonjour, un paiement de 24.99 EUR est accorde pour F93BA."),
+        ]
+    }
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(db_session, owner, account)
+
+    assert result.processed_messages == 1
+    assert db_session.scalar(
+        select(func.count(GmailStarredWorkItem.id)).where(
+            GmailStarredWorkItem.provider_message_id == "reply-positive-1"
+        )
+    ) == 1
+    assert db_session.scalar(
+        select(func.count(GmailStarredWorkItem.id)).where(GmailStarredWorkItem.provider_message_id == "reply-old-1")
+    ) == 0
 
 
 def test_non_starred_refusal_reply_keeps_thread_star_active(
