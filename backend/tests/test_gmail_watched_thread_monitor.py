@@ -549,12 +549,15 @@ def test_watched_thread_uses_fast_latest_external_message_when_available(
     gmail_case,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    owner, account, _order = gmail_case
+    owner, account, order = gmail_case
     provider = FakeFastWatchedGmailProvider()
     watched = GmailWatchedThread(
         email_account_id=account.id,
         gmail_thread_id="thread-f93ba",
         first_starred_message_id="star-1",
+        claim_order_id=order.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
         status="active",
         star_active=True,
     )
@@ -591,6 +594,133 @@ def test_watched_thread_uses_fast_latest_external_message_when_available(
             GmailStarredWorkItem.provider_message_id == "reply-positive-fast"
         )
     ) == 1
+
+
+def test_unlinked_watched_thread_prefers_full_thread_before_latest_fast_path(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    provider = FakeFastWatchedGmailProvider()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-unlinked",
+        first_starred_message_id="star-unlinked",
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.commit()
+    provider.latest_payloads = {
+        "thread-unlinked": payload(
+            "reply-positive-latest",
+            thread_id="thread-unlinked",
+            body="Bonjour, un paiement de 24.99 EUR est accorde.",
+        )
+    }
+    provider.thread_payloads = {
+        "thread-unlinked": [
+            payload(
+                "sent-unlinked",
+                thread_id="thread-unlinked",
+                from_email=account.email_address,
+                subject="Re: Contestation Uber",
+                body="Bonjour je conteste la commande F93BA.",
+            ),
+            payload(
+                "reply-positive-full",
+                thread_id="thread-unlinked",
+                subject="Re: Contestation Uber",
+                body="Bonjour, un paiement de 24.99 EUR est accorde.",
+            ),
+        ]
+    }
+
+    def fail_reprocess(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("unlinked watched threads must use the fast classifier")
+
+    monkeypatch.setattr(GmailInboundSyncService, "reprocess_existing_message", fail_reprocess)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    assert provider.latest_calls == []
+    assert provider.thread_include_attachments_calls == [False]
+    assert result.processed_messages == 1
+    positive_item = db_session.scalar(
+        select(GmailStarredWorkItem).where(GmailStarredWorkItem.provider_message_id == "reply-positive-full")
+    )
+    assert positive_item is not None
+    assert positive_item.status == "positive"
+
+
+def test_unlinked_watched_thread_fast_classifies_refusal_without_heavy_reprocess(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    provider = FakeWatchedGmailProvider()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-unlinked-refusal",
+        first_starred_message_id="star-unlinked-refusal",
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.commit()
+    provider.thread_payloads = {
+        "thread-unlinked-refusal": [
+            payload(
+                "sent-unlinked-refusal",
+                thread_id="thread-unlinked-refusal",
+                from_email=account.email_address,
+                subject="Re: Contestation Uber",
+                body="Bonjour je conteste cette commande.",
+            ),
+            payload(
+                "reply-unlinked-refusal",
+                thread_id="thread-unlinked-refusal",
+                subject="Re: Contestation Uber",
+                body="Bonjour, nous maintenons le refus et aucun remboursement ne sera applique.",
+            ),
+        ]
+    }
+
+    def fail_reprocess(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("unlinked watched threads must use the fast classifier")
+
+    monkeypatch.setattr(GmailInboundSyncService, "reprocess_existing_message", fail_reprocess)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    watched = db_session.scalar(
+        select(GmailWatchedThread).where(GmailWatchedThread.gmail_thread_id == "thread-unlinked-refusal")
+    )
+    assert watched is not None
+    assert watched.status == "active"
+    assert watched.star_active is True
+    refused_item = db_session.scalar(
+        select(GmailStarredWorkItem).where(GmailStarredWorkItem.provider_message_id == "reply-unlinked-refusal")
+    )
+    assert refused_item is not None
+    assert refused_item.status == "refused"
+    assert result.processed_messages == 1
+    assert result.refused_responses == 1
+    assert result.actionable_refused_threads == 1
 
 
 def test_watched_thread_skips_final_latest_message_before_identity_repair(
@@ -654,7 +784,7 @@ def test_watched_thread_skips_final_latest_message_before_identity_repair(
     )
 
     assert provider.latest_calls == ["thread-f93ba"]
-    assert provider.thread_include_attachments_calls == []
+    assert provider.thread_include_attachments_calls == [False]
     assert repair_calls == []
     assert result.processed_messages == 0
     assert result.actionable_refused_threads == 1

@@ -189,11 +189,19 @@ def find_or_create_order_from_starred_text(db: Session, user: User, text: str) -
         source="starred_gmail_thread_text",
     )
 
-    ai_result = OpenAIStructuredAnalysisService().analyze_order_identity_text(
-        text=text,
-        restaurant_names=restaurant_names,
-        order_context={"source": "starred_gmail_unlinked_thread"},
+    restaurant = resolve_restaurant_from_name(db, restaurant_name)
+    local_identity_ready = (
+        restaurant is not None
+        and can_access_restaurant(db, user, restaurant.id)
+        and text_identity_has_required_fields(identity)
     )
+    ai_result = None
+    if not local_identity_ready:
+        ai_result = OpenAIStructuredAnalysisService().analyze_order_identity_text(
+            text=text,
+            restaurant_names=restaurant_names,
+            order_context={"source": "starred_gmail_unlinked_thread"},
+        )
     if ai_result is not None and ai_result.confidence >= MIN_AI_IDENTITY_CONFIDENCE:
         ai_identity = identity_from_ai_result(ai_result)
         merge_identity_without_overriding_local_facts(identity, ai_identity)

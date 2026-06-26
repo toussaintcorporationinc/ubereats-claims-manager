@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from decimal import Decimal
+import unicodedata
 
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.exc import IntegrityError
@@ -38,6 +40,44 @@ SKIPPABLE_FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evide
 POSITIVE_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confirmed"}
 REFUSAL_REVIEW_TYPES = {"refused"}
 EVIDENCE_REVIEW_TYPES = {"evidence_requested", "information_requested"}
+FAST_POSITIVE_MARKERS = (
+    "paiement accorde",
+    "paiement a ete accorde",
+    "remboursement accorde",
+    "remboursement a ete accorde",
+    "est accorde",
+    "regularisation",
+    "sera verse",
+    "a ete credite",
+    "payment approved",
+    "refund approved",
+    "we have credited",
+    "we will credit",
+)
+FAST_REFUSAL_MARKERS = (
+    "maintenons le refus",
+    "refus",
+    "refuse",
+    "refused",
+    "denied",
+    "declined",
+    "pas de remboursement",
+    "aucun remboursement",
+    "ne pouvons pas rembourser",
+    "not eligible",
+    "no refund",
+)
+FAST_EVIDENCE_MARKERS = (
+    "preuve",
+    "justificatif",
+    "piece jointe",
+    "document",
+    "photo",
+    "information supplementaire",
+    "fournir",
+    "provide evidence",
+    "additional information",
+)
 
 
 @dataclass
@@ -200,15 +240,18 @@ class GmailWatchedThreadMonitorService:
                 ):
                     continue
 
-                self.sync_service.reprocess_existing_message(
-                    db,
-                    user,
-                    account,
-                    message,
-                    sync_result,
-                    apply_reviews=True,
-                    payload=payload,
-                )
+                if thread_order is None and message.match_status != "linked":
+                    self.process_unlinked_watched_message_fast(db, user, message, sync_result)
+                else:
+                    self.sync_service.reprocess_existing_message(
+                        db,
+                        user,
+                        account,
+                        message,
+                        sync_result,
+                        apply_reviews=True,
+                        payload=payload,
+                    )
                 self.update_work_item_status(db, user, watched, work_item, message, result)
                 result.processed_messages += 1
 
@@ -531,12 +574,21 @@ class GmailWatchedThreadMonitorService:
         account: EmailAccount,
         watched: GmailWatchedThread,
     ) -> list[InboundEmailPayload]:
+        get_thread_messages = getattr(self.provider, "get_thread_messages_for_account", None)
+        if watched.claim_order_id is None and callable(get_thread_messages):
+            try:
+                payloads = list(get_thread_messages(db, account, watched.gmail_thread_id, include_attachments=False))
+            except TypeError:
+                payloads = list(get_thread_messages(db, account, watched.gmail_thread_id))
+            if payloads:
+                return payloads
+
         get_latest_external_message = getattr(self.provider, "get_latest_external_thread_message_for_account", None)
         if callable(get_latest_external_message):
             latest_payload = get_latest_external_message(db, account, watched.gmail_thread_id)
             if latest_payload is not None:
                 return [latest_payload]
-        get_thread_messages = getattr(self.provider, "get_thread_messages_for_account", None)
+
         if callable(get_thread_messages):
             try:
                 return list(get_thread_messages(db, account, watched.gmail_thread_id, include_attachments=False))
@@ -585,6 +637,48 @@ class GmailWatchedThreadMonitorService:
             },
         )
         return order
+
+    def process_unlinked_watched_message_fast(
+        self,
+        db: Session,
+        user: User,
+        message: InboundEmailMessage,
+        sync_result: GmailInboundSyncResult,
+    ) -> None:
+        """Classify unlinked watched replies without the expensive linking pipeline.
+
+        Starred Gmail backlogs can contain thousands of already-sent disputes.
+        If TENNET cannot link the thread immediately, it still must classify the
+        newest Uber reply fast so the thread remains actionable instead of
+        blocking the worker cycle for minutes.
+        """
+        review_type, reason, confidence = classify_unlinked_watched_message(message)
+        analysis = message.response_analysis
+        if analysis is None:
+            analysis = GmailResponseAnalysis(
+                inbound_message_id=message.id,
+                order_id=message.order_id,
+                recommended_review_type=review_type,
+                status="manual_review" if review_type == "manual_review" else "analyzed",
+                confidence_score=confidence,
+                reason=reason,
+            )
+            db.add(analysis)
+        else:
+            analysis.order_id = message.order_id
+            analysis.recommended_review_type = review_type
+            analysis.status = "manual_review" if review_type == "manual_review" else "analyzed"
+            analysis.confidence_score = confidence
+            analysis.reason = reason
+        analysis.analyzed_by_user_id = user.id
+        analysis.notes = "Fast Gmail watched-thread classification before case linking."
+        message.review_status = "reviewed"
+        message.reviewed_at = utc_now()
+        message.reviewed_by_user_id = user.id
+        sync_result.analyzed_messages += 1
+        if review_type == "refused":
+            sync_result.negative_responses_detected += 1
+        db.flush()
 
     def should_reprocess_final_item(
         self,
@@ -1025,3 +1119,30 @@ def datetime_after(left: datetime, right: datetime | None) -> bool:
     elif left.tzinfo is not None and right.tzinfo is None:
         right = right.replace(tzinfo=left.tzinfo)
     return left > right
+
+
+def classify_unlinked_watched_message(message: InboundEmailMessage) -> tuple[str, str, Decimal]:
+    text = normalize_fast_classification_text(
+        "\n".join(
+            part
+            for part in (
+                message.subject or "",
+                message.snippet or "",
+                message.body_text or "",
+            )
+            if part.strip()
+        )
+    )
+    if any(marker in text for marker in FAST_REFUSAL_MARKERS):
+        return "refused", "fast_unlinked_uber_refusal", Decimal("0.82")
+    if any(marker in text for marker in FAST_POSITIVE_MARKERS):
+        return "payment_confirmed", "fast_unlinked_payment_positive", Decimal("0.84")
+    if any(marker in text for marker in FAST_EVIDENCE_MARKERS):
+        return "evidence_requested", "fast_unlinked_evidence_requested", Decimal("0.75")
+    return "manual_review", "fast_unlinked_manual_review", Decimal("0.50")
+
+
+def normalize_fast_classification_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text.casefold())
+    without_accents = "".join(char for char in normalized if not unicodedata.combining(char))
+    return " ".join(without_accents.replace("\xa0", " ").split())
