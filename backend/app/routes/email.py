@@ -79,6 +79,7 @@ from app.services.gmail_inbound_sync_service import (
     GmailInboundSyncResult,
     GmailInboundSyncService,
 )
+from app.services.gmail_quota import parse_gmail_retry_after_from_errors, seconds_until_gmail_retry
 from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
 from app.services.gmail_watched_thread_monitor_service import GmailWatchedThreadMonitorService
 from app.services.resend_email_provider import ResendEmailProvider
@@ -694,6 +695,32 @@ def gmail_inbound_status(
 
     has_cycle_errors = bool(last_cycle and last_cycle.errors)
     has_sync_errors = any(state.last_error for state in sync_states)
+    quota_retry_after = parse_gmail_retry_after_from_errors(
+        [state.last_error or "" for state in sync_states],
+        now=now,
+    )
+    if last_cycle is not None:
+        cycle_retry_after = parse_gmail_retry_after_from_errors(last_cycle.errors, now=now)
+        if cycle_retry_after is not None and (quota_retry_after is None or cycle_retry_after > quota_retry_after):
+            quota_retry_after = cycle_retry_after
+    quota_seconds_until_retry = seconds_until_gmail_retry(quota_retry_after, now=now)
+    quota_blocked = quota_seconds_until_retry is not None and quota_seconds_until_retry > 0
+    processed_last_24h = (
+        int(
+            db.scalar(
+                select(func.count(GmailStarredWorkItem.id)).where(
+                    GmailStarredWorkItem.email_account_id.in_(account_ids),
+                    GmailStarredWorkItem.processed_at >= now - timedelta(hours=24),
+                    GmailStarredWorkItem.status.in_(
+                        ["processed", "positive", "refused", "evidence_needed", "manual_review"]
+                    ),
+                )
+            )
+            or 0
+        )
+        if account_ids
+        else 0
+    )
     overdue = (
         settings.gmail_inbound_auto_sync_enabled
         and (
@@ -717,6 +744,9 @@ def gmail_inbound_status(
     elif not settings.gmail_inbound_auto_sync_enabled:
         worker_state = "attention"
         worker_message = "Sync Gmail automatique desactivee."
+    elif quota_blocked:
+        worker_state = "attention"
+        worker_message = "Gmail demande une pause quota. TENNET reprend automatiquement."
     elif has_cycle_errors or has_sync_errors:
         worker_state = "attention"
         worker_message = "Dernier passage Gmail avec erreur a verifier."
@@ -754,6 +784,11 @@ def gmail_inbound_status(
         last_success_at=latest_success_at,
         next_sync_at=next_sync_at,
         seconds_until_next_sync=seconds_until_next_sync,
+        quota_blocked=quota_blocked,
+        quota_retry_after=quota_retry_after,
+        quota_seconds_until_retry=quota_seconds_until_retry,
+        daily_processing_target=settings.gmail_daily_processing_target,
+        processed_last_24h=processed_last_24h,
         worker_state=worker_state,
         worker_message=worker_message,
         last_cycle=last_cycle,
@@ -1148,7 +1183,11 @@ def gmail_war_room(
                 db,
                 current_user,
                 account,
-                max_threads=min(limit, settings.gmail_watched_threads_max_per_cycle),
+                max_threads=min(
+                    limit,
+                    settings.gmail_watched_threads_batch_per_cycle,
+                    settings.gmail_watched_threads_max_per_cycle,
+                ),
                 discover_starred=True,
                 process_new_messages=True,
             )
@@ -1358,6 +1397,8 @@ def gmail_war_room(
     ]
 
     latest_cycle = worker_status.last_cycle
+    daily_processing_target = max(worker_status.daily_processing_target, 1)
+    processed_progress_percent = min(100, int((processed_24h / daily_processing_target) * 100))
     return GmailWarRoomResponse(
         updated_at=utc_now(),
         worker=worker_status,
@@ -1373,6 +1414,11 @@ def gmail_war_room(
             quota_pending_last_24h=quota_pending_24h,
             manual_review_last_24h=manual_review_24h,
             backlog_remaining=backlog_remaining,
+            daily_processing_target=worker_status.daily_processing_target,
+            processed_progress_percent=processed_progress_percent,
+            quota_blocked=worker_status.quota_blocked,
+            quota_retry_after=worker_status.quota_retry_after,
+            quota_seconds_until_retry=worker_status.quota_seconds_until_retry,
             latest_cycle_processed_count=latest_cycle.watched_thread_processed_messages if latest_cycle else 0,
             latest_cycle_new_messages=latest_cycle.watched_thread_new_messages if latest_cycle else 0,
         ),

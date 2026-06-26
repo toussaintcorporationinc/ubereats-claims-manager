@@ -13,26 +13,8 @@ import { useAuth } from "@/lib/auth";
 
 const navigation: NavItem[] = [
   { href: "/dashboard", label: "Accueil", group: "main" },
-  { href: "/remboursements", label: "Remboursement", group: "main", ownerOrManagerOnly: true },
-  { href: "/annulations", label: "Annulation", group: "main", ownerOrManagerOnly: true },
   { href: "/relance-gmail", label: "Relance Gmail", group: "main", ownerOrManagerOnly: true },
-  { href: "/smart-import", label: "Depot avance", group: "work", ownerOrManagerOnly: true },
-  { href: "/evidence-tasks", label: "Preuves", group: "main" },
-  { href: "/live-evidence", label: "Camera + tickets", group: "main" },
-  { href: "/recovery", label: "Recuperation", group: "main", ownerOrManagerOnly: true },
-  { href: "/restaurants", label: "Restaurants", group: "work", ownerOrManagerOnly: true },
-  { href: "/orders", label: "Dossiers", group: "work", ownerOrManagerOnly: true },
-  { href: "/uber", label: "Imports Uber", group: "work", ownerOrManagerOnly: true },
-  { href: "/evidence-imports", label: "Import preuves", group: "work", ownerOrManagerOnly: true },
-  { href: "/drafts", label: "Brouillons", group: "follow", ownerOrManagerOnly: true },
-  { href: "/followups", label: "Relances", group: "follow", ownerOrManagerOnly: true },
-  { href: "/appeals", label: "Appels / Refus", group: "follow", ownerOrManagerOnly: true },
-  { href: "/customer-refunds", label: "Dossiers remboursements", group: "follow", ownerOrManagerOnly: true },
-  { href: "/inbox", label: "Reponses Uber", group: "follow", ownerOrManagerOnly: true },
-  { href: "/autopilot", label: "AutoPilot", group: "admin", ownerOrManagerOnly: true },
-  { href: "/reports", label: "Rapports", group: "admin", ownerOrManagerOnly: true },
-  { href: "/settings/email", label: "Email", group: "admin", ownerOrManagerOnly: true },
-  { href: "/users", label: "Utilisateurs", group: "admin", ownerOnly: true },
+  { href: "/finance", label: "Finance", group: "main", ownerOrManagerOnly: true },
 ];
 
 const navGroups: Array<{ key: NavItem["group"]; label: string }> = [
@@ -44,9 +26,8 @@ const navGroups: Array<{ key: NavItem["group"]; label: string }> = [
 
 const primaryNavigationHrefs = new Set([
   "/dashboard",
-  "/remboursements",
-  "/annulations",
   "/relance-gmail",
+  "/finance",
 ]);
 
 const publicPaths = new Set(["/login", "/setup-owner"]);

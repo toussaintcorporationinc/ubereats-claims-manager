@@ -804,6 +804,11 @@ class GmailInboundStatusResponse(BaseModel):
     last_success_at: datetime | None
     next_sync_at: datetime | None = None
     seconds_until_next_sync: int | None = None
+    quota_blocked: bool = False
+    quota_retry_after: datetime | None = None
+    quota_seconds_until_retry: int | None = None
+    daily_processing_target: int = 2000
+    processed_last_24h: int = 0
     worker_state: str = "disabled"
     worker_message: str | None = None
     last_cycle: GmailWorkerCycleSummary | None = None
@@ -917,6 +922,11 @@ class GmailWatchedThreadSummary(BaseModel):
     quota_pending_last_24h: int = 0
     manual_review_last_24h: int = 0
     backlog_remaining: int = 0
+    daily_processing_target: int = 2000
+    processed_progress_percent: int = 0
+    quota_blocked: bool = False
+    quota_retry_after: datetime | None = None
+    quota_seconds_until_retry: int | None = None
     latest_cycle_processed_count: int = 0
     latest_cycle_new_messages: int = 0
 

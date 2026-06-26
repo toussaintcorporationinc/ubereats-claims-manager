@@ -476,6 +476,11 @@ export type GmailInboundStatus = {
   last_success_at: string | null;
   next_sync_at: string | null;
   seconds_until_next_sync: number | null;
+  quota_blocked: boolean;
+  quota_retry_after: string | null;
+  quota_seconds_until_retry: number | null;
+  daily_processing_target: number;
+  processed_last_24h: number;
   worker_state: "active" | "attention" | "disabled" | string;
   worker_message: string | null;
   last_cycle: GmailWorkerCycleSummary | null;
@@ -589,6 +594,11 @@ export type GmailWatchedThreadSummary = {
   quota_pending_last_24h: number;
   manual_review_last_24h: number;
   backlog_remaining: number;
+  daily_processing_target: number;
+  processed_progress_percent: number;
+  quota_blocked: boolean;
+  quota_retry_after: string | null;
+  quota_seconds_until_retry: number | null;
   latest_cycle_processed_count: number;
   latest_cycle_new_messages: number;
 };

@@ -26,6 +26,7 @@ from app.services.gmail_inbound_sync_service import (
     GmailInboundSyncResult,
     GmailInboundSyncService,
 )
+from app.services.gmail_quota import parse_gmail_retry_after
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,13 @@ class GmailWatchedThreadMonitorService:
             try:
                 payloads = self.fetch_thread_payloads(db, account, watched)
             except Exception as exc:  # noqa: BLE001 - a broken thread must not stop the mailbox cycle.
+                retry_after = parse_gmail_retry_after(
+                    str(exc),
+                    safety_seconds=self.settings.gmail_quota_retry_safety_seconds,
+                )
+                if retry_after is not None:
+                    result.errors.append(f"gmail_quota_retry_after:{retry_after.isoformat()}")
+                    break
                 logger.exception("Unable to fetch watched Gmail thread %s", watched.gmail_thread_id)
                 result.errors.append(f"thread:{watched.gmail_thread_id}:{str(exc)[:160]}")
                 watched.status = "manual_review"
@@ -186,8 +194,22 @@ class GmailWatchedThreadMonitorService:
                 fallback_max_messages=self.settings.gmail_starred_max_messages_per_sync,
             )
         except EmailProviderError as exc:
+            retry_after = parse_gmail_retry_after(
+                exc.message,
+                safety_seconds=self.settings.gmail_quota_retry_safety_seconds,
+            )
+            if retry_after is not None:
+                result.errors.append(f"gmail_quota_retry_after:{retry_after.isoformat()}")
+                return result
             result.errors.append(f"starred_discovery:{exc.message}")
         except Exception as exc:  # noqa: BLE001 - dashboard discovery must remain best-effort.
+            retry_after = parse_gmail_retry_after(
+                str(exc),
+                safety_seconds=self.settings.gmail_quota_retry_safety_seconds,
+            )
+            if retry_after is not None:
+                result.errors.append(f"gmail_quota_retry_after:{retry_after.isoformat()}")
+                return result
             result.errors.append(f"starred_discovery:{str(exc)[:160]}")
 
         order_identifier_index = self.sync_service.build_order_identifier_index(db, user)

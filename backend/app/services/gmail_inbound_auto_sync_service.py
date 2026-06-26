@@ -18,6 +18,7 @@ from app.services.audit import add_audit_log
 from app.services.email_provider import EmailProvider, EmailProviderError
 from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_sync_service import GmailInboundSyncResult, GmailInboundSyncService
+from app.services.gmail_quota import parse_gmail_retry_after, parse_gmail_retry_after_from_errors
 from app.services.gmail_watched_thread_monitor_service import (
     GmailWatchedThreadMonitorResult,
     GmailWatchedThreadMonitorService,
@@ -118,11 +119,24 @@ class GmailInboundAutoSyncService:
                         db,
                         user,
                         account,
-                        max_threads=self.settings.gmail_watched_threads_max_per_cycle,
+                        max_threads=self.watched_threads_batch_size(),
                         discover_starred=True,
                         process_new_messages=self.settings.gmail_watched_threads_process_new_messages,
                     )
                     self.add_watched_thread_result(result, watched_result)
+                    retry_after = parse_gmail_retry_after_from_errors(
+                        watched_result.errors,
+                        safety_seconds=self.settings.gmail_quota_retry_safety_seconds,
+                        now=now,
+                    )
+                    if retry_after is not None:
+                        self.mark_sync_failure(
+                            db,
+                            sync_service,
+                            account_id,
+                            user.id,
+                            f"Gmail quota reached. Retry after {retry_after.isoformat()}",
+                        )
                 watched_autopilot_already_ran = self.watched_result_ran_autopilot(watched_result)
                 should_run_autopilot = (
                     sync_service.should_run_autopilot_for_result(db, user, account_result)
@@ -208,6 +222,13 @@ class GmailInboundAutoSyncService:
     def account_is_due(self, sync_state: GmailSyncState, now: datetime) -> bool:
         last_sync_at = normalize_datetime(sync_state.last_sync_at) if sync_state.last_sync_at is not None else None
         interval_seconds = self.effective_interval_seconds()
+        retry_after = parse_gmail_retry_after(
+            sync_state.last_error,
+            safety_seconds=self.settings.gmail_quota_retry_safety_seconds,
+            now=now,
+        )
+        if retry_after is not None:
+            return False
         if sync_state.status == "running":
             if last_sync_at is None:
                 return True
@@ -222,6 +243,11 @@ class GmailInboundAutoSyncService:
         if last_sync_at is None:
             return True
         return now >= last_sync_at + timedelta(seconds=interval_seconds)
+
+    def watched_threads_batch_size(self) -> int:
+        configured_batch = max(1, self.settings.gmail_watched_threads_batch_per_cycle)
+        configured_max = max(1, self.settings.gmail_watched_threads_max_per_cycle)
+        return min(configured_batch, configured_max)
 
     def effective_interval_seconds(self) -> int:
         if self.settings.gmail_inbound_auto_sync_continuous_enabled:
