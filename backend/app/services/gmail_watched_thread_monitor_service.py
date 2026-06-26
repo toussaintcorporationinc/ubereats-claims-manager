@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import Settings, get_settings
 from app.models import (
+    AppealAttempt,
     ClaimOrder,
     EmailAccount,
     EvidenceRequestTask,
@@ -32,6 +33,13 @@ from app.services.gmail_inbound_sync_service import (
 )
 from app.services.gmail_quota import parse_gmail_retry_after
 from app.services.autopilot_identity_repair_service import find_or_create_order_from_starred_text
+from app.services.appeal_workflow_service import ensure_workflow_for_claim_order, mark_appeal_sent
+from app.services.autopilot_service import (
+    AutopilotError,
+    create_starred_thread_reply_attempt,
+    safe_autopilot_recipient,
+    send_provider_draft,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -288,16 +296,179 @@ class GmailWatchedThreadMonitorService:
 
         result.actionable_refused_threads = self.count_actionable_refused_threads(db, account)
 
-        if (
-            (sync_result.negative_responses_detected or result.actionable_refused_threads)
-            and self.settings.gmail_inbound_auto_sync_run_autopilot
-        ):
-            self.sync_service.run_autopilot_for_negative_responses(db, user, sync_result)
-            result.autopilot_sent_count += sync_result.autopilot_sent_count
-            result.autopilot_skipped_count += sync_result.autopilot_skipped_count
-            result.autopilot_failed_count += sync_result.autopilot_failed_count
+        if self.settings.gmail_inbound_auto_sync_run_autopilot:
+            self.send_pending_refused_replies(
+                db,
+                user,
+                account,
+                result=result,
+                max_items=max(1, min(max_per_cycle, self.settings.gmail_watched_threads_batch_per_cycle)),
+            )
         result.errors.extend(sync_result.errors)
         return result
+
+    def send_pending_refused_replies(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        *,
+        result: GmailWatchedThreadMonitorResult,
+        max_items: int,
+    ) -> int:
+        """Send same-thread Gmail relances for refused watched work items.
+
+        This intentionally avoids the historical global AutoPilot scan. The Gmail
+        worker must keep moving through thousands of starred threads, so it only
+        handles the refused items that are already in the watched-thread queue.
+        """
+        if max_items <= 0:
+            return 0
+        items = list(
+            db.scalars(
+                select(GmailStarredWorkItem)
+                .options(
+                    selectinload(GmailStarredWorkItem.watched_thread),
+                    selectinload(GmailStarredWorkItem.inbound_message).selectinload(InboundEmailMessage.order),
+                )
+                .join(GmailWatchedThread, GmailWatchedThread.id == GmailStarredWorkItem.watched_thread_id)
+                .where(
+                    GmailStarredWorkItem.email_account_id == account.id,
+                    GmailStarredWorkItem.inbound_message_id.is_not(None),
+                    GmailStarredWorkItem.status == "refused",
+                    GmailWatchedThread.status.in_(["active", "manual_review"]),
+                    GmailWatchedThread.star_active.is_(True),
+                )
+                .order_by(
+                    GmailStarredWorkItem.processed_at.asc().nullsfirst(),
+                    GmailStarredWorkItem.id.asc(),
+                )
+                .limit(max_items)
+            ).all()
+        )
+        sent_count = 0
+        for item in items:
+            watched = item.watched_thread
+            message = item.inbound_message
+            if watched is None or message is None:
+                result.autopilot_skipped_count += 1
+                continue
+            if self.send_refused_reply_for_work_item(db, user, account, watched, item, message, result):
+                sent_count += 1
+        return sent_count
+
+    def send_refused_reply_for_work_item(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        watched: GmailWatchedThread,
+        item: GmailStarredWorkItem,
+        message: InboundEmailMessage,
+        result: GmailWatchedThreadMonitorResult,
+    ) -> bool:
+        if not self.settings.autopilot_enabled or not self.settings.autopilot_appeals_enabled:
+            item.reason = "autopilot_disabled"
+            result.autopilot_skipped_count += 1
+            return False
+
+        order = message.order or (db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else None)
+        if order is None:
+            item.reason = "missing_linked_order_for_starred_reply"
+            result.autopilot_skipped_count += 1
+            return False
+        if message.order_id is None:
+            message.order_id = order.id
+        if watched.claim_order_id is None:
+            watched.claim_order_id = order.id
+            watched.linked_case_type = "claim_order"
+            watched.linked_case_id = order.id
+
+        existing_attempt = self.latest_attempt_for_refusal_message(db, message)
+        if existing_attempt and existing_attempt.provider_draft and existing_attempt.provider_draft.status == "sent":
+            item.reason = "already_replied_to_refusal"
+            result.autopilot_skipped_count += 1
+            return False
+        if existing_attempt and existing_attempt.provider_draft and existing_attempt.provider_draft.status == "send_requested":
+            item.reason = "reply_send_already_requested"
+            result.autopilot_skipped_count += 1
+            return False
+
+        try:
+            workflow = ensure_workflow_for_claim_order(db, order, user)
+            watched.appeal_workflow_id = workflow.id
+            attempt = existing_attempt if existing_attempt and existing_attempt.email_draft else None
+            if attempt is None:
+                attempt = create_starred_thread_reply_attempt(db, workflow=workflow, starred_message=message, user=user)
+
+            provider_draft = attempt.provider_draft
+            if provider_draft is None:
+                provider_draft = self.provider.create_draft(
+                    db,
+                    user,
+                    attempt.email_draft,
+                    to_email=safe_autopilot_recipient(),
+                    include_evidence=True,
+                )
+                attempt.provider_draft_id = provider_draft.id
+                attempt.status = "gmail_draft_created"
+                db.flush()
+
+            send_provider_draft(
+                db,
+                user,
+                provider_draft,
+                self.provider,
+                order_status_after_send=None,
+                require_reply_thread=True,
+            )
+            mark_appeal_sent(db, workflow=workflow, user=user)
+        except AutopilotError as exc:
+            item.reason = f"autopilot_send_blocked:{exc.message}"
+            result.autopilot_failed_count += 1
+            result.errors.append(f"autopilot_send:{exc.message}")
+            return False
+        except Exception as exc:  # noqa: BLE001 - one Gmail thread must not stop the queue.
+            logger.exception("Unable to send Gmail relance for watched thread %s", watched.gmail_thread_id)
+            item.reason = f"autopilot_send_failed:{str(exc)[:120]}"
+            result.autopilot_failed_count += 1
+            result.errors.append(f"autopilot_send:{str(exc)[:160]}")
+            return False
+
+        item.reason = "gmail_reply_sent"
+        result.autopilot_sent_count += 1
+        add_audit_log(
+            db,
+            entity_type="gmail_watched_thread",
+            entity_id=watched.id,
+            action="gmail_watched_thread.refusal_reply_sent",
+            user_id=user.id,
+            new_value={
+                "gmail_thread_id": watched.gmail_thread_id,
+                "provider_message_id": message.provider_message_id,
+                "order_id": order.id,
+            },
+        )
+        db.flush()
+        return True
+
+    def latest_attempt_for_refusal_message(
+        self,
+        db: Session,
+        message: InboundEmailMessage,
+    ) -> AppealAttempt | None:
+        if message.id is None:
+            return None
+        return db.scalar(
+            select(AppealAttempt)
+            .options(
+                selectinload(AppealAttempt.provider_draft),
+                selectinload(AppealAttempt.email_draft),
+            )
+            .where(AppealAttempt.based_on_refusal_message_id == message.id)
+            .order_by(AppealAttempt.id.desc())
+            .limit(1)
+        )
 
     def process_pending_local_work_items(
         self,

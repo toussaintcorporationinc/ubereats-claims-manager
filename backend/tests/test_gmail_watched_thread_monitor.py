@@ -10,8 +10,11 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models import (
+    AppealAttempt,
     ClaimOrder,
     EmailAccount,
+    EmailDraft,
+    EmailProviderDraft,
     EvidenceRequestTask,
     GmailResponseAnalysis,
     GmailStarredWorkItem,
@@ -21,7 +24,7 @@ from app.models import (
     User,
 )
 from app.models.domain import utc_now
-from app.services.email_provider import InboundEmailPayload
+from app.services.email_provider import EmailSendResult, InboundEmailPayload
 from app.services import autopilot_identity_repair_service as identity_repair_service
 from app.services.gmail_inbound_sync_service import (
     GMAIL_STARRED_URGENT_QUERIES,
@@ -49,6 +52,9 @@ class FakeWatchedGmailProvider:
         self.removed_labels: list[tuple[str, str]] = []
         self.full_history_calls: list[str] = []
         self.thread_include_attachments_calls: list[bool] = []
+        self.created_drafts: list[int] = []
+        self.sent_drafts: list[int] = []
+        self.provider_thread_id_for_drafts = "thread-f93ba"
 
     def sync_inbound_replies_for_account(
         self,
@@ -99,6 +105,49 @@ class FakeWatchedGmailProvider:
         label: str,
     ) -> None:
         self.removed_labels.append((provider_message_id, label))
+
+    def create_draft(
+        self,
+        db: Session,
+        user: User,
+        email_draft: EmailDraft,
+        to_email: str,
+        include_evidence: bool,  # noqa: ARG002
+    ) -> EmailProviderDraft:
+        account = db.scalar(
+            select(EmailAccount)
+            .where(EmailAccount.user_id == user.id, EmailAccount.provider == "gmail")
+            .order_by(EmailAccount.id.asc())
+            .limit(1)
+        )
+        provider_draft = EmailProviderDraft(
+            email_draft_id=email_draft.id,
+            email_account_id=account.id if account else None,
+            provider=self.provider,
+            provider_draft_id=f"draft-{email_draft.id}",
+            provider_thread_id=self.provider_thread_id_for_drafts,
+            to_email=to_email,
+            subject=email_draft.subject,
+            status="provider_draft_created",
+            created_by_user_id=user.id,
+        )
+        db.add(provider_draft)
+        db.flush()
+        self.created_drafts.append(provider_draft.id)
+        return provider_draft
+
+    def send_draft(
+        self,
+        db: Session,  # noqa: ARG002
+        user: User,  # noqa: ARG002
+        provider_draft: EmailProviderDraft,
+    ) -> EmailSendResult:
+        self.sent_drafts.append(provider_draft.id)
+        return EmailSendResult(
+            provider_message_id=f"sent-{provider_draft.id}",
+            provider_thread_id=provider_draft.provider_thread_id,
+            sent_at=utc_now(),
+        )
 
 
 class FakeLightweightWatchedGmailProvider(FakeWatchedGmailProvider):
@@ -453,14 +502,37 @@ def test_starred_discovery_falls_back_to_label_starred_query(
     assert watched.first_starred_message_id == "star-fallback"
 
 
-def test_existing_refused_watched_thread_runs_autopilot_again(
+def test_existing_refused_watched_thread_sends_same_thread_reply_without_global_autopilot(
     db_session: Session,
     gmail_case,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     owner, account, order = gmail_case
     monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
     get_settings.cache_clear()
+    inbound = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=order.id,
+        provider="gmail",
+        provider_message_id="star-1",
+        provider_thread_id="thread-f93ba",
+        gmail_history_id="history-star-1",
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject="Re: Contestation de remboursement de commande F93BA",
+        snippet="Uber refuse la demande pour la commande F93BA.",
+        body_text="Uber refuse la demande pour la commande F93BA.",
+        received_at=utc_now(),
+        raw_headers_json={},
+        provider_labels_json=["INBOX", "STARRED"],
+        match_status="linked",
+        match_reason="order_number_match",
+        review_status="reviewed",
+    )
+    db_session.add(inbound)
+    db_session.flush()
     watched = GmailWatchedThread(
         email_account_id=account.id,
         gmail_thread_id="thread-f93ba",
@@ -479,6 +551,7 @@ def test_existing_refused_watched_thread_runs_autopilot_again(
             email_account_id=account.id,
             gmail_thread_id="thread-f93ba",
             provider_message_id="star-1",
+            inbound_message_id=inbound.id,
             status="refused",
             reason="uber_refusal",
             processed_at=utc_now(),
@@ -486,16 +559,14 @@ def test_existing_refused_watched_thread_runs_autopilot_again(
     )
     db_session.commit()
     provider = FakeWatchedGmailProvider()
-    autopilot_calls: list[int] = []
 
-    def fake_run_autopilot(self, db, user, result):  # noqa: ANN001, ARG001
-        autopilot_calls.append(user.id)
-        result.autopilot_skipped_count = 1
+    def fail_global_autopilot(self, db, user, result):  # noqa: ANN001, ARG001
+        raise AssertionError("watched Gmail worker must not run the global autopilot scan")
 
     monkeypatch.setattr(
         GmailInboundSyncService,
         "run_autopilot_for_negative_responses",
-        fake_run_autopilot,
+        fail_global_autopilot,
     )
 
     result = GmailWatchedThreadMonitorService(provider).process_account(
@@ -507,8 +578,22 @@ def test_existing_refused_watched_thread_runs_autopilot_again(
     )
 
     assert result.actionable_refused_threads == 1
-    assert result.autopilot_skipped_count == 1
-    assert autopilot_calls == [owner.id]
+    assert result.autopilot_sent_count == 1
+    assert result.autopilot_skipped_count == 0
+    assert result.autopilot_failed_count == 0
+    assert len(provider.created_drafts) == 1
+    assert len(provider.sent_drafts) == 1
+    attempt = db_session.scalar(select(AppealAttempt))
+    assert attempt is not None
+    assert attempt.status == "sent"
+    assert attempt.based_on_refusal_message_id == inbound.id
+    provider_draft = attempt.provider_draft
+    assert provider_draft is not None
+    assert provider_draft.status == "sent"
+    assert provider_draft.provider_thread_id == "thread-f93ba"
+    work_item = db_session.scalar(select(GmailStarredWorkItem))
+    assert work_item is not None
+    assert work_item.reason == "gmail_reply_sent"
 
 
 def test_non_starred_positive_reply_in_watched_thread_is_processed_and_star_removed(
