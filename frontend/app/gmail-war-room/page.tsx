@@ -107,6 +107,11 @@ export default function GmailWarRoomPage() {
                 detail={`${dashboard.summary.processed_messages_last_24h} traitee(s)`}
               />
               <MetricCard
+                label="Objectif 24h"
+                value={`${dashboard.summary.processed_messages_last_24h}/${dashboard.summary.daily_processing_target}`}
+                detail={`${dashboard.summary.processed_progress_percent}% de l'objectif`}
+              />
+              <MetricCard
                 label="Refus 24h"
                 value={dashboard.summary.refused_responses_last_24h}
                 detail={`${dashboard.summary.positive_responses_last_24h} positif(s)`}
@@ -115,6 +120,15 @@ export default function GmailWarRoomPage() {
                 label="Backlog restant"
                 value={dashboard.summary.backlog_remaining}
                 detail={`${dashboard.summary.manual_review_last_24h} a verifier`}
+              />
+              <MetricCard
+                label="Quota Gmail"
+                value={dashboard.summary.quota_blocked ? "En pause" : "OK"}
+                detail={
+                  dashboard.summary.quota_blocked
+                    ? `Reprise ${formatDateTime(dashboard.summary.quota_retry_after)}`
+                    : "quota disponible"
+                }
               />
             </div>
           </section>

@@ -21,9 +21,8 @@ const navGroups: Array<{ key: NavItem["group"]; label: string }> = [
 
 const primaryNavigationHrefs = new Set([
   "/dashboard",
-  "/remboursements",
-  "/annulations",
   "/relance-gmail",
+  "/finance",
 ]);
 
 type Props = {
