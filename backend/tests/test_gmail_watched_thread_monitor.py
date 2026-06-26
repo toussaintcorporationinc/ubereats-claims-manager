@@ -40,6 +40,7 @@ class FakeWatchedGmailProvider:
         self.thread_payloads: dict[str, list[InboundEmailPayload]] = {}
         self.removed_labels: list[tuple[str, str]] = []
         self.full_history_calls: list[str] = []
+        self.thread_include_attachments_calls: list[bool] = []
 
     def sync_inbound_replies_for_account(
         self,
@@ -76,7 +77,10 @@ class FakeWatchedGmailProvider:
         db: Session,
         account: EmailAccount,
         thread_id: str,
+        *,
+        include_attachments: bool = True,
     ) -> list[InboundEmailPayload]:
+        self.thread_include_attachments_calls.append(include_attachments)
         return self.thread_payloads.get(thread_id, [])
 
     def remove_message_label_for_account(
@@ -504,3 +508,4 @@ def test_watched_thread_monitor_respects_cycle_limit(
 
     assert result.processed_messages == 2
     assert db_session.scalar(select(func.count(GmailStarredWorkItem.id))) == 2
+    assert provider.thread_include_attachments_calls == [False, False]
