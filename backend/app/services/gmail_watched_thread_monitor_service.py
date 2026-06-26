@@ -82,6 +82,8 @@ class GmailWatchedThreadMonitorService:
         *,
         max_threads: int | None = None,
         discover_starred: bool = True,
+        discover_full_history: bool = True,
+        starred_discovery_max_messages: int | None = None,
         process_new_messages: bool | None = None,
     ) -> GmailWatchedThreadMonitorResult:
         result = GmailWatchedThreadMonitorResult()
@@ -89,13 +91,37 @@ class GmailWatchedThreadMonitorService:
             result.status = "disabled"
             return result
 
-        if discover_starred:
-            self.discover_from_starred_messages(db, user, account, result=result)
-
         if process_new_messages is None:
             process_new_messages = self.settings.gmail_watched_threads_process_new_messages
+
+        if process_new_messages:
+            self.process_watched_threads(db, user, account, result=result, max_threads=max_threads)
+
+        if discover_starred:
+            self.discover_from_starred_messages(
+                db,
+                user,
+                account,
+                result=result,
+                use_full_history=discover_full_history,
+                max_messages=starred_discovery_max_messages,
+            )
+
         if not process_new_messages:
             return result
+
+        return result
+
+    def process_watched_threads(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        *,
+        result: GmailWatchedThreadMonitorResult | None = None,
+        max_threads: int | None = None,
+    ) -> GmailWatchedThreadMonitorResult:
+        result = result or GmailWatchedThreadMonitorResult()
 
         max_per_cycle = max_threads or self.settings.gmail_watched_threads_max_per_cycle
         active_threads = self.get_active_watched_threads(db, account, max_per_cycle=max_per_cycle)
@@ -178,6 +204,8 @@ class GmailWatchedThreadMonitorService:
         account: EmailAccount,
         *,
         result: GmailWatchedThreadMonitorResult | None = None,
+        use_full_history: bool = True,
+        max_messages: int | None = None,
     ) -> GmailWatchedThreadMonitorResult:
         result = result or GmailWatchedThreadMonitorResult()
         if not self.settings.gmail_watched_threads_enabled:
@@ -191,7 +219,8 @@ class GmailWatchedThreadMonitorService:
                 user,
                 account,
                 queries=GMAIL_STARRED_URGENT_QUERIES,
-                fallback_max_messages=self.settings.gmail_starred_max_messages_per_sync,
+                fallback_max_messages=max_messages or self.settings.gmail_starred_max_messages_per_sync,
+                use_full_history=use_full_history,
             )
         except EmailProviderError as exc:
             retry_after = parse_gmail_retry_after(
