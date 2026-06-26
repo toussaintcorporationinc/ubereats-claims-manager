@@ -29,7 +29,13 @@ from app.services.gmail_inbound_sync_service import (
     GmailInboundSyncResult,
     GmailInboundSyncService,
 )
-from app.services.gmail_watched_thread_monitor_service import GmailWatchedThreadMonitorService
+from app.services.gmail_watched_thread_monitor_service import (
+    FAST_CLASSIFICATION_BODY_HEAD_CHARS,
+    FAST_CLASSIFICATION_BODY_TAIL_CHARS,
+    GmailWatchedThreadMonitorService,
+    bounded_fast_classification_body,
+    classify_unlinked_watched_message,
+)
 from app.services.order_identity_resolution_service import ResolvedOrderIdentity
 
 
@@ -252,6 +258,29 @@ def install_fake_classifier(monkeypatch: pytest.MonkeyPatch) -> None:
         db.flush()
 
     monkeypatch.setattr(GmailInboundSyncService, "reprocess_existing_message", fake_reprocess)
+
+
+def test_fast_unlinked_classification_bounds_long_gmail_threads() -> None:
+    body = (
+        "ancienne conversation sans decision " * 5000
+        + " " * 5000
+        + "Nous maintenons le refus, pas de remboursement."
+    )
+    message = InboundEmailMessage(
+        from_email="restaurantsfrance@uber.com",
+        subject="Re: Contestation de remboursement",
+        snippet="/// Please enter your reply above this line",
+        body_text=body,
+        match_status="unlinked",
+    )
+
+    bounded = bounded_fast_classification_body(body)
+    review_type, reason, confidence = classify_unlinked_watched_message(message)
+
+    assert len(bounded) <= FAST_CLASSIFICATION_BODY_HEAD_CHARS + FAST_CLASSIFICATION_BODY_TAIL_CHARS + 1
+    assert review_type == "refused"
+    assert reason == "fast_unlinked_uber_refusal"
+    assert confidence == Decimal("0.82")
 
 
 def test_starred_message_creates_watched_thread_and_work_item(

@@ -78,6 +78,8 @@ FAST_EVIDENCE_MARKERS = (
     "provide evidence",
     "additional information",
 )
+FAST_CLASSIFICATION_BODY_HEAD_CHARS = 12000
+FAST_CLASSIFICATION_BODY_TAIL_CHARS = 6000
 
 
 @dataclass
@@ -1230,7 +1232,7 @@ def classify_unlinked_watched_message(message: InboundEmailMessage) -> tuple[str
             for part in (
                 message.subject or "",
                 message.snippet or "",
-                message.body_text or "",
+                bounded_fast_classification_body(message.body_text),
             )
             if part.strip()
         )
@@ -1248,3 +1250,18 @@ def normalize_fast_classification_text(text: str) -> str:
     normalized = unicodedata.normalize("NFKD", text.casefold())
     without_accents = "".join(char for char in normalized if not unicodedata.combining(char))
     return " ".join(without_accents.replace("\xa0", " ").split())
+
+
+def bounded_fast_classification_body(body_text: str | None) -> str:
+    """Keep Gmail backlog classification cheap on very long quoted threads."""
+    if not body_text:
+        return ""
+    limit = FAST_CLASSIFICATION_BODY_HEAD_CHARS + FAST_CLASSIFICATION_BODY_TAIL_CHARS
+    if len(body_text) <= limit:
+        return body_text
+    return "\n".join(
+        (
+            body_text[:FAST_CLASSIFICATION_BODY_HEAD_CHARS],
+            body_text[-FAST_CLASSIFICATION_BODY_TAIL_CHARS:],
+        )
+    )
