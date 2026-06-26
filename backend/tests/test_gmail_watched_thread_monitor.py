@@ -593,6 +593,73 @@ def test_watched_thread_uses_fast_latest_external_message_when_available(
     ) == 1
 
 
+def test_watched_thread_skips_final_latest_message_before_identity_repair(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    provider = FakeFastWatchedGmailProvider()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-f93ba",
+        first_starred_message_id="star-1",
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.flush()
+    db_session.add(
+        GmailStarredWorkItem(
+            watched_thread_id=watched.id,
+            email_account_id=account.id,
+            gmail_thread_id="thread-f93ba",
+            provider_message_id="reply-refused-fast",
+            status="refused",
+            processed_at=utc_now(),
+        )
+    )
+    db_session.commit()
+    provider.latest_payloads = {
+        "thread-f93ba": payload(
+            "reply-refused-fast",
+            body="Bonjour, nous maintenons le refus pour la commande F93BA.",
+        )
+    }
+    repair_calls: list[str] = []
+
+    def fake_repair(
+        self: GmailWatchedThreadMonitorService,
+        db: Session,
+        user: User,
+        watched_thread: GmailWatchedThread,
+        payloads: list[InboundEmailPayload],
+    ) -> ClaimOrder | None:
+        repair_calls.append(watched_thread.gmail_thread_id)
+        return None
+
+    monkeypatch.setattr(
+        GmailWatchedThreadMonitorService,
+        "repair_watched_thread_from_payloads",
+        fake_repair,
+    )
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    assert provider.latest_calls == ["thread-f93ba"]
+    assert provider.thread_include_attachments_calls == []
+    assert repair_calls == []
+    assert result.processed_messages == 0
+    assert result.actionable_refused_threads == 1
+
+
 def test_non_starred_refusal_reply_keeps_thread_star_active(
     db_session: Session,
     gmail_case,

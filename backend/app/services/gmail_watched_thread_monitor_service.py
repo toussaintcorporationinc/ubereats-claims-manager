@@ -34,6 +34,7 @@ from app.services.autopilot_identity_repair_service import find_or_create_order_
 logger = logging.getLogger(__name__)
 
 FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed", "manual_review", "skipped"}
+SKIPPABLE_FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed"}
 POSITIVE_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confirmed"}
 REFUSAL_REVIEW_TYPES = {"refused"}
 EVIDENCE_REVIEW_TYPES = {"evidence_requested", "information_requested"}
@@ -151,8 +152,19 @@ class GmailWatchedThreadMonitorService:
                 watched.last_processed_at = utc_now()
                 continue
 
-            thread_order = self.repair_watched_thread_from_payloads(db, user, watched, payloads)
-            for payload in self.select_payloads_for_processing(payloads, account):
+            processing_payloads = self.select_payloads_for_processing(payloads, account)
+            if self.should_skip_already_final_payloads(db, account, processing_payloads):
+                watched.last_processed_at = utc_now()
+                db.flush()
+                continue
+
+            thread_order = self.repair_watched_thread_from_payloads(
+                db,
+                user,
+                watched,
+                processing_payloads or payloads,
+            )
+            for payload in processing_payloads:
                 if not payload.provider_message_id:
                     continue
                 message = self.upsert_inbound_message(
@@ -215,6 +227,32 @@ class GmailWatchedThreadMonitorService:
             result.autopilot_failed_count += sync_result.autopilot_failed_count
         result.errors.extend(sync_result.errors)
         return result
+
+    def should_skip_already_final_payloads(
+        self,
+        db: Session,
+        account: EmailAccount,
+        payloads: list[InboundEmailPayload],
+    ) -> bool:
+        """Avoid re-running expensive identity repair on already classified replies.
+
+        Gmail thread polling can revisit the same latest Uber reply many times.
+        Refused replies remain actionable through `count_actionable_refused_threads`
+        and AutoPilot, so reprocessing the same immutable Gmail message only slows
+        down the backlog.
+        """
+        if len(payloads) != 1:
+            return False
+        provider_message_id = payloads[0].provider_message_id
+        if not provider_message_id:
+            return False
+        item = db.scalar(
+            select(GmailStarredWorkItem).where(
+                GmailStarredWorkItem.email_account_id == account.id,
+                GmailStarredWorkItem.provider_message_id == provider_message_id,
+            )
+        )
+        return bool(item and item.status in SKIPPABLE_FINAL_WORK_ITEM_STATUSES)
 
     def select_payloads_for_processing(
         self,
