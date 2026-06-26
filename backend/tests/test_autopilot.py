@@ -32,6 +32,7 @@ from app.models import (
 from app.models.domain import utc_now
 from app.services.openai_structured_analysis_service import AIProofExtraction, OpenAIStructuredAnalysisService
 from app.routes.email import get_gmail_provider
+from app.services.autopilot_service import iter_candidates
 from app.services.email_provider import EmailConnectionStatus, EmailSendResult
 
 
@@ -250,6 +251,30 @@ def test_autopilot_dry_run_lists_candidates_without_sending(
     assert payload["actions"][0]["case_id"] == order["order_id"]
     assert payload["actions"][0]["status"] == "candidate"
     assert db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent")) is None
+
+
+def test_autopilot_candidate_iteration_respects_run_limit(
+    client: TestClient,
+    db_session: Session,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client)
+    created = [
+        create_ready_order(client, restaurant["id"], f"AUTO-LIMIT-{index}")["order_id"]
+        for index in range(5)
+    ]
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+
+    candidates = iter_candidates(
+        db_session,
+        owner,
+        "initial_claims",
+        restaurant["id"],
+        max_candidates=2,
+    )
+
+    assert [candidate.case_id for candidate in candidates] == created[:2]
 
 
 def test_autopilot_run_refuses_when_disabled(

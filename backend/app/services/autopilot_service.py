@@ -99,6 +99,7 @@ def settings_snapshot() -> dict[str, object]:
         "appeals_enabled": settings.autopilot_appeals_enabled,
         "daily_send_limit": settings.autopilot_daily_send_limit,
         "per_restaurant_daily_limit": settings.autopilot_per_restaurant_daily_limit,
+        "max_candidates_per_run": settings.autopilot_max_candidates_per_run,
         "min_amount": Decimal(str(settings.autopilot_min_amount)),
         "max_amount_without_owner_review": Decimal(str(settings.autopilot_max_amount_without_owner_review)),
         "require_complete_evidence": settings.autopilot_require_complete_evidence,
@@ -200,7 +201,13 @@ def run_autopilot(
     errors: list[str] = []
     quota_pause_reason: str | None = None
 
-    for candidate in iter_candidates(db, user, mode, restaurant_id):
+    for candidate in iter_candidates(
+        db,
+        user,
+        mode,
+        restaurant_id,
+        max_candidates=settings.autopilot_max_candidates_per_run,
+    ):
         action = create_candidate_action(db, run, candidate)
         actions.append(action)
 
@@ -280,14 +287,27 @@ def iter_candidates(
     user: User,
     mode: str,
     restaurant_id: int | None,
+    *,
+    max_candidates: int | None = None,
 ) -> list[Candidate]:
     candidates: list[Candidate] = []
+    remaining = max_candidates if max_candidates and max_candidates > 0 else None
     if mode in {"initial_claims", "all"}:
-        candidates.extend(initial_claim_candidates(db, user, restaurant_id))
+        initial_candidates = initial_claim_candidates(db, user, restaurant_id, limit=remaining)
+        candidates.extend(initial_candidates)
+        if remaining is not None:
+            remaining -= len(initial_candidates)
+            if remaining <= 0:
+                return candidates
     if mode in {"followups", "all"}:
-        candidates.extend(followup_candidates(db, user, restaurant_id))
+        followup_items = followup_candidates(db, user, restaurant_id, limit=remaining)
+        candidates.extend(followup_items)
+        if remaining is not None:
+            remaining -= len(followup_items)
+            if remaining <= 0:
+                return candidates
     if mode in {"appeals", "all"}:
-        candidates.extend(appeal_candidates(db, user, restaurant_id))
+        candidates.extend(appeal_candidates(db, user, restaurant_id, limit=remaining))
     return candidates
 
 
@@ -300,7 +320,13 @@ def accessible_restaurant_filter(db: Session, user: User, restaurant_id: int | N
     return list(accessible_ids)
 
 
-def initial_claim_candidates(db: Session, user: User, restaurant_id: int | None) -> list[Candidate]:
+def initial_claim_candidates(
+    db: Session,
+    user: User,
+    restaurant_id: int | None,
+    *,
+    limit: int | None = None,
+) -> list[Candidate]:
     statement = (
         select(ClaimOrder)
         .join(Restaurant)
@@ -316,6 +342,8 @@ def initial_claim_candidates(db: Session, user: User, restaurant_id: int | None)
         if not restaurant_ids:
             return []
         statement = statement.where(ClaimOrder.restaurant_id.in_(restaurant_ids))
+    if limit is not None and limit > 0:
+        statement = statement.limit(limit)
     orders = db.scalars(statement).all()
     for order in orders:
         repair_order_identity_for_autopilot(db, user, order)
@@ -332,7 +360,13 @@ def initial_claim_candidates(db: Session, user: User, restaurant_id: int | None)
     ]
 
 
-def followup_candidates(db: Session, user: User, restaurant_id: int | None) -> list[Candidate]:
+def followup_candidates(
+    db: Session,
+    user: User,
+    restaurant_id: int | None,
+    *,
+    limit: int | None = None,
+) -> list[Candidate]:
     now = utc_now()
     statement = (
         select(FollowUpTask)
@@ -352,6 +386,8 @@ def followup_candidates(db: Session, user: User, restaurant_id: int | None) -> l
         if not restaurant_ids:
             return []
         statement = statement.where(ClaimOrder.restaurant_id.in_(restaurant_ids))
+    if limit is not None and limit > 0:
+        statement = statement.limit(limit)
     tasks = db.scalars(statement).all()
     for task in tasks:
         repair_order_identity_for_autopilot(db, user, task.order)
@@ -368,7 +404,13 @@ def followup_candidates(db: Session, user: User, restaurant_id: int | None) -> l
     ]
 
 
-def appeal_candidates(db: Session, user: User, restaurant_id: int | None) -> list[Candidate]:
+def appeal_candidates(
+    db: Session,
+    user: User,
+    restaurant_id: int | None,
+    *,
+    limit: int | None = None,
+) -> list[Candidate]:
     now = utc_now()
     statement = (
         select(AppealWorkflow)
@@ -386,6 +428,8 @@ def appeal_candidates(db: Session, user: User, restaurant_id: int | None) -> lis
         if not restaurant_ids:
             return []
         statement = statement.where(AppealWorkflow.restaurant_id.in_(restaurant_ids))
+    if limit is not None and limit > 0:
+        statement = statement.limit(limit)
     workflows = db.scalars(statement).all()
     for workflow in workflows:
         repair_appeal_workflow_for_autopilot(db, user, workflow)

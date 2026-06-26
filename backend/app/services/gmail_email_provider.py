@@ -260,6 +260,43 @@ class GmailEmailProvider:
         payload = self.list_messages_page(access_token, query=query, max_results=max_results)
         return [str(message["id"]) for message in payload.get("messages", []) if message.get("id")]
 
+    def list_message_refs_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        *,
+        query: str,
+        max_results: int,
+    ) -> list[dict[str, str]]:
+        """List Gmail message/thread ids without loading message bodies.
+
+        Starred-thread discovery can involve tens of thousands of messages. The
+        heavy payload path downloads full MIME bodies and attachments, which is
+        correct for processing one thread but too slow for discovering the queue.
+        """
+        access_token = self.access_token_for_external_call(db, account)
+        refs: list[dict[str, str]] = []
+        page_token: str | None = None
+        limit = max(1, max_results)
+        while len(refs) < limit:
+            payload = self.list_messages_page(
+                access_token,
+                query=query,
+                max_results=min(500, limit - len(refs)),
+                page_token=page_token,
+            )
+            for message in payload.get("messages", []):
+                if not isinstance(message, dict):
+                    continue
+                message_id = str(message.get("id") or "")
+                thread_id = str(message.get("threadId") or "")
+                if message_id and thread_id:
+                    refs.append({"id": message_id, "threadId": thread_id})
+            page_token = payload.get("nextPageToken")
+            if not page_token:
+                break
+        return refs
+
     def list_messages_page(
         self,
         access_token: str,
@@ -317,14 +354,89 @@ class GmailEmailProvider:
         account: EmailAccount,
         message_id: str,
     ) -> InboundEmailPayload:
+        message = self.get_message_for_account_payload(
+            db,
+            account,
+            message_id,
+            include_attachments=True,
+            enrich_starred=True,
+        )
+        return message
+
+    def get_message_for_account_payload(
+        self,
+        db: Session,
+        account: EmailAccount,
+        message_id: str,
+        *,
+        include_attachments: bool = True,
+        enrich_starred: bool = True,
+    ) -> InboundEmailPayload:
         access_token = self.access_token_for_external_call(db, account)
         url = f"{GMAIL_MESSAGES_URL}/{quote(message_id, safe='')}?format=full"
         payload = self.get_json(url, {"Authorization": f"Bearer {access_token}"})
-        attachments = self.extract_inbound_attachments(access_token, payload)
+        attachments = self.extract_inbound_attachments(access_token, payload) if include_attachments else []
         message = self.parse_gmail_message(payload, attachments=attachments)
-        if "STARRED" in {str(label).strip().upper() for label in message.provider_labels} and message.provider_thread_id:
+        if (
+            enrich_starred
+            and "STARRED" in {str(label).strip().upper() for label in message.provider_labels}
+            and message.provider_thread_id
+        ):
             return self.enrich_starred_message_with_thread_context(access_token, message)
         return message
+
+    def get_latest_external_thread_message_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        thread_id: str,
+    ) -> InboundEmailPayload | None:
+        """Fetch only the newest external message from a Gmail thread.
+
+        Watched starred threads can contain long back-and-forth histories. A
+        full-thread fetch is expensive and slows the worker down. For the
+        relance decision, the newest external answer from Uber is the message
+        that matters; the original starred thread id remains the durable link.
+        """
+        access_token = self.access_token_for_external_call(db, account)
+        payload = self.get_json(
+            (
+                f"{GMAIL_THREADS_URL}/{quote(thread_id, safe='')}?format=metadata"
+                "&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date"
+            ),
+            {"Authorization": f"Bearer {access_token}"},
+        )
+        messages = payload.get("messages")
+        if not isinstance(messages, list) or not messages:
+            return None
+
+        account_email = (account.email_address or "").strip().lower()
+        candidates: list[tuple[int, int, str]] = []
+        fallbacks: list[tuple[int, int, str]] = []
+        for index, item in enumerate(messages):
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            headers = extract_headers(item.get("payload", {}))
+            from_email = (parseaddr(headers.get("from", ""))[1] or headers.get("from") or "").strip().lower()
+            try:
+                internal_date = int(item.get("internalDate") or 0)
+            except (TypeError, ValueError):
+                internal_date = 0
+            candidate = (internal_date, index, str(item["id"]))
+            fallbacks.append(candidate)
+            if not account_email or account_email not in from_email:
+                candidates.append(candidate)
+
+        chosen = max(candidates or fallbacks, default=None)
+        if chosen is None:
+            return None
+        return self.get_message_for_account_payload(
+            db,
+            account,
+            chosen[2],
+            include_attachments=False,
+            enrich_starred=False,
+        )
 
     def enrich_starred_message_with_thread_context(
         self,

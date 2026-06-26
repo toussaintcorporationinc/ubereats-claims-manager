@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from decimal import Decimal
+import unicodedata
 
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.exc import IntegrityError
@@ -34,9 +36,48 @@ from app.services.autopilot_identity_repair_service import find_or_create_order_
 logger = logging.getLogger(__name__)
 
 FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed", "manual_review", "skipped"}
+SKIPPABLE_FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed"}
 POSITIVE_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confirmed"}
 REFUSAL_REVIEW_TYPES = {"refused"}
 EVIDENCE_REVIEW_TYPES = {"evidence_requested", "information_requested"}
+FAST_POSITIVE_MARKERS = (
+    "paiement accorde",
+    "paiement a ete accorde",
+    "remboursement accorde",
+    "remboursement a ete accorde",
+    "est accorde",
+    "regularisation",
+    "sera verse",
+    "a ete credite",
+    "payment approved",
+    "refund approved",
+    "we have credited",
+    "we will credit",
+)
+FAST_REFUSAL_MARKERS = (
+    "maintenons le refus",
+    "refus",
+    "refuse",
+    "refused",
+    "denied",
+    "declined",
+    "pas de remboursement",
+    "aucun remboursement",
+    "ne pouvons pas rembourser",
+    "not eligible",
+    "no refund",
+)
+FAST_EVIDENCE_MARKERS = (
+    "preuve",
+    "justificatif",
+    "piece jointe",
+    "document",
+    "photo",
+    "information supplementaire",
+    "fournir",
+    "provide evidence",
+    "additional information",
+)
 
 
 @dataclass
@@ -151,8 +192,19 @@ class GmailWatchedThreadMonitorService:
                 watched.last_processed_at = utc_now()
                 continue
 
-            thread_order = self.repair_watched_thread_from_payloads(db, user, watched, payloads)
-            for payload in sorted(payloads, key=lambda item: item.received_at or datetime.min):
+            processing_payloads = self.select_payloads_for_processing(payloads, account)
+            if self.should_skip_already_final_payloads(db, account, processing_payloads):
+                watched.last_processed_at = utc_now()
+                db.flush()
+                continue
+
+            thread_order = self.repair_watched_thread_from_payloads(
+                db,
+                user,
+                watched,
+                processing_payloads or payloads,
+            )
+            for payload in processing_payloads:
                 if not payload.provider_message_id:
                     continue
                 message = self.upsert_inbound_message(
@@ -188,15 +240,18 @@ class GmailWatchedThreadMonitorService:
                 ):
                     continue
 
-                self.sync_service.reprocess_existing_message(
-                    db,
-                    user,
-                    account,
-                    message,
-                    sync_result,
-                    apply_reviews=True,
-                    payload=payload,
-                )
+                if thread_order is None and message.match_status != "linked":
+                    self.process_unlinked_watched_message_fast(db, user, message, sync_result)
+                else:
+                    self.sync_service.reprocess_existing_message(
+                        db,
+                        user,
+                        account,
+                        message,
+                        sync_result,
+                        apply_reviews=True,
+                        payload=payload,
+                    )
                 self.update_work_item_status(db, user, watched, work_item, message, result)
                 result.processed_messages += 1
 
@@ -216,6 +271,62 @@ class GmailWatchedThreadMonitorService:
         result.errors.extend(sync_result.errors)
         return result
 
+    def should_skip_already_final_payloads(
+        self,
+        db: Session,
+        account: EmailAccount,
+        payloads: list[InboundEmailPayload],
+    ) -> bool:
+        """Avoid re-running expensive identity repair on already classified replies.
+
+        Gmail thread polling can revisit the same latest Uber reply many times.
+        Refused replies remain actionable through `count_actionable_refused_threads`
+        and AutoPilot, so reprocessing the same immutable Gmail message only slows
+        down the backlog.
+        """
+        if len(payloads) != 1:
+            return False
+        provider_message_id = payloads[0].provider_message_id
+        if not provider_message_id:
+            return False
+        item = db.scalar(
+            select(GmailStarredWorkItem).where(
+                GmailStarredWorkItem.email_account_id == account.id,
+                GmailStarredWorkItem.provider_message_id == provider_message_id,
+            )
+        )
+        return bool(item and item.status in SKIPPABLE_FINAL_WORK_ITEM_STATUSES)
+
+    def select_payloads_for_processing(
+        self,
+        payloads: list[InboundEmailPayload],
+        account: EmailAccount,
+    ) -> list[InboundEmailPayload]:
+        """Keep watched-thread cycles focused on Uber's latest answer.
+
+        The whole thread is fetched so identity repair can read past context.
+        Processing every old sent/received message is expensive and causes the
+        backlog to crawl. For the automation decision, the newest external
+        message is the useful one: positive, refusal, proof request, or unknown.
+        """
+        deduped: dict[str, InboundEmailPayload] = {}
+        for payload in payloads:
+            if not payload.provider_message_id:
+                continue
+            deduped[payload.provider_message_id] = payload
+        candidates = [
+            payload
+            for payload in deduped.values()
+            if not self.payload_from_account(payload, account)
+        ]
+        if not candidates:
+            return []
+        _index, latest = max(
+            enumerate(candidates),
+            key=lambda item: (item[1].received_at or datetime.min, item[0]),
+        )
+        return [latest]
+
     def discover_from_starred_messages(
         self,
         db: Session,
@@ -230,6 +341,15 @@ class GmailWatchedThreadMonitorService:
         if not self.settings.gmail_watched_threads_enabled:
             result.status = "disabled"
             return result
+
+        list_refs_for_account = getattr(self.provider, "list_message_refs_for_account", None)
+        if callable(list_refs_for_account):
+            return self.discover_from_starred_message_refs(
+                db,
+                account,
+                result=result,
+                max_messages=max_messages,
+            )
 
         refreshed_payloads: list[InboundEmailPayload] = []
         try:
@@ -319,6 +439,92 @@ class GmailWatchedThreadMonitorService:
         db.flush()
         return result
 
+    def discover_from_starred_message_refs(
+        self,
+        db: Session,
+        account: EmailAccount,
+        *,
+        result: GmailWatchedThreadMonitorResult | None = None,
+        max_messages: int | None = None,
+    ) -> GmailWatchedThreadMonitorResult:
+        """Discover starred Gmail threads with message references only.
+
+        This is intentionally separate from payload processing. For large
+        mailboxes, queue discovery must stay cheap so TENNET can register all
+        starred threads first, then process the actual conversations in bounded
+        cycles.
+        """
+        result = result or GmailWatchedThreadMonitorResult()
+        list_refs_for_account = getattr(self.provider, "list_message_refs_for_account", None)
+        if not callable(list_refs_for_account):
+            return result
+
+        max_results = max_messages or self.settings.gmail_starred_max_messages_per_sync
+        seen_message_ids: set[str] = set()
+        refs: list[dict[str, str]] = []
+        for query in GMAIL_STARRED_URGENT_QUERIES:
+            try:
+                query_refs = list(
+                    list_refs_for_account(
+                        db,
+                        account,
+                        query=query,
+                        max_results=max_results,
+                    )
+                )
+            except EmailProviderError as exc:
+                retry_after = parse_gmail_retry_after(
+                    exc.message,
+                    safety_seconds=self.settings.gmail_quota_retry_safety_seconds,
+                )
+                if retry_after is not None:
+                    result.errors.append(f"gmail_quota_retry_after:{retry_after.isoformat()}")
+                    return result
+                result.errors.append(f"starred_discovery_refs:{exc.message}")
+                continue
+            except Exception as exc:  # noqa: BLE001 - one query variant must not stop discovery.
+                retry_after = parse_gmail_retry_after(
+                    str(exc),
+                    safety_seconds=self.settings.gmail_quota_retry_safety_seconds,
+                )
+                if retry_after is not None:
+                    result.errors.append(f"gmail_quota_retry_after:{retry_after.isoformat()}")
+                    return result
+                result.errors.append(f"starred_discovery_refs:{str(exc)[:160]}")
+                continue
+            for ref in query_refs:
+                message_id = str(ref.get("id") or "")
+                thread_id = str(ref.get("threadId") or "")
+                if not message_id or not thread_id or message_id in seen_message_ids:
+                    continue
+                seen_message_ids.add(message_id)
+                refs.append({"id": message_id, "threadId": thread_id})
+            if refs:
+                break
+
+        for ref in refs:
+            watched, created = self.ensure_watched_thread_ref(
+                db,
+                account,
+                gmail_thread_id=ref["threadId"],
+                provider_message_id=ref["id"],
+            )
+            if created:
+                result.watched_threads_created += 1
+            result.watched_threads_seen += 1
+            _, item_created = self.ensure_work_item_ref(
+                db,
+                watched,
+                account,
+                provider_message_id=ref["id"],
+            )
+            if item_created:
+                result.work_items_created += 1
+                result.new_messages_detected += 1
+
+        db.flush()
+        return result
+
     def count_actionable_refused_threads(self, db: Session, account: EmailAccount) -> int:
         return int(
             db.scalar(
@@ -369,6 +575,20 @@ class GmailWatchedThreadMonitorService:
         watched: GmailWatchedThread,
     ) -> list[InboundEmailPayload]:
         get_thread_messages = getattr(self.provider, "get_thread_messages_for_account", None)
+        if watched.claim_order_id is None and callable(get_thread_messages):
+            try:
+                payloads = list(get_thread_messages(db, account, watched.gmail_thread_id, include_attachments=False))
+            except TypeError:
+                payloads = list(get_thread_messages(db, account, watched.gmail_thread_id))
+            if payloads:
+                return payloads
+
+        get_latest_external_message = getattr(self.provider, "get_latest_external_thread_message_for_account", None)
+        if callable(get_latest_external_message):
+            latest_payload = get_latest_external_message(db, account, watched.gmail_thread_id)
+            if latest_payload is not None:
+                return [latest_payload]
+
         if callable(get_thread_messages):
             try:
                 return list(get_thread_messages(db, account, watched.gmail_thread_id, include_attachments=False))
@@ -417,6 +637,48 @@ class GmailWatchedThreadMonitorService:
             },
         )
         return order
+
+    def process_unlinked_watched_message_fast(
+        self,
+        db: Session,
+        user: User,
+        message: InboundEmailMessage,
+        sync_result: GmailInboundSyncResult,
+    ) -> None:
+        """Classify unlinked watched replies without the expensive linking pipeline.
+
+        Starred Gmail backlogs can contain thousands of already-sent disputes.
+        If TENNET cannot link the thread immediately, it still must classify the
+        newest Uber reply fast so the thread remains actionable instead of
+        blocking the worker cycle for minutes.
+        """
+        review_type, reason, confidence = classify_unlinked_watched_message(message)
+        analysis = message.response_analysis
+        if analysis is None:
+            analysis = GmailResponseAnalysis(
+                inbound_message_id=message.id,
+                order_id=message.order_id,
+                recommended_review_type=review_type,
+                status="manual_review" if review_type == "manual_review" else "analyzed",
+                confidence_score=confidence,
+                reason=reason,
+            )
+            db.add(analysis)
+        else:
+            analysis.order_id = message.order_id
+            analysis.recommended_review_type = review_type
+            analysis.status = "manual_review" if review_type == "manual_review" else "analyzed"
+            analysis.confidence_score = confidence
+            analysis.reason = reason
+        analysis.analyzed_by_user_id = user.id
+        analysis.notes = "Fast Gmail watched-thread classification before case linking."
+        message.review_status = "reviewed"
+        message.reviewed_at = utc_now()
+        message.reviewed_by_user_id = user.id
+        sync_result.analyzed_messages += 1
+        if review_type == "refused":
+            sync_result.negative_responses_detected += 1
+        db.flush()
 
     def should_reprocess_final_item(
         self,
@@ -505,6 +767,54 @@ class GmailWatchedThreadMonitorService:
         db.flush()
         return watched, created
 
+    def ensure_watched_thread_ref(
+        self,
+        db: Session,
+        account: EmailAccount,
+        *,
+        gmail_thread_id: str,
+        provider_message_id: str,
+    ) -> tuple[GmailWatchedThread, bool]:
+        watched = db.scalar(
+            select(GmailWatchedThread).where(
+                GmailWatchedThread.email_account_id == account.id,
+                GmailWatchedThread.gmail_thread_id == gmail_thread_id,
+            )
+        )
+        created = False
+        if watched is None:
+            watched = GmailWatchedThread(
+                email_account_id=account.id,
+                gmail_thread_id=gmail_thread_id,
+                first_starred_message_id=provider_message_id,
+                status="active",
+                star_active=True,
+            )
+            nested = db.begin_nested()
+            try:
+                db.add(watched)
+                db.flush()
+                nested.commit()
+                created = True
+            except IntegrityError:
+                nested.rollback()
+                watched = db.scalar(
+                    select(GmailWatchedThread).where(
+                        GmailWatchedThread.email_account_id == account.id,
+                        GmailWatchedThread.gmail_thread_id == gmail_thread_id,
+                    )
+                )
+                if watched is None:
+                    raise
+        elif watched.status in {"closed", "paused"}:
+            watched.status = "active"
+            watched.star_active = True
+        if not watched.first_starred_message_id:
+            watched.first_starred_message_id = provider_message_id
+        watched.star_active = True
+        db.flush()
+        return watched, created
+
     def ensure_work_item(
         self,
         db: Session,
@@ -551,6 +861,52 @@ class GmailWatchedThreadMonitorService:
                 item.gmail_thread_id = watched.gmail_thread_id
             if item.inbound_message_id is None:
                 item.inbound_message_id = message.id
+        return item, created
+
+    def ensure_work_item_ref(
+        self,
+        db: Session,
+        watched: GmailWatchedThread,
+        account: EmailAccount,
+        *,
+        provider_message_id: str,
+    ) -> tuple[GmailStarredWorkItem, bool]:
+        item = db.scalar(
+            select(GmailStarredWorkItem).where(
+                GmailStarredWorkItem.email_account_id == account.id,
+                GmailStarredWorkItem.provider_message_id == provider_message_id,
+            )
+        )
+        created = False
+        if item is None:
+            item = GmailStarredWorkItem(
+                watched_thread_id=watched.id,
+                email_account_id=account.id,
+                inbound_message_id=None,
+                gmail_thread_id=watched.gmail_thread_id,
+                provider_message_id=provider_message_id,
+                status="pending",
+            )
+            nested = db.begin_nested()
+            try:
+                db.add(item)
+                db.flush()
+                nested.commit()
+                created = True
+            except IntegrityError:
+                nested.rollback()
+                item = db.scalar(
+                    select(GmailStarredWorkItem).where(
+                        GmailStarredWorkItem.email_account_id == account.id,
+                        GmailStarredWorkItem.provider_message_id == provider_message_id,
+                    )
+                )
+                if item is None:
+                    raise
+                created = False
+        else:
+            item.watched_thread_id = watched.id
+            item.gmail_thread_id = watched.gmail_thread_id
         return item, created
 
     def update_watched_links_from_message(
@@ -711,6 +1067,12 @@ class GmailWatchedThreadMonitorService:
         return "STARRED" in {str(label).strip().upper() for label in labels or []}
 
     @staticmethod
+    def payload_from_account(payload: InboundEmailPayload, account: EmailAccount) -> bool:
+        account_email = (account.email_address or "").strip().lower()
+        from_email = (payload.from_email or "").strip().lower()
+        return bool(account_email and account_email in from_email)
+
+    @staticmethod
     def message_changed_after_processing(message: InboundEmailMessage, item: GmailStarredWorkItem) -> bool:
         if item.processed_at is None:
             return True
@@ -757,3 +1119,30 @@ def datetime_after(left: datetime, right: datetime | None) -> bool:
     elif left.tzinfo is not None and right.tzinfo is None:
         right = right.replace(tzinfo=left.tzinfo)
     return left > right
+
+
+def classify_unlinked_watched_message(message: InboundEmailMessage) -> tuple[str, str, Decimal]:
+    text = normalize_fast_classification_text(
+        "\n".join(
+            part
+            for part in (
+                message.subject or "",
+                message.snippet or "",
+                message.body_text or "",
+            )
+            if part.strip()
+        )
+    )
+    if any(marker in text for marker in FAST_REFUSAL_MARKERS):
+        return "refused", "fast_unlinked_uber_refusal", Decimal("0.82")
+    if any(marker in text for marker in FAST_POSITIVE_MARKERS):
+        return "payment_confirmed", "fast_unlinked_payment_positive", Decimal("0.84")
+    if any(marker in text for marker in FAST_EVIDENCE_MARKERS):
+        return "evidence_requested", "fast_unlinked_evidence_requested", Decimal("0.75")
+    return "manual_review", "fast_unlinked_manual_review", Decimal("0.50")
+
+
+def normalize_fast_classification_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text.casefold())
+    without_accents = "".join(char for char in normalized if not unicodedata.combining(char))
+    return " ".join(without_accents.replace("\xa0", " ").split())
