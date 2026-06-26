@@ -640,7 +640,15 @@ def test_unlinked_watched_thread_prefers_full_thread_before_latest_fast_path(
     def fail_reprocess(*args, **kwargs):  # noqa: ANN002, ANN003
         raise AssertionError("unlinked watched threads must use the fast classifier")
 
+    def fail_identity_repair(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("unlinked watched threads must not run slow identity repair")
+
     monkeypatch.setattr(GmailInboundSyncService, "reprocess_existing_message", fail_reprocess)
+    monkeypatch.setattr(
+        GmailWatchedThreadMonitorService,
+        "repair_watched_thread_from_payloads",
+        fail_identity_repair,
+    )
 
     result = GmailWatchedThreadMonitorService(provider).process_account(
         db_session,
