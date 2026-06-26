@@ -377,13 +377,21 @@ class GmailWatchedThreadMonitorService:
         if existing_message is not None:
             self.sync_service.refresh_existing_message_from_payload(db, user, existing_message, payload)
             return existing_message
-        message = self.sync_service.create_inbound_message(
-            db,
-            user,
-            account,
-            payload,
-            order_identifier_index=order_identifier_index,
-        )
+        try:
+            with db.begin_nested():
+                message = self.sync_service.create_inbound_message(
+                    db,
+                    user,
+                    account,
+                    payload,
+                    order_identifier_index=order_identifier_index,
+                )
+        except IntegrityError:
+            existing_message = self.sync_service.get_existing_message(db, account, payload.provider_message_id)
+            if existing_message is None:
+                raise
+            self.sync_service.refresh_existing_message_from_payload(db, user, existing_message, payload)
+            return existing_message
         sync_result.synced_messages += 1
         if message.match_status == "linked":
             sync_result.linked_messages += 1
