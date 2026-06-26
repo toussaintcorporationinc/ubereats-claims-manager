@@ -113,6 +113,22 @@ class FakeLightweightWatchedGmailProvider(FakeWatchedGmailProvider):
         return self.starred_refs_by_query.get(query, [])[:max_results]
 
 
+class FakeFastWatchedGmailProvider(FakeWatchedGmailProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.latest_payloads: dict[str, InboundEmailPayload | None] = {}
+        self.latest_calls: list[str] = []
+
+    def get_latest_external_thread_message_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        thread_id: str,
+    ) -> InboundEmailPayload | None:
+        self.latest_calls.append(thread_id)
+        return self.latest_payloads.get(thread_id)
+
+
 @pytest.fixture()
 def watched_gmail_settings(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     monkeypatch.setenv("EMAIL_PROVIDER_ENABLED", "true")
@@ -526,6 +542,55 @@ def test_watched_thread_processes_only_latest_external_reply(
     assert db_session.scalar(
         select(func.count(GmailStarredWorkItem.id)).where(GmailStarredWorkItem.provider_message_id == "reply-old-1")
     ) == 0
+
+
+def test_watched_thread_uses_fast_latest_external_message_when_available(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    provider = FakeFastWatchedGmailProvider()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-f93ba",
+        first_starred_message_id="star-1",
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.commit()
+    provider.latest_payloads = {
+        "thread-f93ba": payload(
+            "reply-positive-fast",
+            body="Bonjour, un paiement de 24.99 EUR est accorde pour F93BA.",
+        )
+    }
+    provider.thread_payloads = {
+        "thread-f93ba": [
+            payload("sent-1", from_email=account.email_address, body="Bonjour je conteste F93BA."),
+            payload("reply-old-1", body="Nous maintenons le refus pour F93BA."),
+            payload("reply-positive-fast", body="Bonjour, un paiement de 24.99 EUR est accorde pour F93BA."),
+        ]
+    }
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    assert provider.latest_calls == ["thread-f93ba"]
+    assert provider.thread_include_attachments_calls == []
+    assert result.processed_messages == 1
+    assert db_session.scalar(
+        select(func.count(GmailStarredWorkItem.id)).where(
+            GmailStarredWorkItem.provider_message_id == "reply-positive-fast"
+        )
+    ) == 1
 
 
 def test_non_starred_refusal_reply_keeps_thread_star_active(

@@ -493,6 +493,11 @@ class GmailWatchedThreadMonitorService:
         account: EmailAccount,
         watched: GmailWatchedThread,
     ) -> list[InboundEmailPayload]:
+        get_latest_external_message = getattr(self.provider, "get_latest_external_thread_message_for_account", None)
+        if callable(get_latest_external_message):
+            latest_payload = get_latest_external_message(db, account, watched.gmail_thread_id)
+            if latest_payload is not None:
+                return [latest_payload]
         get_thread_messages = getattr(self.provider, "get_thread_messages_for_account", None)
         if callable(get_thread_messages):
             try:
