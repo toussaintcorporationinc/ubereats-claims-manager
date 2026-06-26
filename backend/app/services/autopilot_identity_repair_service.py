@@ -6,6 +6,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.auth import can_access_restaurant
@@ -567,23 +568,37 @@ def create_or_update_order_from_identity(
         order_number = clean_order_identifier(identity.order_number or identity.display_id)
         if order_number is None:
             return None
-        order = ClaimOrder(
-            restaurant_id=restaurant.id,
-            uber_order_number=order_number,
-            internal_reference=clean_order_identifier(identity.display_id),
-            customer_name=clean_customer_name(identity.customer_name),
-            order_date=identity.order_date,
-            order_amount=identity.order_amount,
-            currency=(identity.currency or "EUR")[:3].upper(),
-            accepted_by_restaurant=True,
-            prepared_before_cancellation=True,
-            loss_type=loss_type_from_ai_case_type(case_type),
-            status="refused",
-            notes="Dossier cree depuis un fil Gmail etoile deja envoye. Relance autorisee dans le meme fil, sans inventer de preuve.",
-        )
-        db.add(order)
-        db.flush()
-        created = True
+        try:
+            with db.begin_nested():
+                order = ClaimOrder(
+                    restaurant_id=restaurant.id,
+                    uber_order_number=order_number,
+                    internal_reference=clean_order_identifier(identity.display_id),
+                    customer_name=clean_customer_name(identity.customer_name),
+                    order_date=identity.order_date,
+                    order_amount=identity.order_amount,
+                    currency=(identity.currency or "EUR")[:3].upper(),
+                    accepted_by_restaurant=True,
+                    prepared_before_cancellation=True,
+                    loss_type=loss_type_from_ai_case_type(case_type),
+                    status="refused",
+                    notes="Dossier cree depuis un fil Gmail etoile deja envoye. Relance autorisee dans le meme fil, sans inventer de preuve.",
+                )
+                db.add(order)
+                db.flush()
+            created = True
+        except IntegrityError:
+            # Gmail workers can discover the same thread/order through several
+            # paths. A duplicate must attach to the existing dossier, never stop
+            # the whole Gmail backlog.
+            order = find_existing_order_for_identity(db, restaurant.id, identity)
+            if order is None:
+                raise
+            apply_identity_to_order(order, identity)
+            if order.status not in {"payment_confirmed", "accepted", "closed"}:
+                order.status = "refused"
+                order.updated_at = utc_now()
+            db.flush()
     else:
         apply_identity_to_order(order, identity)
         if order.status not in {"payment_confirmed", "accepted", "closed"}:

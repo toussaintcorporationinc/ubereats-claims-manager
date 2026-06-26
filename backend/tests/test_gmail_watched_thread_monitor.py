@@ -22,6 +22,7 @@ from app.models import (
 )
 from app.models.domain import utc_now
 from app.services.email_provider import InboundEmailPayload
+from app.services import autopilot_identity_repair_service as identity_repair_service
 from app.services.gmail_inbound_sync_service import (
     GMAIL_STARRED_URGENT_QUERIES,
     GMAIL_STARRED_URGENT_QUERY,
@@ -29,6 +30,7 @@ from app.services.gmail_inbound_sync_service import (
     GmailInboundSyncService,
 )
 from app.services.gmail_watched_thread_monitor_service import GmailWatchedThreadMonitorService
+from app.services.order_identity_resolution_service import ResolvedOrderIdentity
 
 
 class FakeWatchedGmailProvider:
@@ -241,6 +243,55 @@ def test_starred_message_creates_watched_thread_and_work_item(
     assert watched.star_active is True
     assert result.watched_threads_created == 1
     assert db_session.scalar(select(func.count(GmailStarredWorkItem.id))) == 1
+
+
+def test_starred_identity_repair_reuses_existing_order_after_duplicate_race(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, _account, order = gmail_case
+    original_find_existing = identity_repair_service.find_existing_order_for_identity
+    calls = 0
+
+    def miss_once_then_find(db: Session, restaurant_id: int, identity: ResolvedOrderIdentity) -> ClaimOrder | None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return None
+        return original_find_existing(db, restaurant_id, identity)
+
+    monkeypatch.setattr(identity_repair_service, "find_existing_order_for_identity", miss_once_then_find)
+
+    linked = identity_repair_service.create_or_update_order_from_identity(
+        db_session,
+        owner,
+        order.restaurant,
+        ResolvedOrderIdentity(
+            order_number="F93BA",
+            display_id="F93BA",
+            customer_name="Yoann O.",
+            order_date=date(2026, 6, 18),
+            order_amount=Decimal("24.99"),
+            currency="EUR",
+            source="test",
+        ),
+        source="test",
+        case_type="refund",
+    )
+
+    assert linked is not None
+    assert linked.id == order.id
+    assert calls >= 2
+    assert (
+        db_session.scalar(
+            select(func.count(ClaimOrder.id)).where(
+                ClaimOrder.restaurant_id == order.restaurant_id,
+                ClaimOrder.uber_order_number == "F93BA",
+            )
+        )
+        == 1
+    )
 
 
 def test_starred_discovery_uses_full_history_not_cycle_limit(
