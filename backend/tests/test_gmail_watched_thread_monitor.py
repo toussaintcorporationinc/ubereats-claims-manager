@@ -655,8 +655,17 @@ def test_refused_watched_thread_repairs_missing_order_from_thread_text_before_re
         )
     )
     db_session.commit()
-    provider = FakeWatchedGmailProvider()
+    provider = FakeFastWatchedGmailProvider()
     provider.provider_thread_id_for_drafts = "thread-unlinked-f93ba"
+    provider.latest_payloads = {
+        "thread-unlinked-f93ba": payload(
+            "latest-refusal-only",
+            thread_id="thread-unlinked-f93ba",
+            subject="Re: Contestation de remboursement de commande",
+            body="Bonjour, nous refusons la demande.",
+            starred=False,
+        )
+    }
     provider.thread_payloads = {
         "thread-unlinked-f93ba": [
             payload(
@@ -688,7 +697,7 @@ def test_refused_watched_thread_repairs_missing_order_from_thread_text_before_re
 
     assert result.actionable_refused_threads == 1
     assert result.autopilot_sent_count == 1
-    assert result.autopilot_skipped_count == 0
+    assert result.autopilot_skipped_count == 1
     assert len(provider.sent_drafts) == 1
     db_session.refresh(inbound)
     db_session.refresh(watched)
@@ -704,9 +713,16 @@ def test_refused_watched_thread_repairs_missing_order_from_thread_text_before_re
     assert provider_draft is not None
     assert provider_draft.status == "sent"
     assert provider_draft.provider_thread_id == "thread-unlinked-f93ba"
-    work_item = db_session.scalar(select(GmailStarredWorkItem))
-    assert work_item is not None
-    assert work_item.reason == "gmail_reply_sent"
+    work_item_reasons = {
+        reason
+        for reason, in db_session.execute(
+            select(GmailStarredWorkItem.reason).where(
+                GmailStarredWorkItem.gmail_thread_id == "thread-unlinked-f93ba",
+            )
+        )
+    }
+    assert "gmail_reply_sent" in work_item_reasons
+    assert "uber_refusal" in work_item_reasons
 
 
 def test_non_starred_positive_reply_in_watched_thread_is_processed_and_star_removed(
