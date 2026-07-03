@@ -582,6 +582,8 @@ class GmailInboundSyncService:
         for message in messages:
             if message.id in exclude_message_ids:
                 continue
+            if not starred_sender_allowed(message.from_email, account):
+                continue
             result.starred_messages_seen += 1
             payload = (
                 self.fetch_single_payload(db, user, account, message.provider_message_id)
@@ -901,6 +903,8 @@ class GmailInboundSyncService:
         labels = normalize_gmail_labels(payload.provider_labels)
         if "STARRED" not in labels:
             return False
+        if not starred_sender_allowed(payload.from_email, account):
+            return False
         context_text = starred_payload_identity_context(payload)
         order = None
         if payload.attachments:
@@ -979,6 +983,7 @@ class GmailInboundSyncService:
     ) -> MatchResult:
         own_sender = same_email(payload.from_email, account.email_address)
         labels = normalize_gmail_labels(payload.provider_labels)
+        settings = get_settings()
 
         if own_sender and "STARRED" in labels:
             thread_order = self.match_by_thread(db, user, payload.provider_thread_id)
@@ -1000,17 +1005,17 @@ class GmailInboundSyncService:
             )
             if order_from_body is not None:
                 return MatchResult(order_from_body, "linked", "order_number_match")
-            return MatchResult(None, "unlinked", "no_match")
+            return MatchResult(None, "ignored", "ignored_sender")
 
         if own_sender:
+            return MatchResult(None, "ignored", "ignored_sender")
+
+        if not sender_matches_filter(payload.from_email, settings.gmail_support_sender_filter):
             return MatchResult(None, "ignored", "ignored_sender")
 
         thread_order = self.match_by_thread(db, user, payload.provider_thread_id)
         if thread_order is not None:
             return MatchResult(thread_order, "linked", "thread_id_match")
-
-        if "STARRED" not in labels and not sender_matches_filter(payload.from_email, get_settings().gmail_support_sender_filter):
-            return MatchResult(None, "ignored", "ignored_sender")
 
         order_from_subject = self.match_by_order_number(
             db,
@@ -1263,9 +1268,16 @@ def same_email(left: str | None, right: str | None) -> bool:
 
 def should_analyze_message(message: InboundEmailMessage, account: EmailAccount) -> bool:
     labels = {str(label).strip().casefold() for label in (message.provider_labels_json or [])}
-    if "starred" in labels:
-        return True
-    return not same_email(message.from_email, account.email_address)
+    if same_email(message.from_email, account.email_address):
+        return "starred" in labels
+    return sender_matches_filter(message.from_email, get_settings().gmail_support_sender_filter)
+
+
+def starred_sender_allowed(from_email: str | None, account: EmailAccount) -> bool:
+    return same_email(from_email, account.email_address) or sender_matches_filter(
+        from_email,
+        get_settings().gmail_support_sender_filter,
+    )
 
 
 def sender_matches_filter(from_email: str | None, sender_filter: str) -> bool:

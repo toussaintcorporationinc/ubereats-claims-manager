@@ -66,6 +66,7 @@ Un fil Gmail etoile reste l'indicateur terrain d'une relance urgente. Quand une 
 ## Limites anti-spam
 
 - `AUTOPILOT_DAILY_SEND_LIMIT` limite le volume global quotidien.
+- `AUTOPILOT_PER_GMAIL_ACCOUNT_DAILY_LIMIT` limite le volume quotidien par adresse Gmail connectee.
 - `AUTOPILOT_PER_RESTAURANT_DAILY_LIMIT` limite le volume par restaurant.
 - `AUTOPILOT_COOLDOWN_HOURS` espace les relances et appels.
 - `AUTOPILOT_MAX_APPEAL_ATTEMPTS` bloque les boucles d'appel.

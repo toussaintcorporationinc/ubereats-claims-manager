@@ -113,6 +113,48 @@ def test_smart_import_detects_zip_and_evidence_image(client: TestClient) -> None
     assert files[1]["detected_category"] == "evidence"
 
 
+def test_smart_import_preview_uses_bulk_evidence_limit_for_image(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMPORT_MAX_FILE_SIZE_MB", "0")
+    monkeypatch.setenv("BULK_EVIDENCE_MAX_FILE_SIZE_MB", "1")
+    get_settings.cache_clear()
+    try:
+        response = client.post(
+            "/v1/smart-import/preview",
+            files=[("files", ("ticket-photo.jpg", b"fake-image", "image/jpeg"))],
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert response.status_code == 201
+    file_preview = response.json()["files"][0]
+    assert file_preview["detected_category"] == "evidence"
+    assert file_preview["recommended_action"] == "import_evidence_bulk"
+
+
+def test_smart_import_preview_uses_bulk_zip_limit_for_zip(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMPORT_MAX_FILE_SIZE_MB", "0")
+    monkeypatch.setenv("BULK_EVIDENCE_MAX_ZIP_SIZE_MB", "1")
+    get_settings.cache_clear()
+    try:
+        response = client.post(
+            "/v1/smart-import/preview",
+            files=[("files", ("preuves.zip", b"PK\x03\x04", "application/zip"))],
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert response.status_code == 201
+    file_preview = response.json()["files"][0]
+    assert file_preview["detected_category"] == "zip"
+    assert file_preview["recommended_action"] == "import_evidence_bulk"
+
+
 def test_smart_import_unknown_becomes_manual_review(client: TestClient) -> None:
     response = client.post(
         "/v1/smart-import/preview",

@@ -185,6 +185,9 @@ class GmailResponseIntelligenceService:
         is_starred = message_has_provider_label(message, "STARRED")
         amount = detect_amount(text)
         matches = {key: matching_keywords(text, keywords) for key, keywords in KEYWORDS.items()}
+        pattern_positive_matches = positive_payment_pattern_matches(text)
+        if pattern_positive_matches:
+            matches["payment_confirmed"] = [*matches["payment_confirmed"], *pattern_positive_matches]
         if is_starred:
             matches["gmail_labels"] = ["STARRED"]
         strong_groups = {key for key, values in matches.items() if values}
@@ -196,18 +199,6 @@ class GmailResponseIntelligenceService:
                 reason="empty_message",
                 matched_keywords=matches,
                 notes="Email vide ou non lisible. Revue humaine requise.",
-            )
-
-        positive_groups = strong_groups.intersection({"payment_confirmed", "payment_to_verify", "accepted"})
-        negative_groups = strong_groups.intersection({"refused"})
-        if positive_groups and negative_groups:
-            return GmailResponseClassification(
-                review_type="manual_review",
-                confidence_score=Decimal("0.45"),
-                reason="conflicting_positive_negative_keywords",
-                detected_amount=amount,
-                matched_keywords=matches,
-                notes=build_notes("Signaux positifs et negatifs detectes dans le meme email.", message, matches),
             )
 
         if "payment_confirmed" in strong_groups:
@@ -226,6 +217,18 @@ class GmailResponseIntelligenceService:
                 reason="payment_confirmed_without_amount",
                 matched_keywords=matches,
                 notes=build_notes("Paiement annonce sans montant exploitable.", message, matches),
+            )
+
+        positive_groups = strong_groups.intersection({"payment_confirmed", "payment_to_verify", "accepted"})
+        negative_groups = strong_groups.intersection({"refused"})
+        if positive_groups and negative_groups:
+            return GmailResponseClassification(
+                review_type="manual_review",
+                confidence_score=Decimal("0.45"),
+                reason="conflicting_positive_negative_keywords",
+                detected_amount=amount,
+                matched_keywords=matches,
+                notes=build_notes("Signaux positifs et negatifs detectes dans le meme email.", message, matches),
             )
 
         if "payment_to_verify" in strong_groups:
@@ -503,16 +506,34 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
         "payment processed",
         "we have paid",
         "we paid",
+        "we have approved a payment",
+        "payment approved",
+        "refund approved",
+        "reimbursement approved",
+        "we have credited",
+        "we will credit",
         "credited to your account",
         "amount has been added",
         "paid out",
         "payout completed",
         "paiement effectue",
         "paiement confirme",
+        "paiement accorde",
+        "paiement a ete accorde",
         "reglement effectue",
         "montant verse",
+        "montant credite",
         "compensation versee",
+        "compensation accordee",
         "remboursement effectue",
+        "remboursement accorde",
+        "remboursement a ete accorde",
+        "regularisation effectuee",
+        "regularisation accordee",
+        "ajustement effectue",
+        "ajustement accorde",
+        "nous avons credite",
+        "nous vous avons credite",
         "credite sur votre compte",
     ),
     "payment_to_verify": (
@@ -603,6 +624,18 @@ def normalize_text(value: str) -> str:
 
 def matching_keywords(text: str, keywords: tuple[str, ...]) -> list[str]:
     return [keyword for keyword in keywords if normalize_text(keyword) in text]
+
+
+def positive_payment_pattern_matches(text: str) -> list[str]:
+    patterns = {
+        "payment_approved_pattern": r"\bpayment\b.{0,80}\b(?:approved|issued|processed|credited)\b",
+        "refund_approved_pattern": r"\b(?:refund|reimbursement)\b.{0,80}\bapproved\b",
+        "paiement_accorde_pattern": r"\bpaiement\b.{0,80}\b(?:accorde|effectue|confirme|credite|verse)\b",
+        "remboursement_accorde_pattern": r"\bremboursement\b.{0,80}\b(?:accorde|effectue|confirme|credite|verse)\b",
+        "regularisation_accordee_pattern": r"\bregularisation\b.{0,80}\b(?:accordee|effectuee|confirmee|creditee|versee)\b",
+        "ajustement_accorde_pattern": r"\bajustement\b.{0,80}\b(?:accorde|effectue|confirme|credite|verse)\b",
+    }
+    return [name for name, pattern in patterns.items() if re.search(pattern, text)]
 
 
 def message_has_provider_label(message: InboundEmailMessage, label: str) -> bool:

@@ -1025,17 +1025,32 @@ Variables attendues :
 - `GMAIL_INBOUND_MAX_MESSAGES_PER_SYNC=1000` ;
 - `GMAIL_STARRED_MAX_MESSAGES_PER_SYNC=50000` ;
 - `GMAIL_STARRED_FULL_HISTORY_ENABLED=true` ;
+- `GMAIL_STARRED_PAGE_SIZE=500` ;
+- `GMAIL_STARRED_MAX_PAGES_PER_SYNC=0` ;
 - `GMAIL_INBOUND_AUTO_SYNC_ENABLED=false` par defaut ;
 - `GMAIL_INBOUND_AUTO_SYNC_CONTINUOUS_ENABLED=true` pour enchainer les cycles sans attente humaine ;
 - `GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS=30` si le mode continu est desactive ;
+- `GMAIL_INBOUND_AUTO_SYNC_IDLE_SLEEP_SECONDS=1` ;
+- `GMAIL_INBOUND_AUTO_SYNC_INITIAL_DELAY_SECONDS=5` ;
 - `GMAIL_INBOUND_AUTO_SYNC_EXISTING_REPROCESS_LIMIT=1000` ;
 - `GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT=true` ;
+- `GMAIL_INBOUND_AUTO_SYNC_RUN_WORKSPACE_MACHINE=true` ;
+- `GMAIL_DAILY_PROCESSING_TARGET=2000` ;
+- `GMAIL_QUOTA_RETRY_SAFETY_SECONDS=30` ;
+- `GMAIL_WATCHED_THREADS_ENABLED=true` ;
+- `GMAIL_WATCHED_THREADS_POLL_SECONDS=30` ;
+- `GMAIL_WATCHED_THREADS_FULL_RESCAN_MINUTES=15` ;
+- `GMAIL_WATCHED_THREADS_MAX_PER_CYCLE=5000` ;
+- `GMAIL_WATCHED_THREADS_BATCH_PER_CYCLE=100` ;
+- `GMAIL_WATCHED_THREADS_PROCESS_NEW_MESSAGES=true` ;
 - `GMAIL_SUPPORT_SENDER_FILTER=uber.com` ;
 - `GMAIL_SCOPES` doit inclure `https://www.googleapis.com/auth/gmail.readonly` en plus des scopes de brouillon/envoi.
 
 Les comptes connectes avant l'ajout de `gmail.readonly` doivent se reconnecter pour autoriser la lecture.
 
 Quand `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true`, le backend lance automatiquement la meme sync pour les comptes Gmail connectes `owner` et `manager`. Les comptes `staff` sont ignores. Les messages restent dedupliques par compte + id Gmail. En production, `GMAIL_INBOUND_AUTO_SYNC_CONTINUOUS_ENABLED=true` permet a TENNET d'enchainer les cycles en arriere-plan pour vider les mails Gmail etoiles sans attendre une action utilisateur.
+
+Le worker de threads surveilles utilise `GMAIL_WATCHED_THREADS_BATCH_PER_CYCLE` pour borner le travail de chaque passage, `GMAIL_WATCHED_THREADS_MAX_PER_CYCLE` comme limite haute, et `GMAIL_DAILY_PROCESSING_TARGET` pour afficher l'objectif 24h dans la War Room Gmail.
 
 Les relances automatiques Gmail restent bloquees si le fil Gmail n'est pas etoile, si le client, le numero de commande, la date, le restaurant ou la signature restaurant complete manquent. La signature complete attendue contient le nom, l'adresse, le telephone et l'email expediteur du restaurant.
 
@@ -1911,6 +1926,8 @@ Smart Import permet de deposer un fichier sans renommage obligatoire.
 - `POST /v1/smart-import/confirm` : confirme et route une preview vers les vrais workflows. Body minimal `{ "batch_preview_id": 123 }`, ou decisions par fichier `{ "files": [{ "file_id": 1, "action": "import_uber_reporting", "report_type": "combined_report", "restaurant_id": null }] }`.
 - `POST /v1/smart-import/previews/{batch_id}/cancel` : annule une preview non confirmee.
 - `POST /v1/smart-import/cleanup-expired` : owner seulement, marque les previews expirees et nettoie les temporaires non routes.
+
+Les CSV/XLSX de preview utilisent `IMPORT_MAX_FILE_SIZE_MB`. Les preuves Smart Import utilisent les limites du pipeline preuves : `BULK_EVIDENCE_MAX_FILE_SIZE_MB` pour photos/PDF et `BULK_EVIDENCE_MAX_ZIP_SIZE_MB` pour ZIP.
 
 Pendant la preview, TENNET deduplique les fichiers exacts par checksum SHA-256. La copie conservee est choisie selon la detection et la confiance ; les autres copies exactes sont retournees en `ignored_files` / `duplicate_ignored` et ne peuvent pas etre routees vers un import operationnel.
 

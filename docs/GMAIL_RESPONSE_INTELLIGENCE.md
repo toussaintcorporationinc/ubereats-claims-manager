@@ -23,9 +23,22 @@ TENNET can run Gmail sync periodically on the backend when these flags are enabl
 - `GMAIL_INBOUND_AUTO_SYNC_CONTINUOUS_ENABLED=true`
 - `GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS=30` when continuous mode is disabled
 - `GMAIL_STARRED_MAX_MESSAGES_PER_SYNC=50000`
+- `GMAIL_STARRED_FULL_HISTORY_ENABLED=true`
+- `GMAIL_STARRED_PAGE_SIZE=500`
+- `GMAIL_STARRED_MAX_PAGES_PER_SYNC=0`
 - `GMAIL_INBOUND_AUTO_SYNC_IDLE_SLEEP_SECONDS=1`
+- `GMAIL_INBOUND_AUTO_SYNC_INITIAL_DELAY_SECONDS=5`
 - `GMAIL_INBOUND_AUTO_SYNC_EXISTING_REPROCESS_LIMIT=1000`
 - `GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT=true`
+- `GMAIL_INBOUND_AUTO_SYNC_RUN_WORKSPACE_MACHINE=true`
+- `GMAIL_DAILY_PROCESSING_TARGET=2000`
+- `GMAIL_QUOTA_RETRY_SAFETY_SECONDS=30`
+- `GMAIL_WATCHED_THREADS_ENABLED=true`
+- `GMAIL_WATCHED_THREADS_POLL_SECONDS=30`
+- `GMAIL_WATCHED_THREADS_FULL_RESCAN_MINUTES=15`
+- `GMAIL_WATCHED_THREADS_MAX_PER_CYCLE=5000`
+- `GMAIL_WATCHED_THREADS_BATCH_PER_CYCLE=100`
+- `GMAIL_WATCHED_THREADS_PROCESS_NEW_MESSAGES=true`
 
 Regle operationnelle : un fil Gmail etoile represente une relance urgente a traiter. TENNET analyse le message, detecte refus, paiement ou demande de preuve, puis laisse AutoPilot repondre uniquement si le dossier a une identite complete et une signature restaurant complete. Aucun email automatique ne doit contenir la marque interne TENNET.
 

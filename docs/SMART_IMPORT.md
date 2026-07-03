@@ -7,6 +7,11 @@ Formats acceptes :
 - PDF, JPG, JPEG, PNG, WEBP, HEIC, HEIF pour preuves.
 - ZIP pour import massif de preuves.
 
+Limites d'upload :
+- les CSV/XLSX utilisent `IMPORT_MAX_FILE_SIZE_MB` ;
+- les photos/PDF utilisent `BULK_EVIDENCE_MAX_FILE_SIZE_MB` ;
+- les ZIP utilisent `BULK_EVIDENCE_MAX_ZIP_SIZE_MB`.
+
 TENNET peut detecter :
 - rapport Uber commandes ;
 - rapport Uber paiements ;

@@ -101,6 +101,7 @@ Regles :
 - le mode recommande en production est `GMAIL_INBOUND_AUTO_SYNC_CONTINUOUS_ENABLED=true` pour enchainer les cycles sans attente humaine ;
 - si le mode continu est desactive, `GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS=30` garde un traitement rapide ;
 - les backlogs Gmail etoiles importants doivent utiliser `GMAIL_STARRED_MAX_MESSAGES_PER_SYNC=50000`, `GMAIL_STARRED_MAX_PAGES_PER_SYNC=0` et `GMAIL_INBOUND_AUTO_SYNC_EXISTING_REPROCESS_LIMIT=1000` ;
+- la file des threads Gmail surveilles est bornee par `GMAIL_WATCHED_THREADS_BATCH_PER_CYCLE=100`, `GMAIL_WATCHED_THREADS_MAX_PER_CYCLE=5000` et affiche son objectif avec `GMAIL_DAILY_PROCESSING_TARGET=2000` ;
 - en auto-sync, TENNET lit les nouveaux mails puis la file Gmail etoilee complete page par page quand `GMAIL_STARRED_FULL_HISTORY_ENABLED=true` ;
 - un fil Gmail etoile est traite comme une relance urgente et reste dans la file tant qu'Uber n'a pas donne de signal positif clair ;
 - aucune relance automatique n'est creee hors AutoPilot controle ;
@@ -251,6 +252,7 @@ Regles :
 - aucun dossier incomplet n'est envoye ;
 - aucune preuve, montant ou commande n'est invente ;
 - les limites `AUTOPILOT_DAILY_SEND_LIMIT` et `AUTOPILOT_PER_RESTAURANT_DAILY_LIMIT` limitent le volume ;
+- `AUTOPILOT_PER_GMAIL_ACCOUNT_DAILY_LIMIT=500` limite les envois par adresse Gmail connectee afin que chaque boite garde son propre quota quotidien ;
 - `AUTOPILOT_COOLDOWN_HOURS` espace les relances et appels ;
 - un refus Uber ne cloture jamais automatiquement un dossier ;
 - un fil Gmail etoile signifie dossier a pousser ; si Uber confirme un paiement, TENNET retire l'etoile Gmail apres application de la review positive ;
@@ -306,4 +308,3 @@ Regles :
 - `APPEAL_AUTO_SEND_ENABLED=false` must remain the default.
 - `FOLLOWUP_AUTOMATIC_SEND_ENABLED=false` must remain the default.
 - No spam loop is acceptable.
-

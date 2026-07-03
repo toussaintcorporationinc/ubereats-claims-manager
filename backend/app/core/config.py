@@ -104,6 +104,7 @@ class Settings(BaseSettings):
     autopilot_followups_enabled: bool = False
     autopilot_appeals_enabled: bool = False
     autopilot_daily_send_limit: int = 1000
+    autopilot_per_gmail_account_daily_limit: int = 500
     autopilot_per_restaurant_daily_limit: int = 250
     autopilot_max_candidates_per_run: int = 250
     autopilot_min_amount: float = 5
@@ -176,4 +177,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

@@ -332,6 +332,22 @@ def test_fast_unlinked_classification_bounds_long_gmail_threads() -> None:
     assert confidence == Decimal("0.82")
 
 
+def test_fast_unlinked_positive_payment_wins_over_old_refusal_text() -> None:
+    message = InboundEmailMessage(
+        from_email="restaurantsfrance@uber.com",
+        subject="Re: Contestation de remboursement",
+        snippet="Paiement accorde",
+        body_text="Un paiement de 24,90 EUR a ete accorde. Ancien message cite: nous maintenons le refus.",
+        match_status="unlinked",
+    )
+
+    review_type, reason, confidence = classify_unlinked_watched_message(message)
+
+    assert review_type == "payment_confirmed"
+    assert reason == "fast_unlinked_payment_positive"
+    assert confidence == Decimal("0.84")
+
+
 def test_starred_message_creates_watched_thread_and_work_item(
     db_session: Session,
     gmail_case,
@@ -359,6 +375,38 @@ def test_starred_message_creates_watched_thread_and_work_item(
     assert db_session.scalar(select(func.count(GmailStarredWorkItem.id))) == 1
 
 
+def test_starred_discovery_ignores_non_uber_payloads(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    provider = FakeWatchedGmailProvider()
+    provider.starred_payloads = [
+        payload(
+            "star-noise",
+            thread_id="thread-noise",
+            from_email="newsletter@example.com",
+            body="Nous maintenons le refus pour F93BA.",
+            starred=True,
+        )
+    ]
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=True,
+        process_new_messages=False,
+    )
+
+    assert result.watched_threads_created == 0
+    assert result.work_items_created == 0
+    assert db_session.scalar(select(func.count(GmailWatchedThread.id))) == 0
+    assert db_session.scalar(select(func.count(GmailStarredWorkItem.id))) == 0
+
+
 def test_lightweight_starred_discovery_creates_watched_thread_without_payload_fetch(
     db_session: Session,
     gmail_case,
@@ -366,8 +414,9 @@ def test_lightweight_starred_discovery_creates_watched_thread_without_payload_fe
 ) -> None:
     owner, account, _order = gmail_case
     provider = FakeLightweightWatchedGmailProvider()
+    starred_uber_query = f"{GMAIL_STARRED_URGENT_QUERY} from:uber.com"
     provider.starred_refs_by_query = {
-        GMAIL_STARRED_URGENT_QUERY: [{"id": "star-ref-1", "threadId": "thread-ref-1"}]
+        starred_uber_query: [{"id": "star-ref-1", "threadId": "thread-ref-1"}]
     }
     install_fake_classifier(monkeypatch)
 
@@ -379,7 +428,7 @@ def test_lightweight_starred_discovery_creates_watched_thread_without_payload_fe
         process_new_messages=False,
     )
 
-    assert provider.ref_queries == [GMAIL_STARRED_URGENT_QUERY]
+    assert provider.ref_queries == [starred_uber_query]
     assert provider.full_history_calls == []
     assert db_session.scalar(select(func.count(InboundEmailMessage.id))) == 0
     watched = db_session.scalar(select(GmailWatchedThread))
@@ -756,6 +805,32 @@ def test_non_starred_positive_reply_in_watched_thread_is_processed_and_star_remo
     assert result.positive_responses >= 1
 
 
+def test_positive_watched_thread_removes_every_starred_message_in_thread(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    provider = FakeWatchedGmailProvider()
+    provider.starred_payloads = [payload("star-1", starred=True)]
+    provider.thread_payloads = {
+        "thread-f93ba": [
+            payload("star-1", starred=True),
+            payload("star-2", body="Ancienne relance a verifier.", starred=True),
+            payload("reply-positive-1", body="Bonjour, un paiement de 24.99 EUR est accorde pour F93BA."),
+        ]
+    }
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(db_session, owner, account)
+
+    watched = db_session.scalar(select(GmailWatchedThread))
+    assert watched is not None
+    assert watched.star_active is False
+    assert set(provider.removed_labels) == {("star-1", "STARRED"), ("star-2", "STARRED")}
+    assert result.positive_responses >= 1
+
+
 def test_watched_thread_processes_only_latest_external_reply(
     db_session: Session,
     gmail_case,
@@ -785,6 +860,50 @@ def test_watched_thread_processes_only_latest_external_reply(
     assert db_session.scalar(
         select(func.count(GmailStarredWorkItem.id)).where(GmailStarredWorkItem.provider_message_id == "reply-old-1")
     ) == 0
+
+
+def test_watched_thread_skips_non_uber_external_reply(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-noise",
+        first_starred_message_id="star-noise",
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.commit()
+    provider = FakeWatchedGmailProvider()
+    provider.thread_payloads = {
+        "thread-noise": [
+            payload(
+                "reply-noise",
+                thread_id="thread-noise",
+                from_email="newsletter@example.com",
+                body="Bonjour, un paiement de 24.99 EUR est accorde pour F93BA.",
+                starred=True,
+            )
+        ]
+    }
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    assert result.processed_messages == 0
+    assert result.work_items_created == 0
+    assert db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "reply-noise")
+    ) is None
 
 
 def test_watched_thread_uses_fast_latest_external_message_when_available(

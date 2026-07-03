@@ -839,6 +839,57 @@ def test_sync_starred_gmail_message_is_urgent_refusal_to_follow_up(
     assert workflow.status == "appeal_needed"
 
 
+def test_sync_starred_non_uber_message_is_ignored_even_with_order_number(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-NON-UBER-STARRED",
+        thread_id="thread-real-uber",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-starred-noise",
+            thread_id="thread-noise",
+            from_email="newsletter@example.com",
+            subject="Re: UBER-NON-UBER-STARRED",
+            body_text="Nous maintenons le refus pour UBER-NON-UBER-STARRED.",
+            provider_labels=["STARRED"],
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ignored_messages"] == 1
+    assert payload["linked_messages"] == 0
+    assert payload["unlinked_messages"] == 0
+    assert payload["applied_reviews"] == 0
+    assert payload["negative_responses_detected"] == 0
+    db_session.refresh(order)
+    assert order.status == "sent"
+    inbound_message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-starred-noise")
+    )
+    assert inbound_message is not None
+    assert inbound_message.order_id is None
+    assert inbound_message.match_status == "ignored"
+    assert inbound_message.match_reason == "ignored_sender"
+    analysis = db_session.scalar(
+        select(GmailResponseAnalysis).where(GmailResponseAnalysis.inbound_message_id == inbound_message.id)
+    )
+    assert analysis is None
+
+
 def test_sync_starred_gmail_query_reads_full_history_by_default(
     client: TestClient,
     db_session: Session,
@@ -1621,6 +1672,53 @@ def test_sync_payment_signal_wins_over_starred_gmail_label(
     assert analysis is not None
     assert analysis.recommended_review_type == "payment_confirmed"
     assert analysis.reason == "payment_confirmed_with_amount"
+
+
+def test_sync_french_payment_approved_with_old_refusal_conflict_is_counted(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-INBOUND-PAIEMENT-ACCORDE",
+        thread_id="thread-french-paid",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-french-paid",
+            thread_id="thread-french-paid",
+            body_text=(
+                "Bonjour, un paiement de 24,90 EUR a ete accorde pour cette commande. "
+                "Ancien message cite: nous maintenons le refus."
+            ),
+            provider_labels=["STARRED"],
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["applied_reviews"] == 1
+    assert payload["negative_responses_detected"] == 0
+    db_session.refresh(order)
+    assert order.status == "payment_confirmed"
+    assert str(order.recovered_amount) == "24.90"
+    account = get_active_account(db_session, owner.id)
+    assert account is not None
+    assert fake_gmail_provider.removed_labels == [(account.id, "msg-french-paid", "STARRED")]
+    inbound_message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-french-paid")
+    )
+    assert inbound_message is not None
+    assert inbound_message.provider_labels_json == []
 
 
 def test_sync_payment_without_amount_requires_verification(

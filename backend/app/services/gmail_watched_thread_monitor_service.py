@@ -29,6 +29,7 @@ from app.services.gmail_inbound_sync_service import (
     GMAIL_STARRED_URGENT_QUERIES,
     GmailInboundSyncResult,
     GmailInboundSyncService,
+    sender_matches_filter,
     starred_payload_identity_context,
 )
 from app.services.gmail_quota import parse_gmail_retry_after
@@ -228,6 +229,7 @@ class GmailWatchedThreadMonitorService:
                 watched.last_processed_at = utc_now()
                 continue
 
+            allow_remote_star_lookup = len(payloads) > 1
             processing_payloads = self.select_payloads_for_processing(payloads, account)
             if self.should_skip_already_final_payloads(db, account, processing_payloads):
                 watched.last_processed_at = utc_now()
@@ -288,7 +290,15 @@ class GmailWatchedThreadMonitorService:
                         apply_reviews=True,
                         payload=payload,
                     )
-                self.update_work_item_status(db, user, watched, work_item, message, result)
+                self.update_work_item_status(
+                    db,
+                    user,
+                    watched,
+                    work_item,
+                    message,
+                    result,
+                    allow_remote_star_lookup=allow_remote_star_lookup,
+                )
                 result.processed_messages += 1
 
             watched.last_processed_at = utc_now()
@@ -438,6 +448,10 @@ class GmailWatchedThreadMonitorService:
             )
             mark_appeal_sent(db, workflow=workflow, user=user)
         except AutopilotError as exc:
+            if exc.message == "gmail_account_daily_limit_reached":
+                item.reason = exc.message
+                result.autopilot_skipped_count += 1
+                return False
             item.reason = f"autopilot_send_blocked:{exc.message}"
             result.autopilot_failed_count += 1
             result.errors.append(f"autopilot_send:{exc.message}")
@@ -547,7 +561,7 @@ class GmailWatchedThreadMonitorService:
                     apply_reviews=True,
                     payload=inbound_payload_from_message(message),
                 )
-            self.update_work_item_status(db, user, watched, item, message, result)
+            self.update_work_item_status(db, user, watched, item, message, result, allow_remote_star_lookup=False)
             result.processed_messages += 1
             watched.last_processed_at = utc_now()
             db.flush()
@@ -602,6 +616,7 @@ class GmailWatchedThreadMonitorService:
             payload
             for payload in deduped.values()
             if not self.payload_from_account(payload, account)
+            and sender_matches_filter(payload.from_email, self.settings.gmail_support_sender_filter)
         ]
         if not candidates:
             return []
@@ -669,6 +684,8 @@ class GmailWatchedThreadMonitorService:
         for payload in refreshed_payloads:
             if not payload.provider_message_id or not payload.provider_thread_id:
                 continue
+            if not sender_matches_filter(payload.from_email, self.settings.gmail_support_sender_filter):
+                continue
             message = self.upsert_inbound_message(
                 db,
                 user,
@@ -696,17 +713,21 @@ class GmailWatchedThreadMonitorService:
                 result.new_messages_detected += 1
 
         labels_text = cast(InboundEmailMessage.provider_labels_json, String)
+        starred_query = select(InboundEmailMessage).where(
+            InboundEmailMessage.email_account_id == account.id,
+            InboundEmailMessage.provider == "gmail",
+            InboundEmailMessage.provider_thread_id.is_not(None),
+            labels_text.ilike("%STARRED%"),
+        )
+        sender_filter = (self.settings.gmail_support_sender_filter or "").strip()
+        if sender_filter:
+            starred_query = starred_query.where(InboundEmailMessage.from_email.ilike(f"%{sender_filter}%"))
         starred_messages = list(
             db.scalars(
-                select(InboundEmailMessage)
-                .where(
-                    InboundEmailMessage.email_account_id == account.id,
-                    InboundEmailMessage.provider == "gmail",
-                    InboundEmailMessage.provider_thread_id.is_not(None),
-                    labels_text.ilike("%STARRED%"),
-                )
-                .order_by(InboundEmailMessage.received_at.desc().nullslast(), InboundEmailMessage.id.desc())
-                .limit(self.settings.gmail_watched_threads_max_per_cycle)
+                starred_query.order_by(
+                    InboundEmailMessage.received_at.desc().nullslast(),
+                    InboundEmailMessage.id.desc(),
+                ).limit(self.settings.gmail_watched_threads_max_per_cycle)
             ).all()
         )
         for message in starred_messages:
@@ -746,7 +767,10 @@ class GmailWatchedThreadMonitorService:
         max_results = max_messages or self.settings.gmail_starred_max_messages_per_sync
         seen_message_ids: set[str] = set()
         refs: list[dict[str, str]] = []
-        for query in GMAIL_STARRED_URGENT_QUERIES:
+        for query in sender_filtered_starred_queries(
+            GMAIL_STARRED_URGENT_QUERIES,
+            self.settings.gmail_support_sender_filter,
+        ):
             try:
                 query_refs = list(
                     list_refs_for_account(
@@ -1237,6 +1261,8 @@ class GmailWatchedThreadMonitorService:
         item: GmailStarredWorkItem,
         message: InboundEmailMessage,
         result: GmailWatchedThreadMonitorResult,
+        *,
+        allow_remote_star_lookup: bool = False,
     ) -> None:
         self.update_watched_links_from_message(watched, message)
         analysis = message.response_analysis
@@ -1257,7 +1283,7 @@ class GmailWatchedThreadMonitorService:
             result.positive_responses += 1
             if review_type == "payment_confirmed":
                 result.payment_confirmed += 1
-            self.remove_thread_star(db, user, watched)
+            self.remove_thread_star(db, user, watched, allow_remote_lookup=allow_remote_star_lookup)
         elif review_type in REFUSAL_REVIEW_TYPES:
             item.status = "refused"
             item.reason = "uber_refusal"
@@ -1296,16 +1322,22 @@ class GmailWatchedThreadMonitorService:
             },
         )
 
-    def remove_thread_star(self, db: Session, user: User, watched: GmailWatchedThread) -> None:
-        if not watched.first_starred_message_id:
-            watched.star_active = False
-            return
+    def remove_thread_star(
+        self,
+        db: Session,
+        user: User,
+        watched: GmailWatchedThread,
+        *,
+        allow_remote_lookup: bool = False,
+    ) -> None:
+        starred_message_ids = self.starred_message_ids_for_thread(db, watched, allow_remote_lookup=allow_remote_lookup)
         remover = getattr(self.provider, "remove_message_label_for_account", None)
-        if callable(remover):
+        if callable(remover) and starred_message_ids:
             try:
                 account = db.get(EmailAccount, watched.email_account_id)
                 if account is not None:
-                    remover(db, account, watched.first_starred_message_id, "STARRED")
+                    for message_id in sorted(starred_message_ids):
+                        remover(db, account, message_id, "STARRED")
             except Exception as exc:  # noqa: BLE001 - payment accounting must not fail on label cleanup.
                 logger.warning("Unable to remove Gmail star for watched thread %s: %s", watched.id, exc)
         labels_text = cast(InboundEmailMessage.provider_labels_json, String)
@@ -1330,6 +1362,46 @@ class GmailWatchedThreadMonitorService:
             user_id=user.id,
             new_value={"gmail_thread_id": watched.gmail_thread_id},
         )
+
+    def starred_message_ids_for_thread(
+        self,
+        db: Session,
+        watched: GmailWatchedThread,
+        *,
+        allow_remote_lookup: bool = False,
+    ) -> set[str]:
+        message_ids = {watched.first_starred_message_id} if watched.first_starred_message_id else set()
+        labels_text = cast(InboundEmailMessage.provider_labels_json, String)
+        message_ids.update(
+            str(message.provider_message_id)
+            for message in db.scalars(
+                select(InboundEmailMessage).where(
+                    InboundEmailMessage.email_account_id == watched.email_account_id,
+                    InboundEmailMessage.provider_thread_id == watched.gmail_thread_id,
+                    InboundEmailMessage.provider_message_id.is_not(None),
+                    labels_text.ilike("%STARRED%"),
+                )
+            ).all()
+            if message.provider_message_id
+        )
+
+        if allow_remote_lookup:
+            get_thread_messages = getattr(self.provider, "get_thread_messages_for_account", None)
+            if callable(get_thread_messages):
+                account = db.get(EmailAccount, watched.email_account_id)
+                if account is not None:
+                    try:
+                        payloads = list(get_thread_messages(db, account, watched.gmail_thread_id, include_attachments=False))
+                    except TypeError:
+                        payloads = list(get_thread_messages(db, account, watched.gmail_thread_id))
+                    except Exception as exc:  # noqa: BLE001 - local payment accounting must still succeed.
+                        logger.warning("Unable to fetch Gmail thread stars for watched thread %s: %s", watched.id, exc)
+                        payloads = []
+                    for payload in payloads:
+                        labels = {str(label).strip().upper() for label in payload.provider_labels}
+                        if "STARRED" in labels and payload.provider_message_id:
+                            message_ids.add(payload.provider_message_id)
+        return {message_id for message_id in message_ids if message_id}
 
     def ensure_evidence_request_task(self, db: Session, user: User, message: InboundEmailMessage) -> None:
         if message.order_id is None:
@@ -1432,10 +1504,10 @@ def classify_unlinked_watched_message(message: InboundEmailMessage) -> tuple[str
             if part.strip()
         )
     )
-    if any(marker in text for marker in FAST_REFUSAL_MARKERS):
-        return "refused", "fast_unlinked_uber_refusal", Decimal("0.82")
     if any(marker in text for marker in FAST_POSITIVE_MARKERS):
         return "payment_confirmed", "fast_unlinked_payment_positive", Decimal("0.84")
+    if any(marker in text for marker in FAST_REFUSAL_MARKERS):
+        return "refused", "fast_unlinked_uber_refusal", Decimal("0.82")
     if any(marker in text for marker in FAST_EVIDENCE_MARKERS):
         return "evidence_requested", "fast_unlinked_evidence_requested", Decimal("0.75")
     return "manual_review", "fast_unlinked_manual_review", Decimal("0.50")
@@ -1460,3 +1532,10 @@ def bounded_fast_classification_body(body_text: str | None) -> str:
             body_text[-FAST_CLASSIFICATION_BODY_TAIL_CHARS:],
         )
     )
+
+
+def sender_filtered_starred_queries(queries: tuple[str, ...], sender_filter: str) -> tuple[str, ...]:
+    cleaned = (sender_filter or "").strip()
+    if not cleaned:
+        return queries
+    return tuple(f"{query} from:{cleaned}" for query in queries)

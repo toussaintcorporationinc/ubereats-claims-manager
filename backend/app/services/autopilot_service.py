@@ -98,6 +98,7 @@ def settings_snapshot() -> dict[str, object]:
         "followups_enabled": settings.autopilot_followups_enabled,
         "appeals_enabled": settings.autopilot_appeals_enabled,
         "daily_send_limit": settings.autopilot_daily_send_limit,
+        "per_gmail_account_daily_limit": settings.autopilot_per_gmail_account_daily_limit,
         "per_restaurant_daily_limit": settings.autopilot_per_restaurant_daily_limit,
         "max_candidates_per_run": settings.autopilot_max_candidates_per_run,
         "min_amount": Decimal(str(settings.autopilot_min_amount)),
@@ -130,6 +131,22 @@ def sent_today_count(db: Session, restaurant_id: int | None = None) -> int:
     if restaurant_id is not None:
         statement = statement.where(AutopilotAction.restaurant_id == restaurant_id)
     return int(db.scalar(statement) or 0)
+
+
+def gmail_account_sent_today_count(db: Session, email_account_id: int | None) -> int:
+    if email_account_id is None:
+        return 0
+    return int(
+        db.scalar(
+            select(func.count(EmailProviderDraft.id)).where(
+                EmailProviderDraft.provider == "gmail",
+                EmailProviderDraft.email_account_id == email_account_id,
+                EmailProviderDraft.status == "sent",
+                EmailProviderDraft.sent_at >= today_utc_start(),
+            )
+        )
+        or 0
+    )
 
 
 def create_emergency_stop(db: Session, user: User) -> AutopilotRun:
@@ -230,8 +247,9 @@ def run_autopilot(
 
         try:
             send_candidate(db, user, candidate, action, provider)
-            global_sent += 1
-            per_restaurant_sent[candidate.restaurant_id] = per_restaurant_sent.get(candidate.restaurant_id, 0) + 1
+            if action.status == "sent":
+                global_sent += 1
+                per_restaurant_sent[candidate.restaurant_id] = per_restaurant_sent.get(candidate.restaurant_id, 0) + 1
         except Exception as exc:  # pragma: no cover - defensive path covered by integration behavior
             retry_after = parse_gmail_retry_after(
                 str(exc),
@@ -810,6 +828,16 @@ def limit_skip_reason(
     return None
 
 
+def provider_draft_limit_skip_reason(db: Session, provider_draft: EmailProviderDraft) -> str | None:
+    settings = get_settings()
+    limit = settings.autopilot_per_gmail_account_daily_limit
+    if limit <= 0 or provider_draft.provider != "gmail" or provider_draft.email_account_id is None:
+        return None
+    if gmail_account_sent_today_count(db, provider_draft.email_account_id) >= limit:
+        return "gmail_account_daily_limit_reached"
+    return None
+
+
 def mark_skipped(action: AutopilotAction, reason: str, *, dry_run: bool) -> None:
     action.status = "candidate" if dry_run else "skipped"
     action.reason = "dry_run_skipped" if dry_run else "skipped"
@@ -859,6 +887,7 @@ def send_initial_claim(
     action: AutopilotAction,
     provider: EmailProvider,
 ) -> None:
+    previous_order_status = order.status
     draft = latest_draft(db, order.id, "initial_claim")
     if draft is None:
         draft = create_email_draft(db, order.id, "initial_claim", user_id=user.id)
@@ -875,6 +904,12 @@ def send_initial_claim(
     action.status = "provider_draft_created"
     action.provider_draft_id = provider_draft.id
     db.flush()
+    skip_reason = provider_draft_limit_skip_reason(db, provider_draft)
+    if skip_reason is not None:
+        order.status = previous_order_status
+        order.updated_at = utc_now()
+        mark_skipped(action, skip_reason, dry_run=False)
+        return
     send_provider_draft(db, user, provider_draft, provider, order_status_after_send="sent", require_reply_thread=False)
     action.status = "sent"
     action.sent_at = provider_draft.sent_at
@@ -922,6 +957,10 @@ def send_followup(
         action.status = "provider_draft_created"
         action.provider_draft_id = provider_draft.id
         db.flush()
+    skip_reason = provider_draft_limit_skip_reason(db, provider_draft)
+    if skip_reason is not None:
+        mark_skipped(action, skip_reason, dry_run=False)
+        return
     send_provider_draft(db, user, provider_draft, provider, order_status_after_send=task.order.status)
     complete_task_for_sent_provider_draft(db, user, provider_draft)
     action.status = "sent"
@@ -986,6 +1025,10 @@ def send_appeal(
         action.status = "provider_draft_created"
         action.provider_draft_id = provider_draft.id
         db.flush()
+    skip_reason = provider_draft_limit_skip_reason(db, provider_draft)
+    if skip_reason is not None:
+        mark_skipped(action, skip_reason, dry_run=False)
+        return
     send_provider_draft(db, user, provider_draft, provider, order_status_after_send=None)
     try:
         mark_appeal_sent(db, workflow=workflow, user=user)
@@ -1148,6 +1191,9 @@ def send_provider_draft(
         raise AutopilotError("provider_draft_not_ready", 409)
     if require_reply_thread and not provider_draft.provider_thread_id:
         raise AutopilotError("gmail_reply_thread_required", 409)
+    skip_reason = provider_draft_limit_skip_reason(db, provider_draft)
+    if skip_reason is not None:
+        raise AutopilotError(skip_reason, 409)
     old_status = provider_draft.status
     provider_draft.status = "send_requested"
     provider_draft.updated_at = utc_now()

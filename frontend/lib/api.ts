@@ -2417,7 +2417,7 @@ async function refreshAccessToken(): Promise<string | null> {
 async function request<T>(path: string, init: RequestInit = {}, retryOnUnauthorized = true): Promise<T> {
   const token = getStoredToken();
   const isFormData = init.body instanceof FormData;
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetchApi(path, {
     ...init,
     headers: {
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
@@ -2447,7 +2447,7 @@ async function request<T>(path: string, init: RequestInit = {}, retryOnUnauthori
 
 async function publicRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const isFormData = init.body instanceof FormData;
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetchApi(path, {
     ...init,
     headers: {
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
@@ -2463,6 +2463,21 @@ async function publicRequest<T>(path: string, init: RequestInit = {}): Promise<T
   }
 
   return payload as T;
+}
+
+async function fetchApi(path: string, init: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`${API_BASE_URL}${path}`, init);
+  } catch {
+    throw new ApiError(0, { detail: networkErrorMessage(path) });
+  }
+}
+
+function networkErrorMessage(path: string): string {
+  if (path.startsWith("/v1/smart-import/preview")) {
+    return "Import interrompu avant l'API TENNET. Verifie que le backend est lance et retente avec les fichiers d'origine ; les photos/PDF suivent la limite preuves et les ZIP la limite ZIP.";
+  }
+  return "Impossible de joindre l'API TENNET. Verifie que le backend est lance et que l'adresse API est correcte.";
 }
 
 function formatApiError(detail: unknown): string {
@@ -2508,7 +2523,7 @@ function buildQuery(filters: Record<string, string | number | boolean | null | u
 
 async function downloadBlob(path: string, retryOnUnauthorized = true): Promise<Blob> {
   const token = getStoredToken();
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetchApi(path, {
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },

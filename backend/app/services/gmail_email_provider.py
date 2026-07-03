@@ -411,6 +411,7 @@ class GmailEmailProvider:
             return None
 
         account_email = (account.email_address or "").strip().lower()
+        sender_filter = (get_settings().gmail_support_sender_filter or "").strip().lower()
         candidates: list[tuple[int, int, str]] = []
         fallbacks: list[tuple[int, int, str]] = []
         for index, item in enumerate(messages):
@@ -424,10 +425,13 @@ class GmailEmailProvider:
                 internal_date = 0
             candidate = (internal_date, index, str(item["id"]))
             fallbacks.append(candidate)
-            if not account_email or account_email not in from_email:
+            if sender_filter:
+                if sender_filter in from_email:
+                    candidates.append(candidate)
+            elif not account_email or account_email not in from_email:
                 candidates.append(candidate)
 
-        chosen = max(candidates or fallbacks, default=None)
+        chosen = max(candidates if sender_filter else candidates or fallbacks, default=None)
         if chosen is None:
             return None
         return self.get_message_for_account_payload(

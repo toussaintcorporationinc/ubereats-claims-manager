@@ -474,15 +474,15 @@ class StoredPreviewFile:
 
 async def store_preview_upload(batch_id: int, file: UploadFile) -> StoredPreviewFile:
     filename = safe_original_filename(file.filename or "fichier")
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Smart import file cannot be empty")
-    max_size = get_settings().import_max_file_size_mb * 1024 * 1024
-    if len(content) > max_size:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Smart import file is too large")
     suffix = file_extension(filename)
     if suffix not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported smart import file type")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Smart import file cannot be empty")
+    max_size = max_preview_size_bytes(suffix)
+    if len(content) > max_size:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Smart import file is too large")
 
     storage_root = ensure_smart_import_storage_root()
     relative_dir = Path("smart_import") / "previews" / f"batch_{batch_id}"
@@ -502,6 +502,15 @@ async def store_preview_upload(batch_id: int, file: UploadFile) -> StoredPreview
         file_size=len(content),
         checksum_sha256=digest,
     )
+
+
+def max_preview_size_bytes(suffix: str) -> int:
+    settings = get_settings()
+    if suffix == "zip":
+        return settings.bulk_evidence_max_zip_size_mb * 1024 * 1024
+    if suffix in IMAGE_EXTENSIONS or suffix == "pdf":
+        return settings.bulk_evidence_max_file_size_mb * 1024 * 1024
+    return settings.import_max_file_size_mb * 1024 * 1024
 
 
 def ensure_smart_import_storage_root() -> Path:

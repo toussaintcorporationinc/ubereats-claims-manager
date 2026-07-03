@@ -64,8 +64,18 @@ class FakeAutopilotGmailProvider:
         to_email: str,
         include_evidence: bool,
     ) -> EmailProviderDraft:
+        account = db.scalar(
+            select(EmailAccount)
+            .where(
+                EmailAccount.user_id == user.id,
+                EmailAccount.provider == "gmail",
+                EmailAccount.disconnected_at.is_(None),
+            )
+            .order_by(EmailAccount.id.asc())
+        )
         provider_draft = EmailProviderDraft(
             email_draft_id=email_draft.id,
+            email_account_id=account.id if account else None,
             provider="gmail",
             provider_draft_id=f"fake-autopilot-{email_draft.id}-{utc_now().timestamp()}",
             provider_thread_id=f"fake-thread-{email_draft.id}",
@@ -388,6 +398,63 @@ def test_autopilot_respects_per_restaurant_limit(
 
     assert response.status_code == 201
     assert response.json()["actions"][0]["skipped_reason"] == "per_restaurant_daily_limit_reached"
+    get_settings.cache_clear()
+
+
+def test_autopilot_respects_per_gmail_account_daily_limit(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("EMAIL_PROVIDER_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_INITIAL_CLAIMS_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_DAILY_SEND_LIMIT", "50")
+    monkeypatch.setenv("AUTOPILOT_PER_GMAIL_ACCOUNT_DAILY_LIMIT", "1")
+    get_settings.cache_clear()
+    restaurant = create_restaurant(client)
+    old_order = create_ready_order(client, restaurant["id"], "AUTO-OLD-SENT")
+    create_ready_order(client, restaurant["id"], "AUTO-GMAIL-LIMIT")
+    account = add_gmail_account(db_session)
+    old_order_model = db_session.get(ClaimOrder, old_order["order_id"])
+    assert old_order_model is not None
+    old_order_model.status = "sent"
+    existing_draft = EmailDraft(
+        order_id=old_order["order_id"],
+        draft_type="initial_claim",
+        subject="Existing sent draft",
+        body="Already sent today.",
+        status="created",
+    )
+    db_session.add(existing_draft)
+    db_session.flush()
+    db_session.add(
+        EmailProviderDraft(
+            email_draft_id=existing_draft.id,
+            email_account_id=account.id,
+            provider="gmail",
+            provider_draft_id="already-sent-today",
+            provider_thread_id="thread-already-sent",
+            provider_message_id="message-already-sent",
+            to_email="restaurantsfrance@uber.com",
+            subject=existing_draft.subject,
+            status="sent",
+            created_by_user_id=1,
+            sent_by_user_id=1,
+            sent_at=utc_now(),
+        )
+    )
+    db_session.commit()
+
+    response = client.post("/v1/autopilot/run", json={"mode": "initial_claims", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["run"]["sent_count"] == 0
+    assert payload["actions"][0]["skipped_reason"] == "gmail_account_daily_limit_reached"
+    sent_drafts = db_session.scalars(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent")).all()
+    assert len(sent_drafts) == 1
     get_settings.cache_clear()
 
 
