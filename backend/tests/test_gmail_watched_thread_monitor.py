@@ -15,6 +15,7 @@ from app.models import (
     EmailAccount,
     EmailDraft,
     EmailProviderDraft,
+    EvidenceFile,
     EvidenceRequestTask,
     GmailResponseAnalysis,
     GmailStarredWorkItem,
@@ -1288,6 +1289,61 @@ def test_evidence_request_in_watched_thread_creates_task(
     assert proof_item is not None
     assert proof_item.status == "evidence_needed"
     assert result.evidence_requests >= 1
+
+
+def test_evidence_request_with_existing_proof_sends_gmail_reply(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    db_session.add(
+        EvidenceFile(
+            order_id=order.id,
+            evidence_type="preparation_proof",
+            original_filename="ticket.jpg",
+            storage_path="restaurant_1/order_1/ticket.jpg",
+            storage_backend="local",
+            mime_type="image/jpeg",
+            file_size=123,
+        )
+    )
+    db_session.commit()
+    provider = FakeWatchedGmailProvider()
+    provider.starred_payloads = [payload("star-1", starred=True)]
+    provider.thread_payloads = {
+        "thread-f93ba": [
+            payload("star-1", starred=True),
+            payload("reply-proof-1", body="Merci de fournir une preuve pour la commande F93BA."),
+        ]
+    }
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(db_session, owner, account)
+    proof_item = db_session.scalar(
+        select(GmailStarredWorkItem).where(GmailStarredWorkItem.provider_message_id == "reply-proof-1")
+    )
+
+    assert result.evidence_requests >= 1
+    assert result.autopilot_sent_count == 1, proof_item.reason if proof_item else None
+    assert result.autopilot_skipped_count == 0, proof_item.reason if proof_item else None
+    assert len(provider.created_drafts) == 1
+    assert len(provider.sent_drafts) == 1
+    draft = db_session.scalar(select(EmailDraft).where(EmailDraft.draft_type == "proof_reply"))
+    assert draft is not None
+    provider_draft = db_session.get(EmailProviderDraft, provider.sent_drafts[0])
+    assert provider_draft is not None
+    assert provider_draft.status == "sent"
+    assert provider_draft.provider_thread_id == "thread-f93ba"
+    assert proof_item is not None
+    assert proof_item.reason == "gmail_proof_reply_sent"
+    task = db_session.scalar(select(EvidenceRequestTask).where(EvidenceRequestTask.order_id == order.id))
+    assert task is not None
+    assert task.status == "completed"
 
 
 def test_watched_thread_monitor_does_not_duplicate_work_items(

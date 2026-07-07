@@ -47,7 +47,7 @@ def create_email_draft(db: Session, order_id: int, draft_type: str, user_id: int
         raise EmailDraftNotFoundError("Order not found")
 
     previous_status = order.status
-    if previous_status in FINAL_CLAIM_STATUSES:
+    if previous_status in FINAL_CLAIM_STATUSES and not (draft_type == "proof_reply" and previous_status == "refused"):
         raise EmailDraftBusinessError(
             "Email draft generation is not allowed for a final claim status",
             ["final_status_cannot_generate_email_draft"],

@@ -15,6 +15,8 @@ from app.models import (
     AppealAttempt,
     ClaimOrder,
     EmailAccount,
+    EmailDraft,
+    EmailProviderDraft,
     EvidenceRequestTask,
     GmailResponseAnalysis,
     GmailStarredWorkItem,
@@ -25,6 +27,7 @@ from app.models import (
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.email_provider import EmailProvider, EmailProviderError, InboundEmailPayload
+from app.services.email_draft_service import EmailDraftBusinessError, create_email_draft
 from app.services.gmail_inbound_sync_service import (
     GMAIL_STARRED_URGENT_QUERIES,
     GmailInboundSyncResult,
@@ -307,7 +310,7 @@ class GmailWatchedThreadMonitorService:
         result.actionable_refused_threads = self.count_actionable_refused_threads(db, account)
 
         if self.settings.gmail_inbound_auto_sync_run_autopilot:
-            self.send_pending_refused_replies(
+            self.send_pending_actionable_replies(
                 db,
                 user,
                 account,
@@ -317,7 +320,7 @@ class GmailWatchedThreadMonitorService:
         result.errors.extend(sync_result.errors)
         return result
 
-    def send_pending_refused_replies(
+    def send_pending_actionable_replies(
         self,
         db: Session,
         user: User,
@@ -326,11 +329,11 @@ class GmailWatchedThreadMonitorService:
         result: GmailWatchedThreadMonitorResult,
         max_items: int,
     ) -> int:
-        """Send same-thread Gmail relances for refused watched work items.
+        """Send same-thread Gmail relances for actionable watched work items.
 
         This intentionally avoids the historical global AutoPilot scan. The Gmail
         worker must keep moving through thousands of starred threads, so it only
-        handles the refused items that are already in the watched-thread queue.
+        handles items that are already in the watched-thread queue.
         """
         if max_items <= 0:
             return 0
@@ -345,7 +348,7 @@ class GmailWatchedThreadMonitorService:
                 .where(
                     GmailStarredWorkItem.email_account_id == account.id,
                     GmailStarredWorkItem.inbound_message_id.is_not(None),
-                    GmailStarredWorkItem.status == "refused",
+                    GmailStarredWorkItem.status.in_(["refused", "evidence_needed"]),
                     GmailWatchedThread.status.in_(["active", "manual_review"]),
                     GmailWatchedThread.star_active.is_(True),
                 )
@@ -369,10 +372,24 @@ class GmailWatchedThreadMonitorService:
                 item.processed_at = utc_now()
                 result.autopilot_skipped_count += 1
                 continue
-            if self.send_refused_reply_for_work_item(db, user, account, watched, item, message, result):
+            if self.send_actionable_reply_for_work_item(db, user, account, watched, item, message, result):
                 sent_threads.add(watched.gmail_thread_id)
                 sent_count += 1
         return sent_count
+
+    def send_actionable_reply_for_work_item(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        watched: GmailWatchedThread,
+        item: GmailStarredWorkItem,
+        message: InboundEmailMessage,
+        result: GmailWatchedThreadMonitorResult,
+    ) -> bool:
+        if item.status == "evidence_needed":
+            return self.send_evidence_reply_for_work_item(db, user, account, watched, item, message, result)
+        return self.send_refused_reply_for_work_item(db, user, account, watched, item, message, result)
 
     def send_refused_reply_for_work_item(
         self,
@@ -479,6 +496,159 @@ class GmailWatchedThreadMonitorService:
         )
         db.flush()
         return True
+
+    def send_evidence_reply_for_work_item(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        watched: GmailWatchedThread,
+        item: GmailStarredWorkItem,
+        message: InboundEmailMessage,
+        result: GmailWatchedThreadMonitorResult,
+    ) -> bool:
+        if not self.settings.autopilot_enabled or not self.settings.autopilot_appeals_enabled:
+            item.reason = "autopilot_disabled"
+            result.autopilot_skipped_count += 1
+            return False
+
+        order = message.order or (db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else None)
+        if order is None:
+            order = self.repair_watched_thread_from_payloads(
+                db,
+                user,
+                watched,
+                self.fetch_thread_payloads(db, account, watched, prefer_full_thread=True),
+            )
+        if order is None:
+            item.reason = "missing_linked_order_for_proof_reply"
+            result.autopilot_skipped_count += 1
+            return False
+        if message.order_id is None:
+            message.order_id = order.id
+        if watched.claim_order_id is None:
+            watched.claim_order_id = order.id
+            watched.linked_case_type = "claim_order"
+            watched.linked_case_id = order.id
+
+        provider_draft = self.latest_proof_reply_provider_draft(db, order.id, watched.gmail_thread_id)
+        if provider_draft and provider_draft.status == "sent":
+            item.reason = "already_replied_to_evidence_request"
+            result.autopilot_skipped_count += 1
+            return False
+        if provider_draft and provider_draft.status == "send_requested":
+            item.reason = "proof_reply_send_already_requested"
+            result.autopilot_skipped_count += 1
+            return False
+
+        try:
+            if provider_draft is None or provider_draft.status != "provider_draft_created":
+                draft = create_email_draft(db, order.id, "proof_reply", user_id=user.id)
+                provider_draft = self.provider.create_draft(
+                    db,
+                    user,
+                    draft,
+                    to_email=safe_autopilot_recipient(),
+                    include_evidence=True,
+                )
+                db.flush()
+
+            send_provider_draft(
+                db,
+                user,
+                provider_draft,
+                self.provider,
+                order_status_after_send=order.status,
+                require_reply_thread=True,
+            )
+        except EmailDraftBusinessError as exc:
+            reason = exc.blocking_reasons[0] if exc.blocking_reasons else exc.message
+            item.reason = f"proof_reply_blocked:{reason}"
+            result.autopilot_skipped_count += 1
+            return False
+        except AutopilotError as exc:
+            if exc.message == "gmail_account_daily_limit_reached":
+                item.reason = exc.message
+                result.autopilot_skipped_count += 1
+                return False
+            item.reason = f"proof_reply_send_blocked:{exc.message}"
+            result.autopilot_failed_count += 1
+            result.errors.append(f"proof_reply_send:{exc.message}")
+            return False
+        except Exception as exc:  # noqa: BLE001 - one Gmail thread must not stop the queue.
+            logger.exception("Unable to send Gmail proof reply for watched thread %s", watched.gmail_thread_id)
+            item.reason = f"proof_reply_send_failed:{str(exc)[:120]}"
+            result.autopilot_failed_count += 1
+            result.errors.append(f"proof_reply_send:{str(exc)[:160]}")
+            return False
+
+        item.reason = "gmail_proof_reply_sent"
+        self.complete_evidence_request_tasks_after_reply(db, user, order)
+        result.autopilot_sent_count += 1
+        add_audit_log(
+            db,
+            entity_type="gmail_watched_thread",
+            entity_id=watched.id,
+            action="gmail_watched_thread.evidence_reply_sent",
+            user_id=user.id,
+            new_value={
+                "gmail_thread_id": watched.gmail_thread_id,
+                "provider_message_id": message.provider_message_id,
+                "order_id": order.id,
+            },
+        )
+        db.flush()
+        return True
+
+    def complete_evidence_request_tasks_after_reply(
+        self,
+        db: Session,
+        user: User,
+        order: ClaimOrder,
+    ) -> None:
+        tasks = list(
+            db.scalars(
+                select(EvidenceRequestTask).where(
+                    EvidenceRequestTask.order_id == order.id,
+                    EvidenceRequestTask.task_type == "evidence_review",
+                    EvidenceRequestTask.status.in_(["pending", "uploaded"]),
+                )
+            ).all()
+        )
+        completed_at = utc_now()
+        for task in tasks:
+            previous_status = task.status
+            task.status = "completed"
+            task.completed_by_user_id = user.id
+            task.completed_at = completed_at
+            add_audit_log(
+                db,
+                entity_type="evidence_request_task",
+                entity_id=task.id,
+                action="evidence_task.completed_by_gmail_proof_reply",
+                user_id=user.id,
+                old_value={"status": previous_status},
+                new_value={"status": task.status, "order_id": order.id},
+            )
+
+    def latest_proof_reply_provider_draft(
+        self,
+        db: Session,
+        order_id: int,
+        gmail_thread_id: str,
+    ) -> EmailProviderDraft | None:
+        return db.scalar(
+            select(EmailProviderDraft)
+            .join(EmailDraft, EmailDraft.id == EmailProviderDraft.email_draft_id)
+            .where(
+                EmailDraft.order_id == order_id,
+                EmailDraft.draft_type == "proof_reply",
+                EmailProviderDraft.provider == "gmail",
+                EmailProviderDraft.provider_thread_id == gmail_thread_id,
+            )
+            .order_by(EmailProviderDraft.id.desc())
+            .limit(1)
+        )
 
     def latest_attempt_for_refusal_message(
         self,
