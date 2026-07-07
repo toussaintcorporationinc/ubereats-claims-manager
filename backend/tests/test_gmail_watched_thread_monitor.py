@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.models import (
     AppealAttempt,
+    AppealWorkflow,
     ClaimOrder,
     EmailAccount,
     EmailDraft,
@@ -773,6 +774,123 @@ def test_refused_watched_thread_repairs_missing_order_from_thread_text_before_re
     }
     assert "gmail_reply_sent" in work_item_reasons
     assert "uber_refusal" in work_item_reasons
+
+
+def test_already_replied_refusal_leaves_actionable_queue(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    inbound = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=order.id,
+        provider="gmail",
+        provider_message_id="reply-refused-already-sent",
+        provider_thread_id="thread-f93ba",
+        gmail_history_id="history-reply-refused-already-sent",
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject="Re: Contestation de remboursement de commande F93BA",
+        snippet="Nous maintenons le refus.",
+        body_text="Nous maintenons le refus pour la commande F93BA.",
+        received_at=utc_now(),
+        raw_headers_json={},
+        provider_labels_json=["INBOX", "STARRED"],
+        match_status="linked",
+        match_reason="order_number_match",
+        review_status="reviewed",
+    )
+    db_session.add(inbound)
+    db_session.flush()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-f93ba",
+        first_starred_message_id="star-1",
+        claim_order_id=order.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.flush()
+    draft = EmailDraft(
+        order_id=order.id,
+        draft_type="appeal_generic_refusal",
+        subject="Re: Contestation de remboursement de commande F93BA",
+        body="Bonjour, je conteste.",
+        status="created",
+    )
+    db_session.add(draft)
+    db_session.flush()
+    provider_draft = EmailProviderDraft(
+        email_draft_id=draft.id,
+        email_account_id=account.id,
+        provider="gmail",
+        provider_draft_id="draft-already-sent",
+        provider_thread_id="thread-f93ba",
+        provider_message_id="sent-already",
+        to_email="restaurantsfrance@uber.com",
+        subject=draft.subject,
+        status="sent",
+        sent_at=utc_now(),
+        created_by_user_id=owner.id,
+    )
+    db_session.add(provider_draft)
+    db_session.flush()
+    workflow = AppealWorkflow(
+        case_type="claim_order",
+        case_id=order.id,
+        restaurant_id=order.restaurant_id,
+        claim_order_id=order.id,
+        status="appeal_sent",
+        next_action_type="send_manual_appeal",
+    )
+    db_session.add(workflow)
+    db_session.flush()
+    db_session.add(
+        AppealAttempt(
+            workflow_id=workflow.id,
+            attempt_number=1,
+            appeal_type="first_appeal",
+            status="sent",
+            based_on_refusal_message_id=inbound.id,
+            email_draft_id=draft.id,
+            provider_draft_id=provider_draft.id,
+            created_by_user_id=owner.id,
+        )
+    )
+    item = GmailStarredWorkItem(
+        watched_thread_id=watched.id,
+        email_account_id=account.id,
+        gmail_thread_id="thread-f93ba",
+        provider_message_id="reply-refused-already-sent",
+        inbound_message_id=inbound.id,
+        status="refused",
+        reason="uber_refusal",
+        processed_at=utc_now(),
+    )
+    db_session.add(item)
+    db_session.commit()
+
+    result = GmailWatchedThreadMonitorService(FakeWatchedGmailProvider()).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    db_session.refresh(item)
+    assert result.autopilot_sent_count == 0
+    assert result.autopilot_skipped_count == 1
+    assert item.status == "skipped"
+    assert item.reason == "already_replied_to_refusal"
 
 
 def test_non_starred_positive_reply_in_watched_thread_is_processed_and_star_removed(

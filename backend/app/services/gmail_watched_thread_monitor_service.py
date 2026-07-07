@@ -416,6 +416,7 @@ class GmailWatchedThreadMonitorService:
             )
         if order is None:
             item.reason = "missing_linked_order_for_starred_reply"
+            self.mark_work_item_manual_review(db, item)
             result.autopilot_skipped_count += 1
             return False
         if message.order_id is None:
@@ -428,10 +429,12 @@ class GmailWatchedThreadMonitorService:
         existing_attempt = self.latest_attempt_for_refusal_message(db, message)
         if existing_attempt and existing_attempt.provider_draft and existing_attempt.provider_draft.status == "sent":
             item.reason = "already_replied_to_refusal"
+            self.mark_work_item_skipped(db, item)
             result.autopilot_skipped_count += 1
             return False
         if existing_attempt and existing_attempt.provider_draft and existing_attempt.provider_draft.status == "send_requested":
             item.reason = "reply_send_already_requested"
+            self.mark_work_item_skipped(db, item)
             result.autopilot_skipped_count += 1
             return False
 
@@ -522,6 +525,7 @@ class GmailWatchedThreadMonitorService:
             )
         if order is None:
             item.reason = "missing_linked_order_for_proof_reply"
+            self.mark_work_item_manual_review(db, item)
             result.autopilot_skipped_count += 1
             return False
         if message.order_id is None:
@@ -534,10 +538,12 @@ class GmailWatchedThreadMonitorService:
         provider_draft = self.latest_proof_reply_provider_draft(db, order.id, watched.gmail_thread_id)
         if provider_draft and provider_draft.status == "sent":
             item.reason = "already_replied_to_evidence_request"
+            self.mark_work_item_skipped(db, item)
             result.autopilot_skipped_count += 1
             return False
         if provider_draft and provider_draft.status == "send_requested":
             item.reason = "proof_reply_send_already_requested"
+            self.mark_work_item_skipped(db, item)
             result.autopilot_skipped_count += 1
             return False
 
@@ -564,6 +570,7 @@ class GmailWatchedThreadMonitorService:
         except EmailDraftBusinessError as exc:
             reason = exc.blocking_reasons[0] if exc.blocking_reasons else exc.message
             item.reason = f"proof_reply_blocked:{reason}"
+            self.mark_work_item_manual_review(db, item)
             result.autopilot_skipped_count += 1
             return False
         except AutopilotError as exc:
@@ -599,6 +606,20 @@ class GmailWatchedThreadMonitorService:
         )
         db.flush()
         return True
+
+    @staticmethod
+    def mark_work_item_skipped(db: Session, item: GmailStarredWorkItem) -> None:
+        item.status = "skipped"
+        item.processed_at = utc_now()
+        item.updated_at = item.processed_at
+        db.flush()
+
+    @staticmethod
+    def mark_work_item_manual_review(db: Session, item: GmailStarredWorkItem) -> None:
+        item.status = "manual_review"
+        item.processed_at = utc_now()
+        item.updated_at = item.processed_at
+        db.flush()
 
     def complete_evidence_request_tasks_after_reply(
         self,
