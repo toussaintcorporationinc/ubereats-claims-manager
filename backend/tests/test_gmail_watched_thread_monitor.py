@@ -26,6 +26,7 @@ from app.models import (
     User,
 )
 from app.models.domain import utc_now
+from app.services.appeal_workflow_service import AppealWorkflowError
 from app.services.email_provider import EmailSendResult, InboundEmailPayload
 from app.services import autopilot_identity_repair_service as identity_repair_service
 from app.services.gmail_inbound_sync_service import (
@@ -644,7 +645,87 @@ def test_existing_refused_watched_thread_sends_same_thread_reply_without_global_
     assert provider_draft.provider_thread_id == "thread-f93ba"
     work_item = db_session.scalar(select(GmailStarredWorkItem))
     assert work_item is not None
+    assert work_item.status == "processed"
     assert work_item.reason == "gmail_reply_sent"
+
+
+def test_refused_reply_already_sent_workflow_after_provider_send_counts_as_success(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    inbound = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=order.id,
+        provider="gmail",
+        provider_message_id="reply-refused-workflow-already-sent",
+        provider_thread_id="thread-f93ba",
+        gmail_history_id="history-reply-refused-workflow-already-sent",
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject="Re: Contestation de remboursement de commande F93BA",
+        snippet="Nous maintenons le refus.",
+        body_text="Nous maintenons le refus pour la commande F93BA.",
+        received_at=utc_now(),
+        raw_headers_json={},
+        provider_labels_json=["INBOX", "STARRED"],
+        match_status="linked",
+        match_reason="order_number_match",
+        review_status="reviewed",
+    )
+    db_session.add(inbound)
+    db_session.flush()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-f93ba",
+        first_starred_message_id="star-1",
+        claim_order_id=order.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.flush()
+    item = GmailStarredWorkItem(
+        watched_thread_id=watched.id,
+        email_account_id=account.id,
+        gmail_thread_id="thread-f93ba",
+        provider_message_id="reply-refused-workflow-already-sent",
+        inbound_message_id=inbound.id,
+        status="refused",
+        reason="uber_refusal",
+        processed_at=utc_now(),
+    )
+    db_session.add(item)
+    db_session.commit()
+
+    def raise_already_sent(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AppealWorkflowError("Appeal attempt is already marked as sent", 409)
+
+    monkeypatch.setattr(
+        "app.services.gmail_watched_thread_monitor_service.mark_appeal_sent",
+        raise_already_sent,
+    )
+
+    result = GmailWatchedThreadMonitorService(FakeWatchedGmailProvider()).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    db_session.refresh(item)
+    assert result.autopilot_sent_count == 1
+    assert result.autopilot_failed_count == 0
+    assert item.status == "processed"
+    assert item.reason == "gmail_reply_sent"
 
 
 def test_refused_watched_thread_repairs_missing_order_from_thread_text_before_reply(
@@ -1458,6 +1539,7 @@ def test_evidence_request_with_existing_proof_sends_gmail_reply(
     assert provider_draft.status == "sent"
     assert provider_draft.provider_thread_id == "thread-f93ba"
     assert proof_item is not None
+    assert proof_item.status == "processed"
     assert proof_item.reason == "gmail_proof_reply_sent"
     task = db_session.scalar(select(EvidenceRequestTask).where(EvidenceRequestTask.order_id == order.id))
     assert task is not None

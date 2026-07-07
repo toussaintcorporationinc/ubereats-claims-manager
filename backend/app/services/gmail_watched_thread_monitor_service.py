@@ -37,7 +37,7 @@ from app.services.gmail_inbound_sync_service import (
 )
 from app.services.gmail_quota import parse_gmail_retry_after
 from app.services.autopilot_identity_repair_service import find_or_create_order_from_starred_text
-from app.services.appeal_workflow_service import ensure_workflow_for_claim_order, mark_appeal_sent
+from app.services.appeal_workflow_service import AppealWorkflowError, ensure_workflow_for_claim_order, mark_appeal_sent
 from app.services.autopilot_service import (
     AutopilotError,
     create_starred_thread_reply_attempt,
@@ -466,7 +466,12 @@ class GmailWatchedThreadMonitorService:
                 order_status_after_send=None,
                 require_reply_thread=True,
             )
-            mark_appeal_sent(db, workflow=workflow, user=user)
+            if attempt.status != "sent":
+                try:
+                    mark_appeal_sent(db, workflow=workflow, user=user)
+                except AppealWorkflowError as exc:
+                    if exc.message != "Appeal attempt is already marked as sent":
+                        raise
         except AutopilotError as exc:
             if exc.message == "gmail_account_daily_limit_reached":
                 item.reason = exc.message
@@ -484,6 +489,7 @@ class GmailWatchedThreadMonitorService:
             return False
 
         item.reason = "gmail_reply_sent"
+        self.mark_work_item_processed(item)
         result.autopilot_sent_count += 1
         add_audit_log(
             db,
@@ -590,6 +596,7 @@ class GmailWatchedThreadMonitorService:
             return False
 
         item.reason = "gmail_proof_reply_sent"
+        self.mark_work_item_processed(item)
         self.complete_evidence_request_tasks_after_reply(db, user, order)
         result.autopilot_sent_count += 1
         add_audit_log(
@@ -620,6 +627,12 @@ class GmailWatchedThreadMonitorService:
         item.processed_at = utc_now()
         item.updated_at = item.processed_at
         db.flush()
+
+    @staticmethod
+    def mark_work_item_processed(item: GmailStarredWorkItem) -> None:
+        item.status = "processed"
+        item.processed_at = utc_now()
+        item.updated_at = item.processed_at
 
     def complete_evidence_request_tasks_after_reply(
         self,
