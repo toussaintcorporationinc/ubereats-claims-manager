@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 import unicodedata
 
-from sqlalchemy import String, cast, func, select
+from sqlalchemy import String, case, cast, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -353,6 +353,11 @@ class GmailWatchedThreadMonitorService:
                     GmailWatchedThread.star_active.is_(True),
                 )
                 .order_by(
+                    case(
+                        (GmailStarredWorkItem.status == "refused", 0),
+                        (GmailStarredWorkItem.status == "evidence_needed", 1),
+                        else_=2,
+                    ),
                     GmailStarredWorkItem.processed_at.asc().nullsfirst(),
                     GmailStarredWorkItem.id.asc(),
                 )

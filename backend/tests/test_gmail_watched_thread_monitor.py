@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Generator
 
@@ -727,6 +727,118 @@ def test_refused_reply_already_sent_workflow_after_provider_send_counts_as_succe
     assert result.autopilot_failed_count == 0
     assert item.status == "processed"
     assert item.reason == "gmail_reply_sent"
+
+
+def test_refused_work_items_are_sent_before_older_evidence_requests(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    old_evidence_message = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=order.id,
+        provider="gmail",
+        provider_message_id="reply-proof-older",
+        provider_thread_id="thread-proof-older",
+        gmail_history_id="history-proof-older",
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject="Re: Preuve commande F93BA",
+        snippet="Merci de fournir une preuve.",
+        body_text="Merci de fournir une preuve pour cette commande.",
+        received_at=utc_now() - timedelta(days=2),
+        raw_headers_json={},
+        provider_labels_json=["INBOX", "STARRED"],
+        match_status="linked",
+        match_reason="order_number_match",
+        review_status="reviewed",
+    )
+    refusal_message = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=order.id,
+        provider="gmail",
+        provider_message_id="reply-refused-newer",
+        provider_thread_id="thread-refused-newer",
+        gmail_history_id="history-refused-newer",
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject="Re: Refus commande F93BA",
+        snippet="Nous maintenons le refus.",
+        body_text="Nous maintenons le refus pour la commande F93BA.",
+        received_at=utc_now(),
+        raw_headers_json={},
+        provider_labels_json=["INBOX", "STARRED"],
+        match_status="linked",
+        match_reason="order_number_match",
+        review_status="reviewed",
+    )
+    db_session.add_all([old_evidence_message, refusal_message])
+    db_session.flush()
+    old_evidence_thread = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-proof-older",
+        first_starred_message_id="reply-proof-older",
+        claim_order_id=order.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="active",
+        star_active=True,
+    )
+    refusal_thread = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-refused-newer",
+        first_starred_message_id="reply-refused-newer",
+        claim_order_id=order.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="active",
+        star_active=True,
+    )
+    db_session.add_all([old_evidence_thread, refusal_thread])
+    db_session.flush()
+    evidence_item = GmailStarredWorkItem(
+        watched_thread_id=old_evidence_thread.id,
+        email_account_id=account.id,
+        gmail_thread_id="thread-proof-older",
+        provider_message_id="reply-proof-older",
+        inbound_message_id=old_evidence_message.id,
+        status="evidence_needed",
+        reason="evidence_requested",
+        processed_at=utc_now() - timedelta(days=2),
+    )
+    refused_item = GmailStarredWorkItem(
+        watched_thread_id=refusal_thread.id,
+        email_account_id=account.id,
+        gmail_thread_id="thread-refused-newer",
+        provider_message_id="reply-refused-newer",
+        inbound_message_id=refusal_message.id,
+        status="refused",
+        reason="uber_refusal",
+        processed_at=utc_now(),
+    )
+    db_session.add_all([evidence_item, refused_item])
+    db_session.commit()
+
+    result = GmailWatchedThreadMonitorResult()
+    GmailWatchedThreadMonitorService(FakeWatchedGmailProvider()).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=1,
+    )
+
+    db_session.refresh(evidence_item)
+    db_session.refresh(refused_item)
+    assert result.autopilot_sent_count == 1
+    assert refused_item.status == "processed"
+    assert refused_item.reason == "gmail_reply_sent"
+    assert evidence_item.status == "evidence_needed"
 
 
 def test_refused_watched_thread_repairs_missing_order_from_thread_text_before_reply(
