@@ -408,12 +408,19 @@ class GmailWatchedThreadMonitorService:
 
         order = message.order or (db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else None)
         if order is None:
-            order = self.repair_watched_thread_from_payloads(
-                db,
-                user,
-                watched,
-                self.fetch_thread_payloads(db, account, watched, prefer_full_thread=True),
-            )
+            try:
+                order = self.repair_watched_thread_from_payloads(
+                    db,
+                    user,
+                    watched,
+                    self.fetch_thread_payloads(db, account, watched, prefer_full_thread=True),
+                )
+            except Exception as exc:  # noqa: BLE001 - one missing Gmail thread must not stop the queue.
+                item.reason = f"identity_repair_failed:{str(exc)[:120]}"
+                self.mark_work_item_manual_review(db, item)
+                result.autopilot_skipped_count += 1
+                result.errors.append(f"identity_repair:{str(exc)[:160]}")
+                return False
         if order is None:
             item.reason = "missing_linked_order_for_starred_reply"
             self.mark_work_item_manual_review(db, item)
@@ -523,12 +530,19 @@ class GmailWatchedThreadMonitorService:
 
         order = message.order or (db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else None)
         if order is None:
-            order = self.repair_watched_thread_from_payloads(
-                db,
-                user,
-                watched,
-                self.fetch_thread_payloads(db, account, watched, prefer_full_thread=True),
-            )
+            try:
+                order = self.repair_watched_thread_from_payloads(
+                    db,
+                    user,
+                    watched,
+                    self.fetch_thread_payloads(db, account, watched, prefer_full_thread=True),
+                )
+            except Exception as exc:  # noqa: BLE001 - one missing Gmail thread must not stop the queue.
+                item.reason = f"proof_reply_identity_repair_failed:{str(exc)[:120]}"
+                self.mark_work_item_manual_review(db, item)
+                result.autopilot_skipped_count += 1
+                result.errors.append(f"proof_reply_identity_repair:{str(exc)[:160]}")
+                return False
         if order is None:
             item.reason = "missing_linked_order_for_proof_reply"
             self.mark_work_item_manual_review(db, item)

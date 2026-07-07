@@ -27,7 +27,7 @@ from app.models import (
 )
 from app.models.domain import utc_now
 from app.services.appeal_workflow_service import AppealWorkflowError
-from app.services.email_provider import EmailSendResult, InboundEmailPayload
+from app.services.email_provider import EmailProviderError, EmailSendResult, InboundEmailPayload
 from app.services import autopilot_identity_repair_service as identity_repair_service
 from app.services.gmail_inbound_sync_service import (
     GMAIL_STARRED_URGENT_QUERIES,
@@ -38,6 +38,7 @@ from app.services.gmail_inbound_sync_service import (
 from app.services.gmail_watched_thread_monitor_service import (
     FAST_CLASSIFICATION_BODY_HEAD_CHARS,
     FAST_CLASSIFICATION_BODY_TAIL_CHARS,
+    GmailWatchedThreadMonitorResult,
     GmailWatchedThreadMonitorService,
     bounded_fast_classification_body,
     classify_unlinked_watched_message,
@@ -972,6 +973,86 @@ def test_already_replied_refusal_leaves_actionable_queue(
     assert result.autopilot_skipped_count == 1
     assert item.status == "skipped"
     assert item.reason == "already_replied_to_refusal"
+
+
+def test_missing_gmail_thread_during_identity_repair_does_not_stop_actionable_queue(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    inbound = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=None,
+        provider="gmail",
+        provider_message_id="reply-missing-thread",
+        provider_thread_id="thread-missing",
+        gmail_history_id="history-reply-missing-thread",
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject="Re: Contestation Uber",
+        snippet="Nous maintenons le refus.",
+        body_text="Nous maintenons le refus.",
+        received_at=utc_now(),
+        raw_headers_json={},
+        provider_labels_json=["INBOX", "STARRED"],
+        match_status="unlinked",
+        match_reason="no_match",
+        review_status="reviewed",
+    )
+    db_session.add(inbound)
+    db_session.flush()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-missing",
+        first_starred_message_id="reply-missing-thread",
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.flush()
+    item = GmailStarredWorkItem(
+        watched_thread_id=watched.id,
+        email_account_id=account.id,
+        gmail_thread_id="thread-missing",
+        provider_message_id="reply-missing-thread",
+        inbound_message_id=inbound.id,
+        status="refused",
+        reason="uber_refusal",
+        processed_at=utc_now(),
+    )
+    db_session.add(item)
+    db_session.commit()
+
+    class MissingThreadProvider(FakeWatchedGmailProvider):
+        def get_thread_messages_for_account(
+            self,
+            db: Session,
+            account: EmailAccount,
+            thread_id: str,
+            *,
+            include_attachments: bool = True,
+        ) -> list[InboundEmailPayload]:
+            raise EmailProviderError("Gmail API error: NOT_FOUND - Requested entity was not found.", 502)
+
+    result = GmailWatchedThreadMonitorResult()
+    GmailWatchedThreadMonitorService(MissingThreadProvider()).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=1,
+    )
+
+    db_session.refresh(item)
+    assert result.autopilot_sent_count == 0
+    assert result.autopilot_skipped_count == 1
+    assert item.status == "manual_review"
+    assert item.reason.startswith("identity_repair_failed:Gmail API error: NOT_FOUND")
 
 
 def test_non_starred_positive_reply_in_watched_thread_is_processed_and_star_removed(
