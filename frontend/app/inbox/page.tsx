@@ -98,7 +98,7 @@ export default function InboxPage() {
     try {
       const result = await api.syncInboundGmail({
         lookback_days: 30,
-        max_messages: 100,
+        max_messages: 500,
         analyze_responses: true,
         apply_reviews: true,
         run_autopilot_after_sync: true,
@@ -118,7 +118,7 @@ export default function InboxPage() {
     setAnalysisResult(null);
 
     try {
-      const result = await api.analyzeInboundGmail({ apply_reviews: true, limit: 100, only_unreviewed: true });
+      const result = await api.analyzeInboundGmail({ apply_reviews: true, limit: 500, only_unreviewed: true });
       setAnalysisResult(result);
       await loadData();
     } catch (apiError) {
