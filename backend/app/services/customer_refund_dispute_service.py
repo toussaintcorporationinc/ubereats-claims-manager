@@ -24,6 +24,7 @@ from app.services.email_draft_service import (
     format_display_date,
     format_restaurant_signature,
     optional_line,
+    restaurant_display_name,
 )
 from app.services.email_provider import EmailProvider, EmailProviderError
 
@@ -512,7 +513,7 @@ def render_customer_refund_template(dispute: UberCustomerRefundDispute, order: C
     return template.format(
         uber_order_number=order.uber_order_number,
         order_identity_phrase=build_order_identity_phrase(order),
-        restaurant_name=order.restaurant.name,
+        restaurant_name=restaurant_display_name(order.restaurant),
         customer_name_line=optional_line("Client", order.customer_name),
         order_date_line=optional_line("Date de commande", format_display_date(order.order_date)),
         customer_refund_amount=f"{dispute.customer_refund_amount:.2f}",

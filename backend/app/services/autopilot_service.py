@@ -47,6 +47,7 @@ from app.services.email_draft_service import (
     format_amount,
     format_display_date,
     format_restaurant_signature,
+    restaurant_display_name,
 )
 from app.services.email_provider import EmailConnectionStatus, EmailProvider, EmailProviderError
 from app.services.followup_policy_service import complete_task_for_sent_provider_draft
@@ -1134,7 +1135,7 @@ def build_starred_thread_reply_body(
         identity_phrase = f"{identity_phrase}, du {date_line}"
     opening = (
         f"Je vous demande de reexaminer le refus concernant {identity_phrase} "
-        f"pour le restaurant {restaurant.name if restaurant else 'le restaurant'}."
+        f"pour le restaurant {restaurant_display_name(restaurant) if restaurant else 'le restaurant'}."
     )
     if is_cancellation:
         argument = (

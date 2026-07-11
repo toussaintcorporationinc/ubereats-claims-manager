@@ -13,6 +13,7 @@ from app.services.email_draft_service import (
     format_amount,
     format_display_date,
     format_restaurant_signature,
+    restaurant_display_name,
 )
 from app.services.refusal_policy_service import template_type_for_policy
 
@@ -120,7 +121,7 @@ def build_appeal_context(
     )
 
     return {
-        "restaurant_name": restaurant.name if restaurant else f"Restaurant #{order.restaurant_id}",
+        "restaurant_name": restaurant_display_name(restaurant) if restaurant else f"Restaurant #{order.restaurant_id}",
         "uber_order_number": display_order_number(order),
         "order_identity_phrase": build_order_identity_phrase(order),
         "customer_name_line": optional_line("Client", order.customer_name),

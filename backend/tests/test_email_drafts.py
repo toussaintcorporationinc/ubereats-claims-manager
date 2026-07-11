@@ -190,6 +190,19 @@ def test_initial_claim_body_contains_required_claim_data(client: TestClient) -> 
     assert draft["subject"] == "Contestation d'annulation de commande - UBER-CONTENT"
 
 
+def test_initial_claim_uses_krousty_master_display_name_for_legacy_alias(client: TestClient) -> None:
+    _, order = create_ready_order(
+        client,
+        restaurant_name="Maître Krousty",
+        uber_order_number="UBER-KROUSTY",
+    )
+
+    draft = create_initial_claim_draft(client, order["id"])
+
+    assert "Krousty Master" in draft["body"]
+    assert "Maître Krousty" not in draft["body"]
+
+
 def test_initial_claim_does_not_invent_optional_missing_data(client: TestClient) -> None:
     _, order = create_ready_order(
         client,

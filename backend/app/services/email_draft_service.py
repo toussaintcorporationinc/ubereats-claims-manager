@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,9 @@ from app.services.audit import add_audit_log
 from app.services.claim_validation_service import FINAL_CLAIM_STATUSES, get_claim_validation_gaps
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates" / "emails"
+RESTAURANT_DISPLAY_NAME_OVERRIDES = {
+    "maitre krousty": "Krousty Master",
+}
 
 DRAFT_SUBJECTS = {
     "initial_claim": "Contestation d'annulation de commande - {uber_order_number}",
@@ -186,7 +190,7 @@ def build_template_context(order: ClaimOrder) -> dict[str, Any]:
     return {
         "uber_order_number": display_order_number(order),
         "order_identity_phrase": build_order_identity_phrase(order),
-        "restaurant_name": restaurant.name,
+        "restaurant_name": restaurant_display_name(restaurant),
         "customer_name_line": optional_line("Client", order.customer_name),
         "order_date_line": optional_line("Date de commande", format_display_date(order.order_date)),
         "order_amount": format_amount(order.order_amount),
@@ -269,7 +273,7 @@ def format_evidence_list(order: ClaimOrder) -> str:
 
 
 def format_restaurant_signature(restaurant: Any) -> str:
-    lines = [restaurant.name or restaurant.sender_email]
+    lines = [restaurant_display_name(restaurant) or restaurant.sender_email]
     if getattr(restaurant, "address", None):
         lines.append(restaurant.address)
     if getattr(restaurant, "phone_number", None):
@@ -277,6 +281,14 @@ def format_restaurant_signature(restaurant: Any) -> str:
     if getattr(restaurant, "sender_email", None):
         lines.append(restaurant.sender_email)
     return "\n".join(line for line in lines if line)
+
+
+def restaurant_display_name(restaurant: Any) -> str:
+    raw_name = str(getattr(restaurant, "name", "") or "").strip()
+    normalized = unicodedata.normalize("NFKD", raw_name)
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    override = RESTAURANT_DISPLAY_NAME_OVERRIDES.get(normalized.casefold())
+    return override or raw_name
 
 
 def render_template(draft_type: str, context: dict[str, Any]) -> str:
