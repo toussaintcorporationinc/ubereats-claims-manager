@@ -106,8 +106,8 @@ export default function DashboardPage() {
         <StatCard label="Traites 24h" value={`${processedLast24h}/${dailyTarget}`} detail={`${progressPercent}% de l'objectif`} />
         <StatCard
           label="Relances 24h"
-          value={warRoom?.sent_relances.length ?? 0}
-          detail={`${warRoom?.summary.refused_responses_last_24h ?? 0} refus detectes`}
+          value={`${warRoom?.summary.sent_relances_last_24h ?? 0}/${warRoom?.summary.daily_send_capacity ?? 0}`}
+          detail={`${warRoom?.summary.remaining_send_capacity_today ?? 0} restantes`}
         />
         <StatCard
           label="Paiements detectes"

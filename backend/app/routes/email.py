@@ -787,7 +787,7 @@ def gmail_inbound_status(
         quota_blocked=quota_blocked,
         quota_retry_after=quota_retry_after,
         quota_seconds_until_retry=quota_seconds_until_retry,
-        daily_processing_target=settings.gmail_daily_processing_target,
+        daily_processing_target=_effective_gmail_daily_processing_target(settings, len(connected_accounts)),
         processed_last_24h=processed_last_24h,
         worker_state=worker_state,
         worker_message=worker_message,
@@ -796,6 +796,17 @@ def gmail_inbound_status(
         last_error=next((state.last_error for state in sync_states if state.last_error), None),
         last_autopilot_blockers=_last_autopilot_blockers(db, current_user),
     )
+
+
+def _effective_gmail_daily_processing_target(settings, connected_accounts_count: int) -> int:
+    configured_target = max(settings.gmail_daily_processing_target, 1)
+    account_count = max(connected_accounts_count, 1)
+    hourly_worker_floor = account_count * max(settings.gmail_watched_threads_batch_per_cycle, 1) * 24
+    return max(configured_target, hourly_worker_floor)
+
+
+def _gmail_daily_send_capacity(settings, connected_accounts_count: int) -> int:
+    return max(connected_accounts_count, 0) * max(settings.autopilot_per_gmail_account_daily_limit, 0)
 
 
 def _labels_include_starred(labels: object) -> bool:
@@ -1173,11 +1184,11 @@ def gmail_war_room(
     current_user: User = Depends(require_owner_or_manager),
     provider: EmailProvider = Depends(get_gmail_provider),
 ) -> GmailWarRoomResponse:
+    settings = get_settings()
     connected_accounts = get_connected_gmail_accounts(db, current_user)
     account_ids = [account.id for account in connected_accounts]
     account_email_by_id = {account.id: account.email_address for account in connected_accounts}
     if refresh and connected_accounts:
-        settings = get_settings()
         sync_service = GmailInboundSyncService(provider)
         monitor = GmailWatchedThreadMonitorService(provider, settings=settings, sync_service=sync_service)
         refresh_batch_limit = min(
@@ -1231,6 +1242,22 @@ def gmail_war_room(
     since_24h = utc_now() - timedelta(hours=24)
     watched_base = select(GmailWatchedThread).where(GmailWatchedThread.email_account_id.in_(account_ids))
     work_base = select(GmailStarredWorkItem).where(GmailStarredWorkItem.email_account_id.in_(account_ids))
+    sent_relances_24h = (
+        int(
+            db.scalar(
+                select(func.count(EmailProviderDraft.id)).where(
+                    EmailProviderDraft.provider == "gmail",
+                    EmailProviderDraft.email_account_id.in_(account_ids),
+                    EmailProviderDraft.status == "sent",
+                    EmailProviderDraft.sent_at >= since_24h,
+                )
+            )
+            or 0
+        )
+        if account_ids
+        else 0
+    )
+    daily_send_capacity = _gmail_daily_send_capacity(settings, len(connected_accounts))
 
     active_watched_threads = int(
         db.scalar(
@@ -1427,6 +1454,7 @@ def gmail_war_room(
             watched_threads_total=watched_threads_total,
             new_messages_detected_last_24h=new_messages_24h,
             processed_messages_last_24h=processed_24h,
+            sent_relances_last_24h=sent_relances_24h,
             positive_responses_last_24h=positive_24h,
             refused_responses_last_24h=refused_24h,
             evidence_requests_last_24h=evidence_24h,
@@ -1434,6 +1462,8 @@ def gmail_war_room(
             manual_review_last_24h=manual_review_24h,
             backlog_remaining=backlog_remaining,
             daily_processing_target=worker_status.daily_processing_target,
+            daily_send_capacity=daily_send_capacity,
+            remaining_send_capacity_today=max(daily_send_capacity - sent_relances_24h, 0),
             processed_progress_percent=processed_progress_percent,
             quota_blocked=worker_status.quota_blocked,
             quota_retry_after=worker_status.quota_retry_after,

@@ -112,6 +112,11 @@ export default function GmailWarRoomPage() {
                 detail={`${dashboard.summary.processed_progress_percent}% de l'objectif`}
               />
               <MetricCard
+                label="Relances 24h"
+                value={`${dashboard.summary.sent_relances_last_24h}/${dashboard.summary.daily_send_capacity}`}
+                detail={`${dashboard.summary.remaining_send_capacity_today} restante(s)`}
+              />
+              <MetricCard
                 label="Refus 24h"
                 value={dashboard.summary.refused_responses_last_24h}
                 detail={`${dashboard.summary.positive_responses_last_24h} positif(s)`}

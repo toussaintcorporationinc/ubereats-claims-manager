@@ -236,6 +236,91 @@ def test_gmail_relance_dashboard_lists_starred_threads_sent_relances_and_actions
     assert payload["recent_actions"][0]["action_type"] == "send_appeal"
 
 
+def test_gmail_war_room_scales_processing_target_and_send_capacity(
+    client: TestClient,
+    db_session: Session,
+    gmail_dashboard_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GMAIL_DAILY_PROCESSING_TARGET", "1000")
+    monkeypatch.setenv("GMAIL_WATCHED_THREADS_BATCH_PER_CYCLE", "100")
+    monkeypatch.setenv("AUTOPILOT_PER_GMAIL_ACCOUNT_DAILY_LIMIT", "500")
+    get_settings.cache_clear()
+
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+    restaurant = Restaurant(
+        name="Frit Dodo",
+        address="108 Avenue du Marechal Foch, Meaux, 77100",
+        phone_number="0605807385",
+        sender_email="tiramisumaisonfrance@gmail.com",
+        autopilot_enabled=True,
+    )
+    db_session.add(restaurant)
+    db_session.flush()
+    order = ClaimOrder(
+        restaurant_id=restaurant.id,
+        uber_order_number="F93BA",
+        customer_name="Yoann O.",
+        order_date=date(2026, 6, 18),
+        order_amount=Decimal("24.99"),
+        currency="EUR",
+        status="refused",
+    )
+    db_session.add(order)
+    accounts = [
+        EmailAccount(
+            user_id=owner.id,
+            provider="gmail",
+            email_address="tiramisumaisonfrance@gmail.com",
+            connected_at=utc_now(),
+        ),
+        EmailAccount(
+            user_id=owner.id,
+            provider="gmail",
+            email_address="toussaintetchau1@gmail.com",
+            connected_at=utc_now(),
+        ),
+    ]
+    db_session.add_all(accounts)
+    db_session.flush()
+    email_draft = EmailDraft(
+        order_id=order.id,
+        draft_type="followup_1",
+        subject="Re: Contestation de remboursement de commande",
+        body="Bonjour, merci de reexaminer le dossier.",
+        status="ready",
+    )
+    db_session.add(email_draft)
+    db_session.flush()
+    db_session.add(
+        EmailProviderDraft(
+            email_draft_id=email_draft.id,
+            email_account_id=accounts[0].id,
+            provider="gmail",
+            provider_draft_id="draft-1",
+            provider_thread_id="gmail-thread-1",
+            provider_message_id="sent-1",
+            to_email="restaurantsfrance@uber.com",
+            subject=email_draft.subject,
+            status="sent",
+            created_by_user_id=owner.id,
+            sent_by_user_id=owner.id,
+            sent_at=utc_now(),
+        )
+    )
+    db_session.commit()
+
+    response = client.get("/v1/email/gmail/war-room?limit=10")
+
+    assert response.status_code == 200
+    summary = response.json()["summary"]
+    assert summary["daily_processing_target"] == 4800
+    assert summary["daily_send_capacity"] == 1000
+    assert summary["sent_relances_last_24h"] == 1
+    assert summary["remaining_send_capacity_today"] == 999
+
+
 def test_gmail_relance_dashboard_counts_old_starred_threads_outside_recent_noise(
     client: TestClient,
     db_session: Session,

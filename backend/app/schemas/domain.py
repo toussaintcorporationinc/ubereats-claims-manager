@@ -916,6 +916,7 @@ class GmailWatchedThreadSummary(BaseModel):
     watched_threads_total: int = 0
     new_messages_detected_last_24h: int = 0
     processed_messages_last_24h: int = 0
+    sent_relances_last_24h: int = 0
     positive_responses_last_24h: int = 0
     refused_responses_last_24h: int = 0
     evidence_requests_last_24h: int = 0
@@ -923,6 +924,8 @@ class GmailWatchedThreadSummary(BaseModel):
     manual_review_last_24h: int = 0
     backlog_remaining: int = 0
     daily_processing_target: int = 2000
+    daily_send_capacity: int = 0
+    remaining_send_capacity_today: int = 0
     processed_progress_percent: int = 0
     quota_blocked: bool = False
     quota_retry_after: datetime | None = None
@@ -2747,4 +2750,3 @@ class AutopilotActionsResponse(BaseModel):
     actions: list[AutopilotActionRead]
     limit: int
     offset: int
-

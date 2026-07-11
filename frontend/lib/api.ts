@@ -588,6 +588,7 @@ export type GmailWatchedThreadSummary = {
   watched_threads_total: number;
   new_messages_detected_last_24h: number;
   processed_messages_last_24h: number;
+  sent_relances_last_24h: number;
   positive_responses_last_24h: number;
   refused_responses_last_24h: number;
   evidence_requests_last_24h: number;
@@ -595,6 +596,8 @@ export type GmailWatchedThreadSummary = {
   manual_review_last_24h: number;
   backlog_remaining: number;
   daily_processing_target: number;
+  daily_send_capacity: number;
+  remaining_send_capacity_today: number;
   processed_progress_percent: number;
   quota_blocked: boolean;
   quota_retry_after: string | null;
