@@ -485,9 +485,10 @@ class GmailWatchedThreadMonitorService:
                 provider_draft = None
 
             if provider_draft is None:
-                provider_draft = self.provider.create_draft(
+                provider_draft = self.create_draft_for_watched_account(
                     db,
                     user,
+                    account,
                     attempt.email_draft,
                     to_email=safe_autopilot_recipient(),
                     include_evidence=True,
@@ -601,9 +602,10 @@ class GmailWatchedThreadMonitorService:
         try:
             if provider_draft is None or provider_draft.status != "provider_draft_created":
                 draft = create_email_draft(db, order.id, "proof_reply", user_id=user.id)
-                provider_draft = self.provider.create_draft(
+                provider_draft = self.create_draft_for_watched_account(
                     db,
                     user,
+                    account,
                     draft,
                     to_email=safe_autopilot_recipient(),
                     include_evidence=True,
@@ -658,6 +660,34 @@ class GmailWatchedThreadMonitorService:
         )
         db.flush()
         return True
+
+    def create_draft_for_watched_account(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        email_draft: EmailDraft,
+        *,
+        to_email: str,
+        include_evidence: bool,
+    ) -> EmailProviderDraft:
+        create_for_account = getattr(self.provider, "create_draft_for_account", None)
+        if callable(create_for_account):
+            return create_for_account(
+                db,
+                user,
+                email_draft,
+                to_email=to_email,
+                include_evidence=include_evidence,
+                account=account,
+            )
+        return self.provider.create_draft(
+            db,
+            user,
+            email_draft,
+            to_email=to_email,
+            include_evidence=include_evidence,
+        )
 
     @staticmethod
     def mark_work_item_skipped(db: Session, item: GmailStarredWorkItem) -> None:

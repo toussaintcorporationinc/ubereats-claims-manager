@@ -57,6 +57,7 @@ class FakeWatchedGmailProvider:
         self.full_history_calls: list[str] = []
         self.thread_include_attachments_calls: list[bool] = []
         self.created_drafts: list[int] = []
+        self.created_draft_account_ids: list[int] = []
         self.sent_drafts: list[int] = []
         self.provider_thread_id_for_drafts = "thread-f93ba"
 
@@ -138,6 +139,32 @@ class FakeWatchedGmailProvider:
         db.add(provider_draft)
         db.flush()
         self.created_drafts.append(provider_draft.id)
+        return provider_draft
+
+    def create_draft_for_account(
+        self,
+        db: Session,
+        user: User,
+        email_draft: EmailDraft,
+        to_email: str,
+        include_evidence: bool,  # noqa: ARG002
+        account: EmailAccount,
+    ) -> EmailProviderDraft:
+        provider_draft = EmailProviderDraft(
+            email_draft_id=email_draft.id,
+            email_account_id=account.id,
+            provider=self.provider,
+            provider_draft_id=f"draft-{email_draft.id}",
+            provider_thread_id=self.provider_thread_id_for_drafts,
+            to_email=to_email,
+            subject=email_draft.subject,
+            status="provider_draft_created",
+            created_by_user_id=user.id,
+        )
+        db.add(provider_draft)
+        db.flush()
+        self.created_drafts.append(provider_draft.id)
+        self.created_draft_account_ids.append(account.id)
         return provider_draft
 
     def send_draft(
@@ -714,7 +741,8 @@ def test_refused_reply_already_sent_workflow_after_provider_send_counts_as_succe
         raise_already_sent,
     )
 
-    result = GmailWatchedThreadMonitorService(FakeWatchedGmailProvider()).process_account(
+    provider = FakeWatchedGmailProvider()
+    result = GmailWatchedThreadMonitorService(provider).process_account(
         db_session,
         owner,
         account,
@@ -725,6 +753,7 @@ def test_refused_reply_already_sent_workflow_after_provider_send_counts_as_succe
     db_session.refresh(item)
     assert result.autopilot_sent_count == 1
     assert result.autopilot_failed_count == 0
+    assert provider.created_draft_account_ids == [account.id]
     assert item.status == "processed"
     assert item.reason == "gmail_reply_sent"
 
@@ -1211,6 +1240,7 @@ def test_failed_refusal_provider_draft_is_recreated_before_autopilot_send(
     )
     assert result.autopilot_sent_count == 1
     assert result.autopilot_failed_count == 0
+    assert provider.created_draft_account_ids == [account.id]
     assert item.status == "processed"
     assert item.reason == "gmail_reply_sent"
     assert provider_draft.status == "failed"

@@ -177,7 +177,46 @@ class GmailEmailProvider:
         account = self.get_account_for_draft(db, user.id, email_draft)
         if account is None:
             raise EmailProviderError("Gmail account is not connected", 409)
+        return self._create_draft_for_account(
+            db,
+            user,
+            email_draft,
+            to_email=to_email,
+            include_evidence=include_evidence,
+            account=account,
+        )
 
+    def create_draft_for_account(
+        self,
+        db: Session,
+        user: User,
+        email_draft: EmailDraft,
+        to_email: str,
+        include_evidence: bool,
+        account: EmailAccount,
+    ) -> EmailProviderDraft:
+        self.ensure_enabled_and_configured(require_secret=True)
+        if account.user_id != user.id or account.provider != self.provider or account.disconnected_at is not None:
+            raise EmailProviderError("Gmail account is not connected", 409)
+        return self._create_draft_for_account(
+            db,
+            user,
+            email_draft,
+            to_email=to_email,
+            include_evidence=include_evidence,
+            account=account,
+        )
+
+    def _create_draft_for_account(
+        self,
+        db: Session,
+        user: User,
+        email_draft: EmailDraft,
+        *,
+        to_email: str,
+        include_evidence: bool,
+        account: EmailAccount,
+    ) -> EmailProviderDraft:
         attachments = self.build_evidence_attachments(email_draft, include_evidence)
         reply_context = self.find_reply_context(db, account, email_draft)
         gmail_subject = build_reply_subject(email_draft.subject, reply_context)
@@ -204,7 +243,7 @@ class GmailEmailProvider:
         except EmailProviderError as exc:
             provider_draft = EmailProviderDraft(
                 email_draft_id=email_draft.id,
-                email_account_id=account.id if account else None,
+                email_account_id=account.id,
                 provider=self.provider,
                 to_email=to_email,
                 subject=email_draft.subject,
