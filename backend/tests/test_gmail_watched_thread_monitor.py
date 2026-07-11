@@ -1087,6 +1087,140 @@ def test_already_replied_refusal_leaves_actionable_queue(
     assert item.reason == "already_replied_to_refusal"
 
 
+def test_failed_refusal_provider_draft_is_recreated_before_autopilot_send(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    inbound = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=order.id,
+        provider="gmail",
+        provider_message_id="reply-refused-failed-draft",
+        provider_thread_id="thread-failed-draft",
+        gmail_history_id="history-reply-refused-failed-draft",
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject="Re: Contestation de remboursement de commande F93BA",
+        snippet="Nous maintenons le refus.",
+        body_text="Nous maintenons le refus pour la commande F93BA.",
+        received_at=utc_now(),
+        raw_headers_json={},
+        provider_labels_json=["INBOX", "STARRED"],
+        match_status="linked",
+        match_reason="order_number_match",
+        review_status="reviewed",
+    )
+    db_session.add(inbound)
+    db_session.flush()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-failed-draft",
+        first_starred_message_id="star-failed-draft",
+        claim_order_id=order.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.flush()
+    draft = EmailDraft(
+        order_id=order.id,
+        draft_type="appeal_generic_refusal",
+        subject="Re: Contestation de remboursement de commande F93BA",
+        body="Bonjour, je conteste.",
+        status="created",
+    )
+    db_session.add(draft)
+    db_session.flush()
+    provider_draft = EmailProviderDraft(
+        email_draft_id=draft.id,
+        email_account_id=account.id,
+        provider="gmail",
+        provider_draft_id="draft-failed",
+        provider_thread_id="thread-failed-draft",
+        to_email="restaurantsfrance@uber.com",
+        subject=draft.subject,
+        status="failed",
+        last_error="previous send failed",
+        created_by_user_id=owner.id,
+    )
+    db_session.add(provider_draft)
+    db_session.flush()
+    workflow = AppealWorkflow(
+        case_type="claim_order",
+        case_id=order.id,
+        restaurant_id=order.restaurant_id,
+        claim_order_id=order.id,
+        status="appeal_needed",
+        next_action_type="send_manual_appeal",
+    )
+    db_session.add(workflow)
+    db_session.flush()
+    failed_attempt = AppealAttempt(
+        workflow_id=workflow.id,
+        attempt_number=1,
+        appeal_type="first_appeal",
+        status="gmail_draft_created",
+        based_on_refusal_message_id=inbound.id,
+        email_draft_id=draft.id,
+        provider_draft_id=provider_draft.id,
+        created_by_user_id=owner.id,
+    )
+    db_session.add(failed_attempt)
+    item = GmailStarredWorkItem(
+        watched_thread_id=watched.id,
+        email_account_id=account.id,
+        gmail_thread_id="thread-failed-draft",
+        provider_message_id="reply-refused-failed-draft",
+        inbound_message_id=inbound.id,
+        status="refused",
+        reason="uber_refusal",
+        processed_at=utc_now(),
+    )
+    db_session.add(item)
+    db_session.commit()
+
+    provider = FakeWatchedGmailProvider()
+    provider.provider_thread_id_for_drafts = "thread-failed-draft"
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    db_session.refresh(item)
+    db_session.refresh(provider_draft)
+    sent_provider_draft = db_session.scalar(
+        select(EmailProviderDraft)
+        .where(EmailProviderDraft.id != provider_draft.id, EmailProviderDraft.status == "sent")
+        .order_by(EmailProviderDraft.id.desc())
+    )
+    sent_attempt = db_session.scalar(
+        select(AppealAttempt)
+        .where(AppealAttempt.id != failed_attempt.id)
+        .order_by(AppealAttempt.id.desc())
+    )
+    assert result.autopilot_sent_count == 1
+    assert result.autopilot_failed_count == 0
+    assert item.status == "processed"
+    assert item.reason == "gmail_reply_sent"
+    assert provider_draft.status == "failed"
+    assert sent_provider_draft is not None
+    assert sent_provider_draft.provider_thread_id == "thread-failed-draft"
+    assert sent_attempt is not None
+    assert sent_attempt.status == "sent"
+    assert sent_attempt.based_on_refusal_message_id == inbound.id
+
+
 def test_missing_gmail_thread_during_identity_repair_does_not_stop_actionable_queue(
     db_session: Session,
     gmail_case,

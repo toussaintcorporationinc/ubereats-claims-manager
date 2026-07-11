@@ -480,6 +480,10 @@ class GmailWatchedThreadMonitorService:
                 attempt = create_starred_thread_reply_attempt(db, workflow=workflow, starred_message=message, user=user)
 
             provider_draft = attempt.provider_draft
+            if provider_draft is not None and provider_draft.status != "provider_draft_created":
+                attempt = create_starred_thread_reply_attempt(db, workflow=workflow, starred_message=message, user=user)
+                provider_draft = None
+
             if provider_draft is None:
                 provider_draft = self.provider.create_draft(
                     db,
