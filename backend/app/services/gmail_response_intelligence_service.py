@@ -479,6 +479,8 @@ class GmailResponseIntelligenceService:
 
 KEYWORDS: dict[str, tuple[str, ...]] = {
     "evidence_requested": (
+        "waiting for your reply",
+        "support waiting for your reply",
         "please provide proof",
         "please provide evidence",
         "send us proof",
@@ -499,6 +501,14 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
         "ticket",
         "details de commande",
         "informations justificatives",
+        "attendons votre reponse",
+        "en attente de votre reponse",
+        "merci de fournir",
+        "merci de nous fournir",
+        "merci de transmettre",
+        "merci de nous transmettre",
+        "veuillez fournir",
+        "veuillez transmettre",
     ),
     "payment_confirmed": (
         "payment has been issued",
@@ -532,9 +542,15 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
         "regularisation accordee",
         "ajustement effectue",
         "ajustement accorde",
+        "ajustement applique",
+        "ajustement a ete applique",
+        "nous avons applique un ajustement",
+        "nous avons procede au paiement",
+        "nous avons procede a un paiement",
         "nous avons credite",
         "nous vous avons credite",
         "credite sur votre compte",
+        "montant ajoute",
     ),
     "payment_to_verify": (
         "will be paid",
@@ -550,6 +566,17 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
         "regularisation sera",
         "paiement a venir",
         "compensation a venir",
+        "sera credite",
+        "sera ajoute a votre prochain versement",
+        "sera ajoutee a votre prochain versement",
+        "apparaitra dans votre prochain versement",
+        "apparaitra sur votre prochain versement",
+        "ajoute a votre prochain versement",
+        "ajoutee a votre prochain versement",
+        "prochain paiement",
+        "nous allons vous verser",
+        "vous recevrez un paiement",
+        "vous recevrez ce montant",
     ),
     "accepted": (
         "claim approved",
@@ -589,6 +616,12 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
         "pas de remboursement",
         "aucune compensation",
         "pas de compensation",
+        "decision maintenue",
+        "maintenons notre decision",
+        "nous maintenons",
+        "ne sommes pas en mesure",
+        "nous ne pourrons pas",
+        "pas possible de rembourser",
     ),
     "information_requested": (
         "need more information",
@@ -612,6 +645,13 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
         "en cours de traitement",
         "nous examinons",
         "nous reviendrons vers vous",
+        "submitted",
+        "support submitted",
+        "case submitted",
+        "demande soumise",
+        "dossier soumis",
+        "nous vous confirmons avoir recu",
+        "nous vous confirmons avoir soumis",
     ),
 }
 
@@ -634,8 +674,34 @@ def positive_payment_pattern_matches(text: str) -> list[str]:
         "remboursement_accorde_pattern": r"\bremboursement\b.{0,80}\b(?:accorde|effectue|confirme|credite|verse)\b",
         "regularisation_accordee_pattern": r"\bregularisation\b.{0,80}\b(?:accordee|effectuee|confirmee|creditee|versee)\b",
         "ajustement_accorde_pattern": r"\bajustement\b.{0,80}\b(?:accorde|effectue|confirme|credite|verse)\b",
+        "prochain_versement_pattern": r"\b(?:sera|a ete)?\s*(?:ajoutee?|creditee?)\b.{0,80}\bprochain versement\b",
+        "paiement_prochain_versement_pattern": r"\b(?:paiement|montant|regularisation|compensation)\b.{0,100}\bprochain versement\b",
     }
-    return [name for name, pattern in patterns.items() if re.search(pattern, text)]
+    matches: list[str] = []
+    for name, pattern in patterns.items():
+        for match in re.finditer(pattern, text):
+            if not positive_payment_match_is_negated(text, match.start(), match.end()):
+                matches.append(name)
+                break
+    return matches
+
+
+def positive_payment_match_is_negated(text: str, start: int, end: int) -> bool:
+    context = text[max(0, start - 40) : min(len(text), end + 20)]
+    negated_phrases = (
+        "aucun remboursement",
+        "aucune compensation",
+        "pas de remboursement",
+        "pas de compensation",
+        "no refund",
+        "no reimbursement",
+        "no compensation",
+        "not eligible",
+        "will not reimburse",
+    )
+    if any(phrase in context for phrase in negated_phrases):
+        return True
+    return bool(re.search(r"\bne\b.{0,40}\b(?:pas|aucun|aucune)\b", context))
 
 
 def message_has_provider_label(message: InboundEmailMessage, label: str) -> bool:
