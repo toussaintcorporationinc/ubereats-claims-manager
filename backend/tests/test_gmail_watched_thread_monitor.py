@@ -1331,6 +1331,103 @@ def test_missing_gmail_thread_during_identity_repair_does_not_stop_actionable_qu
     assert item.reason.startswith("identity_repair_failed:Gmail API error: NOT_FOUND")
 
 
+def test_missing_watched_thread_is_closed_and_removed_from_hot_queue(
+    db_session: Session,
+    gmail_case,
+) -> None:
+    owner, account, _order = gmail_case
+    inbound = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=None,
+        provider="gmail",
+        provider_message_id="missing-star-1",
+        provider_thread_id="missing-thread-1",
+        gmail_history_id="missing-history-1",
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject="Re: Contestation Uber",
+        snippet="Conversation supprimee",
+        body_text="Conversation supprimee",
+        received_at=utc_now(),
+        raw_headers_json={},
+        provider_labels_json=["INBOX", "STARRED"],
+        match_status="unlinked",
+        match_reason="no_match",
+        review_status="unreviewed",
+    )
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="missing-thread-1",
+        first_starred_message_id="missing-star-1",
+        status="active",
+        star_active=True,
+    )
+    db_session.add_all([inbound, watched])
+    db_session.flush()
+    item = GmailStarredWorkItem(
+        watched_thread_id=watched.id,
+        email_account_id=account.id,
+        gmail_thread_id=watched.gmail_thread_id,
+        provider_message_id=inbound.provider_message_id,
+        inbound_message_id=None,
+        status="pending",
+    )
+    db_session.add(item)
+    db_session.commit()
+
+    class MissingWatchedThreadProvider(FakeLightweightWatchedGmailProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fetch_count = 0
+
+        def get_thread_messages_for_account(
+            self,
+            db: Session,
+            account: EmailAccount,
+            thread_id: str,
+            *,
+            include_attachments: bool = True,
+        ) -> list[InboundEmailPayload]:
+            self.fetch_count += 1
+            raise EmailProviderError("Gmail API error: NOT_FOUND - Requested entity was not found.", 502)
+
+    provider = MissingWatchedThreadProvider()
+    provider.starred_refs_by_query = {
+        f"{GMAIL_STARRED_URGENT_QUERY} from:uber.com": [
+            {"id": inbound.provider_message_id, "threadId": watched.gmail_thread_id}
+        ]
+    }
+    service = GmailWatchedThreadMonitorService(provider)
+
+    first_result = service.process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=True,
+        process_new_messages=True,
+    )
+    second_result = service.process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=True,
+        process_new_messages=True,
+    )
+
+    db_session.refresh(inbound)
+    db_session.refresh(watched)
+    db_session.refresh(item)
+    assert first_result.errors == []
+    assert second_result.errors == []
+    assert second_result.processed_messages == 0
+    assert provider.fetch_count == 1
+    assert watched.status == "closed"
+    assert watched.star_active is False
+    assert item.status == "skipped"
+    assert item.reason == "gmail_thread_not_found"
+    assert "STARRED" not in inbound.provider_labels_json
+
+
 def test_non_starred_positive_reply_in_watched_thread_is_processed_and_star_removed(
     db_session: Session,
     gmail_case,
