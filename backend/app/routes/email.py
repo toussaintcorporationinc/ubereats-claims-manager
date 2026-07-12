@@ -816,6 +816,7 @@ def _labels_include_starred(labels: object) -> bool:
 
 
 GMAIL_RELANCE_DASHBOARD_STARRED_REFRESH_LIMIT = 120
+GMAIL_WAR_ROOM_MANUAL_REFRESH_THREAD_LIMIT = 20
 
 
 def _refresh_starred_messages_for_relance_dashboard(
@@ -1195,6 +1196,7 @@ def gmail_war_room(
             limit,
             settings.gmail_watched_threads_batch_per_cycle,
             settings.gmail_watched_threads_max_per_cycle,
+            GMAIL_WAR_ROOM_MANUAL_REFRESH_THREAD_LIMIT,
         )
         for account in connected_accounts:
             try:

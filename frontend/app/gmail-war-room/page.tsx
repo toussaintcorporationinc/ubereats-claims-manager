@@ -44,7 +44,7 @@ export default function GmailWarRoomPage() {
   }, []);
 
   useEffect(() => {
-    void loadDashboard(true);
+    void loadDashboard(false);
     const interval = window.setInterval(() => {
       void loadDashboard(false);
     }, POLL_INTERVAL_MS);
