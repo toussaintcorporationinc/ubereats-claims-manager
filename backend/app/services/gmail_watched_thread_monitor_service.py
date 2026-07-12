@@ -248,6 +248,9 @@ class GmailWatchedThreadMonitorService:
                 if retry_after is not None:
                     result.errors.append(f"gmail_quota_retry_after:{retry_after.isoformat()}")
                     break
+                if gmail_resource_not_found(exc):
+                    self.close_missing_watched_thread(db, user, watched)
+                    continue
                 logger.exception("Unable to fetch watched Gmail thread %s", watched.gmail_thread_id)
                 result.errors.append(f"thread:{watched.gmail_thread_id}:{str(exc)[:160]}")
                 watched.status = "manual_review"
@@ -1155,6 +1158,59 @@ class GmailWatchedThreadMonitorService:
             ).all()
         )
 
+    def close_missing_watched_thread(
+        self,
+        db: Session,
+        user: User,
+        watched: GmailWatchedThread,
+    ) -> None:
+        """Retire a permanently missing Gmail thread from the hot worker queue."""
+        now = utc_now()
+        watched.status = "closed"
+        watched.star_active = False
+        watched.last_processed_at = now
+
+        work_items = list(
+            db.scalars(
+                select(GmailStarredWorkItem).where(
+                    GmailStarredWorkItem.watched_thread_id == watched.id,
+                    GmailStarredWorkItem.status.in_(["pending", "processing", "failed"]),
+                )
+            ).all()
+        )
+        for item in work_items:
+            item.status = "skipped"
+            item.reason = "gmail_thread_not_found"
+            item.processed_at = now
+
+        messages = list(
+            db.scalars(
+                select(InboundEmailMessage).where(
+                    InboundEmailMessage.email_account_id == watched.email_account_id,
+                    InboundEmailMessage.provider_thread_id == watched.gmail_thread_id,
+                )
+            ).all()
+        )
+        for message in messages:
+            message.provider_labels_json = [
+                label
+                for label in (message.provider_labels_json or [])
+                if str(label).upper() != "STARRED"
+            ]
+
+        add_audit_log(
+            db,
+            entity_type="gmail_watched_thread",
+            entity_id=watched.id,
+            action="gmail_watched_thread.closed_missing_remote_thread",
+            user_id=user.id,
+            new_value={
+                "gmail_thread_id": watched.gmail_thread_id,
+                "skipped_work_items": len(work_items),
+            },
+        )
+        db.flush()
+
     def fetch_thread_payloads(
         self,
         db: Session,
@@ -1408,12 +1464,22 @@ class GmailWatchedThreadMonitorService:
                 )
                 if watched is None:
                     raise
-        elif watched.status in {"closed", "paused"}:
+        missing_remote_ref = None
+        if watched.status == "closed":
+            missing_remote_ref = db.scalar(
+                select(GmailStarredWorkItem.id).where(
+                    GmailStarredWorkItem.watched_thread_id == watched.id,
+                    GmailStarredWorkItem.provider_message_id == provider_message_id,
+                    GmailStarredWorkItem.reason == "gmail_thread_not_found",
+                )
+            )
+        if watched.status == "paused" or (watched.status == "closed" and missing_remote_ref is None):
             watched.status = "active"
             watched.star_active = True
         if not watched.first_starred_message_id:
             watched.first_starred_message_id = provider_message_id
-        watched.star_active = True
+        if watched.status != "closed":
+            watched.star_active = True
         db.flush()
         return watched, created
 
@@ -1769,6 +1835,21 @@ def datetime_after(left: datetime, right: datetime | None) -> bool:
     elif left.tzinfo is not None and right.tzinfo is None:
         right = right.replace(tzinfo=left.tzinfo)
     return left > right
+
+
+def gmail_resource_not_found(exc: Exception) -> bool:
+    if isinstance(exc, EmailProviderError) and exc.status_code == 404:
+        return True
+    message = str(exc).casefold()
+    return any(
+        marker in message
+        for marker in (
+            "not_found",
+            "requested entity was not found",
+            "http 404",
+            "status 404",
+        )
+    )
 
 
 def classify_unlinked_watched_message(message: InboundEmailMessage) -> tuple[str, str, Decimal]:
