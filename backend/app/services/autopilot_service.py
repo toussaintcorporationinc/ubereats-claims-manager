@@ -49,6 +49,7 @@ from app.services.email_draft_service import (
     format_restaurant_signature,
     restaurant_display_name,
 )
+from app.services.restaurant_identity_service import canonicalize_restaurant_names_in_text
 from app.services.email_provider import EmailConnectionStatus, EmailProvider, EmailProviderError
 from app.services.followup_policy_service import complete_task_for_sent_provider_draft
 from app.services.gmail_quota import parse_gmail_retry_after
@@ -1070,7 +1071,9 @@ def create_starred_thread_reply_attempt(
     draft = EmailDraft(
         order_id=order.id,
         draft_type="appeal_generic_refusal",
-        subject=starred_message.subject or f"Re: Contestation commande Uber Eats {display_order_number(order)}",
+        subject=canonicalize_restaurant_names_in_text(
+            starred_message.subject or f"Re: Contestation commande Uber Eats {display_order_number(order)}"
+        ),
         body=build_starred_thread_reply_body(order, workflow, starred_message),
         status="created",
     )

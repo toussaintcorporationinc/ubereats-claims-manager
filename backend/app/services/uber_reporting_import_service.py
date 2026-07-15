@@ -19,6 +19,7 @@ from app.models import (
 )
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
+from app.services.restaurant_identity_service import canonical_restaurant_lookup_key
 from app.services.smart_import_classifier_service import normalize_for_match, read_tabular_rows, rows_to_dicts_with_detected_header
 
 REPORT_TYPES = {"orders_report", "payments_report", "adjustments_report", "combined_report"}
@@ -812,7 +813,7 @@ def derived_store_id_from_restaurant(restaurant: Restaurant) -> str:
 
 
 def normalize_restaurant_lookup_key(value: object) -> str:
-    return normalize_for_match(value).replace(" ", "")
+    return canonical_restaurant_lookup_key(value)
 
 
 def row_dedupe_key(data: dict[str, Any], report_type: str) -> tuple[Any, ...] | None:

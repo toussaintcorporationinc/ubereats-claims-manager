@@ -173,7 +173,7 @@ def test_historical_import_repair_does_not_guess_unknown_restaurant(
         db_session,
         report_type="orders_report",
         raw_data={
-            "store_name": "Crousty Best",
+            "store_name": "Restaurant Inconnu",
             "order_id": "UBER-UNKNOWN-RESTAURANT",
             "status": "cancelled",
             "amount": "19.90",
@@ -188,6 +188,32 @@ def test_historical_import_repair_does_not_guess_unknown_restaurant(
     assert payload["eligible_count"] == 0
     assert payload["blocked_count"] == 1
     assert "missing_target_restaurant" in payload["candidates"][0]["blockers"]
+
+
+def test_historical_import_repair_uses_crousty_best_canonical_alias(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    _krousty, asian = create_restaurants(db_session)
+    create_batch_with_row(
+        db_session,
+        report_type="orders_report",
+        raw_data={
+            "store_name": "Crousty Best",
+            "order_id": "UBER-CANONICAL-CROUSTY-BEST",
+            "status": "cancelled",
+            "amount": "20.90",
+            "currency": "EUR",
+        },
+    )
+
+    response = client.post("/v1/uber/historical-import-repair/preview", json={})
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["eligible_count"] == 1
+    assert payload["candidates"][0]["target_restaurant_id"] == asian.id
+    assert payload["candidates"][0]["target_restaurant_name"] == "Asian Passion"
 
 
 def test_historical_import_repair_resolves_known_old_store_name_alias(

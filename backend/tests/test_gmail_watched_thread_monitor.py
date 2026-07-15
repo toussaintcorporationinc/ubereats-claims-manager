@@ -1251,6 +1251,145 @@ def test_failed_refusal_provider_draft_is_recreated_before_autopilot_send(
     assert sent_attempt.based_on_refusal_message_id == inbound.id
 
 
+@pytest.mark.parametrize("old_provider_status", ["provider_draft_created", "sent"])
+def test_crousty_best_refusal_reply_is_reissued_once_with_asian_passion(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+    old_provider_status: str,
+) -> None:
+    owner, account, order = gmail_case
+    order.restaurant.name = "Crousty Best"
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    inbound = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=order.id,
+        provider="gmail",
+        provider_message_id=f"reply-crousty-best-{old_provider_status}",
+        provider_thread_id=f"thread-crousty-best-{old_provider_status}",
+        gmail_history_id=f"history-crousty-best-{old_provider_status}",
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject="Re: Contestation Crousty Best F93BA",
+        snippet="Nous maintenons le refus.",
+        body_text="Nous maintenons le refus pour la commande F93BA.",
+        received_at=utc_now(),
+        raw_headers_json={},
+        provider_labels_json=["INBOX", "STARRED"],
+        match_status="linked",
+        match_reason="order_number_match",
+        review_status="reviewed",
+    )
+    db_session.add(inbound)
+    db_session.flush()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id=inbound.provider_thread_id,
+        first_starred_message_id=inbound.provider_message_id,
+        claim_order_id=order.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.flush()
+    old_draft = EmailDraft(
+        order_id=order.id,
+        draft_type="appeal_generic_refusal",
+        subject="Re: Contestation Crousty Best F93BA",
+        body="Bonjour, je relance pour Crousty Best.\n\nCrousty Best",
+        status="created",
+    )
+    db_session.add(old_draft)
+    db_session.flush()
+    old_provider_draft = EmailProviderDraft(
+        email_draft_id=old_draft.id,
+        email_account_id=account.id,
+        provider="gmail",
+        provider_draft_id=f"draft-crousty-best-{old_provider_status}",
+        provider_thread_id=inbound.provider_thread_id,
+        provider_message_id="old-sent-message" if old_provider_status == "sent" else None,
+        to_email="restaurantsfrance@uber.com",
+        subject=old_draft.subject,
+        status=old_provider_status,
+        sent_at=utc_now() if old_provider_status == "sent" else None,
+        created_by_user_id=owner.id,
+    )
+    db_session.add(old_provider_draft)
+    db_session.flush()
+    workflow = AppealWorkflow(
+        case_type="claim_order",
+        case_id=order.id,
+        restaurant_id=order.restaurant_id,
+        claim_order_id=order.id,
+        status="appeal_sent" if old_provider_status == "sent" else "appeal_needed",
+        next_action_type="review_refusal" if old_provider_status == "sent" else "send_manual_appeal",
+        appeal_attempt_count=1 if old_provider_status == "sent" else 0,
+    )
+    db_session.add(workflow)
+    db_session.flush()
+    old_attempt = AppealAttempt(
+        workflow_id=workflow.id,
+        attempt_number=1,
+        appeal_type="first_appeal",
+        status="sent" if old_provider_status == "sent" else "gmail_draft_created",
+        based_on_refusal_message_id=inbound.id,
+        email_draft_id=old_draft.id,
+        provider_draft_id=old_provider_draft.id,
+        created_by_user_id=owner.id,
+        sent_by_user_id=owner.id if old_provider_status == "sent" else None,
+        sent_at=utc_now() if old_provider_status == "sent" else None,
+    )
+    db_session.add(old_attempt)
+    item = GmailStarredWorkItem(
+        watched_thread_id=watched.id,
+        email_account_id=account.id,
+        gmail_thread_id=watched.gmail_thread_id,
+        provider_message_id=inbound.provider_message_id,
+        inbound_message_id=inbound.id,
+        status="refused",
+        reason="restaurant_identity_rename_requeue",
+        processed_at=utc_now(),
+    )
+    db_session.add(item)
+    db_session.commit()
+
+    provider = FakeWatchedGmailProvider()
+    provider.provider_thread_id_for_drafts = watched.gmail_thread_id
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    new_attempt = db_session.scalar(
+        select(AppealAttempt)
+        .where(AppealAttempt.id != old_attempt.id)
+        .order_by(AppealAttempt.id.desc())
+    )
+    db_session.refresh(old_provider_draft)
+    assert result.autopilot_sent_count == 1
+    assert result.autopilot_failed_count == 0
+    assert len(provider.sent_drafts) == 1
+    assert new_attempt is not None
+    assert new_attempt.status == "sent"
+    assert new_attempt.email_draft is not None
+    assert "Asian Passion" in new_attempt.email_draft.subject
+    assert "Asian Passion" in new_attempt.email_draft.body
+    assert "Crousty Best" not in new_attempt.email_draft.subject
+    assert "Crousty Best" not in new_attempt.email_draft.body
+    expected_old_status = "failed" if old_provider_status == "provider_draft_created" else "sent"
+    assert old_provider_draft.status == expected_old_status
+    if old_provider_status == "provider_draft_created":
+        assert old_provider_draft.last_error == "superseded_restaurant_identity"
+
+
 def test_missing_gmail_thread_during_identity_repair_does_not_stop_actionable_queue(
     db_session: Session,
     gmail_case,

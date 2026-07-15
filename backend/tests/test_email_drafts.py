@@ -203,6 +203,19 @@ def test_initial_claim_uses_krousty_master_display_name_for_legacy_alias(client:
     assert "Maître Krousty" not in draft["body"]
 
 
+def test_initial_claim_uses_asian_passion_display_name_for_crousty_best(client: TestClient) -> None:
+    _, order = create_ready_order(
+        client,
+        restaurant_name="Crousty Best",
+        uber_order_number="UBER-ASIAN-PASSION",
+    )
+
+    draft = create_initial_claim_draft(client, order["id"])
+
+    assert "Asian Passion" in draft["body"]
+    assert "Crousty Best" not in draft["body"]
+
+
 def test_initial_claim_does_not_invent_optional_missing_data(client: TestClient) -> None:
     _, order = create_ready_order(
         client,
