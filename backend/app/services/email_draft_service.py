@@ -1,5 +1,4 @@
 import re
-import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -9,11 +8,9 @@ from sqlalchemy.orm import Session
 from app.models import ClaimOrder, EmailDraft
 from app.services.audit import add_audit_log
 from app.services.claim_validation_service import FINAL_CLAIM_STATUSES, get_claim_validation_gaps
+from app.services.restaurant_identity_service import canonical_restaurant_display_name
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates" / "emails"
-RESTAURANT_DISPLAY_NAME_OVERRIDES = {
-    "maitre krousty": "Krousty Master",
-}
 
 DRAFT_SUBJECTS = {
     "initial_claim": "Contestation d'annulation de commande - {uber_order_number}",
@@ -285,10 +282,7 @@ def format_restaurant_signature(restaurant: Any) -> str:
 
 def restaurant_display_name(restaurant: Any) -> str:
     raw_name = str(getattr(restaurant, "name", "") or "").strip()
-    normalized = unicodedata.normalize("NFKD", raw_name)
-    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
-    override = RESTAURANT_DISPLAY_NAME_OVERRIDES.get(normalized.casefold())
-    return override or raw_name
+    return canonical_restaurant_display_name(raw_name)
 
 
 def render_template(draft_type: str, context: dict[str, Any]) -> str:

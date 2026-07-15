@@ -44,6 +44,7 @@ from app.services.autopilot_service import (
     safe_autopilot_recipient,
     send_provider_draft,
 )
+from app.services.restaurant_identity_service import text_contains_legacy_restaurant_name
 
 logger = logging.getLogger(__name__)
 
@@ -370,6 +371,11 @@ class GmailWatchedThreadMonitorService:
                     selectinload(GmailStarredWorkItem.inbound_message).selectinload(InboundEmailMessage.order),
                 )
                 .join(GmailWatchedThread, GmailWatchedThread.id == GmailStarredWorkItem.watched_thread_id)
+                .join(
+                    InboundEmailMessage,
+                    InboundEmailMessage.id == GmailStarredWorkItem.inbound_message_id,
+                )
+                .outerjoin(ClaimOrder, ClaimOrder.id == InboundEmailMessage.order_id)
                 .where(
                     GmailStarredWorkItem.email_account_id == account.id,
                     GmailStarredWorkItem.inbound_message_id.is_not(None),
@@ -383,6 +389,8 @@ class GmailWatchedThreadMonitorService:
                         (GmailStarredWorkItem.status == "evidence_needed", 1),
                         else_=2,
                     ),
+                    case((ClaimOrder.order_amount.is_(None), 1), else_=0),
+                    ClaimOrder.order_amount.desc(),
                     GmailStarredWorkItem.processed_at.asc().nullsfirst(),
                     GmailStarredWorkItem.id.asc(),
                 )
@@ -464,7 +472,13 @@ class GmailWatchedThreadMonitorService:
             watched.linked_case_id = order.id
 
         existing_attempt = self.latest_attempt_for_refusal_message(db, message)
-        if existing_attempt and existing_attempt.provider_draft and existing_attempt.provider_draft.status == "sent":
+        refresh_restaurant_identity = self.attempt_uses_legacy_restaurant_name(existing_attempt)
+        if (
+            existing_attempt
+            and existing_attempt.provider_draft
+            and existing_attempt.provider_draft.status == "sent"
+            and not refresh_restaurant_identity
+        ):
             item.reason = "already_replied_to_refusal"
             self.mark_work_item_skipped(db, item)
             result.autopilot_skipped_count += 1
@@ -478,8 +492,21 @@ class GmailWatchedThreadMonitorService:
         try:
             workflow = ensure_workflow_for_claim_order(db, order, user)
             watched.appeal_workflow_id = workflow.id
-            attempt = existing_attempt if existing_attempt and existing_attempt.email_draft else None
+            attempt = (
+                existing_attempt
+                if existing_attempt and existing_attempt.email_draft and not refresh_restaurant_identity
+                else None
+            )
             if attempt is None:
+                if (
+                    refresh_restaurant_identity
+                    and existing_attempt is not None
+                    and existing_attempt.provider_draft is not None
+                    and existing_attempt.provider_draft.status == "provider_draft_created"
+                ):
+                    existing_attempt.provider_draft.status = "failed"
+                    existing_attempt.provider_draft.last_error = "superseded_restaurant_identity"
+                    existing_attempt.provider_draft.updated_at = utc_now()
                 attempt = create_starred_thread_reply_attempt(db, workflow=workflow, starred_message=message, user=user)
 
             provider_draft = attempt.provider_draft
@@ -778,6 +805,14 @@ class GmailWatchedThreadMonitorService:
             .where(AppealAttempt.based_on_refusal_message_id == message.id)
             .order_by(AppealAttempt.id.desc())
             .limit(1)
+        )
+
+    @staticmethod
+    def attempt_uses_legacy_restaurant_name(attempt: AppealAttempt | None) -> bool:
+        if attempt is None or attempt.email_draft is None:
+            return False
+        return text_contains_legacy_restaurant_name(
+            f"{attempt.email_draft.subject or ''}\n{attempt.email_draft.body or ''}"
         )
 
     def process_pending_local_work_items(
