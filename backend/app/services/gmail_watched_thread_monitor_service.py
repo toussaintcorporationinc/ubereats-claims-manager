@@ -522,6 +522,8 @@ class GmailWatchedThreadMonitorService:
                     attempt.email_draft,
                     to_email=safe_autopilot_recipient(),
                     include_evidence=True,
+                    watched=watched,
+                    reply_message=message,
                 )
                 attempt.provider_draft_id = provider_draft.id
                 attempt.status = "gmail_draft_created"
@@ -639,6 +641,8 @@ class GmailWatchedThreadMonitorService:
                     draft,
                     to_email=safe_autopilot_recipient(),
                     include_evidence=True,
+                    watched=watched,
+                    reply_message=message,
                 )
                 db.flush()
 
@@ -700,7 +704,21 @@ class GmailWatchedThreadMonitorService:
         *,
         to_email: str,
         include_evidence: bool,
+        watched: GmailWatchedThread,
+        reply_message: InboundEmailMessage,
     ) -> EmailProviderDraft:
+        create_in_thread = getattr(self.provider, "create_draft_for_account_in_thread", None)
+        if callable(create_in_thread):
+            return create_in_thread(
+                db,
+                user,
+                email_draft,
+                to_email=to_email,
+                include_evidence=include_evidence,
+                account=account,
+                thread_id=watched.gmail_thread_id,
+                reply_message=reply_message,
+            )
         create_for_account = getattr(self.provider, "create_draft_for_account", None)
         if callable(create_for_account):
             return create_for_account(

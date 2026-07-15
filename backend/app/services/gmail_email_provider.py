@@ -207,6 +207,39 @@ class GmailEmailProvider:
             account=account,
         )
 
+    def create_draft_for_account_in_thread(
+        self,
+        db: Session,
+        user: User,
+        email_draft: EmailDraft,
+        to_email: str,
+        include_evidence: bool,
+        account: EmailAccount,
+        thread_id: str,
+        reply_message: InboundEmailMessage,
+    ) -> EmailProviderDraft:
+        self.ensure_enabled_and_configured(require_secret=True)
+        if account.user_id != user.id or account.provider != self.provider or account.disconnected_at is not None:
+            raise EmailProviderError("Gmail account is not connected", 409)
+        if not thread_id or reply_message.provider_thread_id != thread_id:
+            raise EmailProviderError("Gmail reply thread does not match the watched thread", 409)
+        base_context = reply_context_from_inbound_message(reply_message)
+        reply_context = GmailReplyContext(
+            thread_id=thread_id,
+            message_id=base_context.message_id,
+            references=base_context.references,
+            subject=base_context.subject,
+        )
+        return self._create_draft_for_account(
+            db,
+            user,
+            email_draft,
+            to_email=to_email,
+            include_evidence=include_evidence,
+            account=account,
+            reply_context_override=reply_context,
+        )
+
     def _create_draft_for_account(
         self,
         db: Session,
@@ -216,9 +249,10 @@ class GmailEmailProvider:
         to_email: str,
         include_evidence: bool,
         account: EmailAccount,
+        reply_context_override: GmailReplyContext | None = None,
     ) -> EmailProviderDraft:
         attachments = self.build_evidence_attachments(email_draft, include_evidence)
-        reply_context = self.find_reply_context(db, account, email_draft)
+        reply_context = reply_context_override or self.find_reply_context(db, account, email_draft)
         gmail_subject = build_reply_subject(email_draft.subject, reply_context)
         raw_message = self.build_raw_message(account, email_draft, to_email, attachments, reply_context)
         try:
