@@ -58,6 +58,7 @@ class FakeWatchedGmailProvider:
         self.thread_include_attachments_calls: list[bool] = []
         self.created_drafts: list[int] = []
         self.created_draft_account_ids: list[int] = []
+        self.created_draft_thread_ids: list[str] = []
         self.sent_drafts: list[int] = []
         self.provider_thread_id_for_drafts = "thread-f93ba"
 
@@ -165,6 +166,36 @@ class FakeWatchedGmailProvider:
         db.flush()
         self.created_drafts.append(provider_draft.id)
         self.created_draft_account_ids.append(account.id)
+        return provider_draft
+
+    def create_draft_for_account_in_thread(
+        self,
+        db: Session,
+        user: User,
+        email_draft: EmailDraft,
+        to_email: str,
+        include_evidence: bool,  # noqa: ARG002
+        account: EmailAccount,
+        thread_id: str,
+        reply_message: InboundEmailMessage,
+    ) -> EmailProviderDraft:
+        assert reply_message.provider_thread_id == thread_id
+        provider_draft = EmailProviderDraft(
+            email_draft_id=email_draft.id,
+            email_account_id=account.id,
+            provider=self.provider,
+            provider_draft_id=f"draft-{email_draft.id}",
+            provider_thread_id=thread_id,
+            to_email=to_email,
+            subject=email_draft.subject,
+            status="provider_draft_created",
+            created_by_user_id=user.id,
+        )
+        db.add(provider_draft)
+        db.flush()
+        self.created_drafts.append(provider_draft.id)
+        self.created_draft_account_ids.append(account.id)
+        self.created_draft_thread_ids.append(thread_id)
         return provider_draft
 
     def send_draft(
@@ -639,6 +670,7 @@ def test_existing_refused_watched_thread_sends_same_thread_reply_without_global_
     )
     db_session.commit()
     provider = FakeWatchedGmailProvider()
+    provider.provider_thread_id_for_drafts = "wrong-thread-for-same-order"
 
     def fail_global_autopilot(self, db, user, result):  # noqa: ANN001, ARG001
         raise AssertionError("watched Gmail worker must not run the global autopilot scan")
@@ -662,6 +694,7 @@ def test_existing_refused_watched_thread_sends_same_thread_reply_without_global_
     assert result.autopilot_skipped_count == 0
     assert result.autopilot_failed_count == 0
     assert len(provider.created_drafts) == 1
+    assert provider.created_draft_thread_ids == ["thread-f93ba"]
     assert len(provider.sent_drafts) == 1
     attempt = db_session.scalar(select(AppealAttempt))
     assert attempt is not None

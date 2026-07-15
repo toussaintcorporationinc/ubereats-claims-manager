@@ -729,25 +729,45 @@ def test_real_gmail_provider_replies_in_existing_uber_thread(
     draft_payload = create_ready_order_and_draft(client, restaurant["id"], "UBER-GMAIL-THREAD")
     email_draft = db_session.get(EmailDraft, draft_payload["id"])
     assert email_draft is not None
-    db_session.add(
-        InboundEmailMessage(
-            email_account_id=account.id,
-            order_id=email_draft.order_id,
-            provider="gmail",
-            provider_message_id="gmail-msg-123",
-            provider_thread_id="gmail-thread-urgent-123",
-            from_email="restaurantsfrance@uber.com",
-            to_email=account.email_address,
-            subject="Re: contestation d'annulation de commande",
-            body_text="Nous ne pouvons pas rembourser.",
-            raw_headers_json={
-                "message-id": "<uber-reply-123@mail.gmail.com>",
-                "references": "<first-claim-123@mail.gmail.com>",
-            },
-            provider_labels_json=["STARRED"],
-            match_status="linked",
-            match_reason="thread_id_match",
-        )
+    target_message = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=email_draft.order_id,
+        provider="gmail",
+        provider_message_id="gmail-msg-123",
+        provider_thread_id="gmail-thread-urgent-123",
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject="Re: contestation d'annulation de commande",
+        body_text="Nous ne pouvons pas rembourser.",
+        raw_headers_json={
+            "message-id": "<uber-reply-123@mail.gmail.com>",
+            "references": "<first-claim-123@mail.gmail.com>",
+        },
+        provider_labels_json=["STARRED"],
+        match_status="linked",
+        match_reason="thread_id_match",
+        received_at=utc_now() - timedelta(hours=1),
+    )
+    db_session.add_all(
+        [
+            target_message,
+            InboundEmailMessage(
+                email_account_id=account.id,
+                order_id=email_draft.order_id,
+                provider="gmail",
+                provider_message_id="gmail-msg-wrong-thread",
+                provider_thread_id="gmail-thread-wrong-for-same-order",
+                from_email="restaurantsfrance@uber.com",
+                to_email=account.email_address,
+                subject="Another starred thread for the same order",
+                body_text="This newer thread must not receive the watched reply.",
+                raw_headers_json={"message-id": "<wrong-thread@mail.gmail.com>"},
+                provider_labels_json=["STARRED"],
+                match_status="linked",
+                match_reason="thread_id_match",
+                received_at=utc_now(),
+            ),
+        ]
     )
     db_session.commit()
     captured: dict[str, str | None] = {}
@@ -762,12 +782,15 @@ def test_real_gmail_provider_replies_in_existing_uber_thread(
 
     monkeypatch.setattr(provider, "create_gmail_draft", fake_create_gmail_draft)
 
-    provider_draft = provider.create_draft(
+    provider_draft = provider.create_draft_for_account_in_thread(
         db_session,
         owner,
         email_draft,
         to_email="restaurantsfrance@uber.com",
         include_evidence=False,
+        account=account,
+        thread_id="gmail-thread-urgent-123",
+        reply_message=target_message,
     )
 
     assert provider_draft.provider_thread_id == "gmail-thread-urgent-123"
