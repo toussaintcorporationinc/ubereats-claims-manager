@@ -25,6 +25,11 @@ from app.services.order_identity_resolution_service import (
     is_uuid_like,
     merge_identity,
 )
+from app.services.restaurant_identity_service import (
+    canonical_restaurant_display_name,
+    canonical_restaurant_lookup_key,
+    canonicalize_restaurant_names_in_text,
+)
 
 MAX_IDENTITY_TEXT_CHARS = 18000
 IDENTITY_MESSAGE_LIMIT = 35
@@ -506,10 +511,11 @@ def resolve_restaurant_from_name(db: Session, restaurant_name: str | None) -> Re
         return None
     from app.services.evidence_ai_analysis_service import resolve_restaurant_display_name
 
-    resolved_name = resolve_restaurant_display_name(db, restaurant_name) or restaurant_name
-    normalized = resolved_name.strip().casefold()
+    canonical_name = canonical_restaurant_display_name(restaurant_name)
+    resolved_name = resolve_restaurant_display_name(db, canonical_name) or canonical_name
+    lookup_key = canonical_restaurant_lookup_key(resolved_name)
     for restaurant in db.scalars(select(Restaurant).where(Restaurant.active.is_(True))).all():
-        if restaurant.name and restaurant.name.strip().casefold() == normalized:
+        if restaurant.name and canonical_restaurant_lookup_key(restaurant.name) == lookup_key:
             return restaurant
     return None
 
@@ -792,10 +798,11 @@ def extract_amount(text: str) -> Decimal | None:
 
 
 def extract_restaurant_name(text: str, restaurant_names: list[str]) -> str | None:
-    folded = text.casefold()
+    folded = canonicalize_restaurant_names_in_text(text).casefold()
     for name in restaurant_names:
-        if name and name.casefold() in folded:
-            return name
+        canonical_name = canonical_restaurant_display_name(name)
+        if canonical_name and canonical_name.casefold() in folded:
+            return canonical_name
     return None
 
 
@@ -835,6 +842,7 @@ ORDER_NUMBER_DELIMITER_RE = rf"(?:{ORDER_NUMBER_LABEL_RE}\s+(?:de\s+)?commande|\
 def extract_customer_name_deep(text: str) -> str | None:
     normalized = normalize_search_text(text)
     patterns = [
+        rf"(?:je\s+(?:veux\s+)?contest(?:e|er)\s+)?l[' ]annulation\s+de\s+(?:la\s+)?commande\s+(?:de\s+|d[' ])(.{{2,80}}?)(?:\s*,?\s*{ORDER_NUMBER_DELIMITER_RE}|\s+car\b|\s+pour\b)",
         rf"(?:je\s+veux\s+)?contester\s+la\s+demande\s+de\s+remboursement\s+de\s+(.{{2,80}}?)(?:\s*,?\s*{ORDER_NUMBER_DELIMITER_RE}|\s+car\b|\s+pour\b)",
         rf"(?:demande|contestation)\s+de\s+remboursement\s+de\s+commande\s+de\s+(.{{2,80}}?)(?:\s*,?\s*{ORDER_NUMBER_DELIMITER_RE}|\s+car\b|\s+pour\b)",
         rf"(?:demande|contestation)\s+de\s+remboursement\s+de\s+(.{{2,80}}?)(?:\s*,?\s*{ORDER_NUMBER_DELIMITER_RE}|\s+car\b|\s+pour\b)",

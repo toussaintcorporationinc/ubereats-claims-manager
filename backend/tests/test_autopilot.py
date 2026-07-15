@@ -33,6 +33,7 @@ from app.models.domain import utc_now
 from app.services.openai_structured_analysis_service import AIProofExtraction, OpenAIStructuredAnalysisService
 from app.routes.email import get_gmail_provider
 from app.services.autopilot_service import iter_candidates
+from app.services.autopilot_identity_repair_service import find_or_create_order_from_starred_text
 from app.services.email_provider import EmailConnectionStatus, EmailSendResult
 
 
@@ -165,6 +166,30 @@ def create_ready_order(client: TestClient, restaurant_id: int, order_number: str
     validate_response = client.post(f"/v1/orders/{order['id']}/validate")
     assert validate_response.status_code == 200
     return validate_response.json()
+
+
+def test_starred_gmail_legacy_name_creates_order_for_asian_passion(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = create_restaurant(client, name="Asian Passion")
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+
+    order = find_or_create_order_from_starred_text(
+        db_session,
+        owner,
+        (
+            "Bonsoir, je conteste l'annulation de la commande d'Antoine N, "
+            "numero de commande 3D22E le 10/05/2026. La commande a ete preparee.\n\n"
+            "Crousty Best"
+        ),
+    )
+
+    assert order is not None
+    assert order.restaurant_id == restaurant["id"]
+    assert order.uber_order_number == "3D22E"
+    assert order.customer_name == "Antoine N"
 
 
 def add_gmail_account(db_session: Session) -> EmailAccount:
