@@ -1064,17 +1064,20 @@ def create_starred_thread_reply_attempt(
     workflow: AppealWorkflow,
     starred_message: InboundEmailMessage,
     user: User,
+    reply_kind: str = "refusal",
 ) -> AppealAttempt:
     order = workflow.claim_order
     if order is None:
         raise AutopilotError("missing_claim_order", 409)
+    if reply_kind not in {"refusal", "followup"}:
+        raise AutopilotError("unsupported_starred_reply_kind", 409)
     draft = EmailDraft(
         order_id=order.id,
-        draft_type="appeal_generic_refusal",
+        draft_type="followup_1" if reply_kind == "followup" else "appeal_generic_refusal",
         subject=canonicalize_restaurant_names_in_text(
             starred_message.subject or f"Re: Contestation commande Uber Eats {display_order_number(order)}"
         ),
-        body=build_starred_thread_reply_body(order, workflow, starred_message),
+        body=build_starred_thread_reply_body(order, workflow, starred_message, reply_kind=reply_kind),
         status="created",
     )
     db.add(draft)
@@ -1086,7 +1089,7 @@ def create_starred_thread_reply_attempt(
         status="draft_created",
         based_on_refusal_message_id=starred_message.id,
         email_draft_id=draft.id,
-        argument_summary="starred_gmail_thread_reply",
+        argument_summary=f"starred_gmail_thread_{reply_kind}_reply",
         new_evidence_summary=None,
         created_by_user_id=user.id,
     )
@@ -1128,6 +1131,8 @@ def build_starred_thread_reply_body(
     order: ClaimOrder,
     workflow: AppealWorkflow,
     starred_message: InboundEmailMessage,
+    *,
+    reply_kind: str = "refusal",
 ) -> str:
     restaurant = order.restaurant
     subject_text = " ".join(value for value in [starred_message.subject, starred_message.snippet, starred_message.body_text] if value)
@@ -1136,10 +1141,17 @@ def build_starred_thread_reply_body(
     date_line = format_display_date(order.order_date)
     if date_line and f"du {date_line}" not in identity_phrase:
         identity_phrase = f"{identity_phrase}, du {date_line}"
-    opening = (
-        f"Je vous demande de reexaminer le refus concernant {identity_phrase} "
-        f"pour le restaurant {restaurant_display_name(restaurant) if restaurant else 'le restaurant'}."
-    )
+    if reply_kind == "followup":
+        opening = (
+            f"Je vous relance concernant {identity_phrase} "
+            f"pour le restaurant {restaurant_display_name(restaurant) if restaurant else 'le restaurant'}, "
+            "toujours sans decision de paiement claire."
+        )
+    else:
+        opening = (
+            f"Je vous demande de reexaminer le refus concernant {identity_phrase} "
+            f"pour le restaurant {restaurant_display_name(restaurant) if restaurant else 'le restaurant'}."
+        )
     if is_cancellation:
         argument = (
             "La commande avait ete acceptee et preparee avant l'annulation. "

@@ -49,6 +49,24 @@ def test_submitted_status_is_followup_needed_not_payment() -> None:
     assert classification.reason == "waiting_or_under_review_keywords"
 
 
+def test_french_sent_support_status_is_followup_needed() -> None:
+    message = InboundEmailMessage(
+        email_account_id=1,
+        provider_message_id="msg-envoye",
+        provider_thread_id="thread-envoye",
+        subject="Restaurant Support Help Center ENVOYE",
+        body_text="Votre demande a bien ete envoyee a l'assistance.",
+    )
+
+    classification = GmailResponseIntelligenceService().classify_message(message)
+    fast_review_type, fast_reason, _confidence = classify_unlinked_watched_message(message)
+
+    assert classification.review_type == "followup_needed"
+    assert classification.reason == "waiting_or_under_review_keywords"
+    assert fast_review_type == "followup_needed"
+    assert fast_reason == "fast_unlinked_followup_needed"
+
+
 def test_maintained_decision_is_refused() -> None:
     message = InboundEmailMessage(
         email_account_id=1,
