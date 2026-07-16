@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     gmail_scopes: str = (
         "https://www.googleapis.com/auth/gmail.compose "
         "https://www.googleapis.com/auth/gmail.send "
+        "https://www.googleapis.com/auth/gmail.modify "
         "https://www.googleapis.com/auth/gmail.readonly"
     )
     default_uber_eats_support_email: str = "restaurantsfrance@uber.com"

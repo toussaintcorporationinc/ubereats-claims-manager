@@ -81,6 +81,7 @@ from app.services.gmail_inbound_sync_service import (
 )
 from app.services.gmail_quota import parse_gmail_retry_after_from_errors, seconds_until_gmail_retry
 from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
+from app.services.gmail_scope_service import gmail_scopes_allow_modify
 from app.services.gmail_watched_thread_monitor_service import GmailWatchedThreadMonitorService
 from app.services.resend_email_provider import ResendEmailProvider
 from app.services.response_review_service import ResponseReviewError
@@ -95,6 +96,18 @@ def get_gmail_provider() -> EmailProvider:
 
 def get_resend_provider() -> ResendEmailProvider:
     return ResendEmailProvider()
+
+
+def _email_account_read(account: EmailAccount) -> EmailAccountRead:
+    return EmailAccountRead(
+        id=account.id,
+        provider=account.provider,
+        email_address=account.email_address,
+        scopes=account.scopes,
+        gmail_modify_enabled=gmail_scopes_allow_modify(account.scopes),
+        connected_at=account.connected_at,
+        disconnected_at=account.disconnected_at,
+    )
 
 
 def _as_int(value: object) -> int:
@@ -218,7 +231,7 @@ def gmail_status(
 ) -> GmailConnectionStatus:
     status_payload = provider.get_connection_status(db, current_user).__dict__
     status_payload["accounts"] = [
-        EmailAccountRead.model_validate(account)
+        _email_account_read(account)
         for account in get_connected_gmail_accounts(db, current_user)
     ]
     return GmailConnectionStatus.model_validate(status_payload)
@@ -229,7 +242,7 @@ def list_gmail_accounts(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_owner_or_manager),
 ) -> list[EmailAccountRead]:
-    return [EmailAccountRead.model_validate(account) for account in get_connected_gmail_accounts(db, current_user)]
+    return [_email_account_read(account) for account in get_connected_gmail_accounts(db, current_user)]
 
 
 @router.get("/v1/email/gmail/restaurant-mappings", response_model=list[GmailRestaurantMappingRead])

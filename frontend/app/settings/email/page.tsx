@@ -94,6 +94,8 @@ export default function EmailSettingsPage() {
     return <LoadingState label="Chargement email" />;
   }
 
+  const reconnectRequired = accounts.some((account) => !account.gmail_modify_enabled);
+
   return (
     <section className="page-section">
       <div className="page-heading">
@@ -120,7 +122,13 @@ export default function EmailSettingsPage() {
         ) : (
           <div className="actions">
             <button type="button" className="button" onClick={handleConnect} disabled={connecting}>
-              {connecting ? "Connexion" : status.connected ? "Connecter un autre Gmail" : "Connecter Gmail"}
+              {connecting
+                ? "Connexion"
+                : reconnectRequired
+                  ? "Reconnecter Gmail"
+                  : status.connected
+                    ? "Connecter un autre Gmail"
+                    : "Connecter Gmail"}
             </button>
             <button
               type="button"
@@ -147,6 +155,7 @@ export default function EmailSettingsPage() {
               <thead>
                 <tr>
                   <th>Compte</th>
+                  <th>Gestion des etoiles</th>
                   <th>Connecte le</th>
                 </tr>
               </thead>
@@ -154,6 +163,7 @@ export default function EmailSettingsPage() {
                 {accounts.map((account) => (
                   <tr key={account.id}>
                     <td>{account.email_address ?? "-"}</td>
+                    <td>{account.gmail_modify_enabled ? "Active" : "Reconnexion requise"}</td>
                     <td>{formatDate(account.connected_at)}</td>
                   </tr>
                 ))}
@@ -165,6 +175,11 @@ export default function EmailSettingsPage() {
           TENNET peut connecter plusieurs boites Gmail. Le compte utilise pour un dossier est choisi selon le
           restaurant ci-dessous.
         </p>
+        {reconnectRequired ? (
+          <p className="muted">
+            Reconnectez chaque compte signale pour autoriser TENNET a retirer les etoiles apres un paiement positif.
+          </p>
+        ) : null}
       </section>
 
       <section className="tool-panel">
@@ -230,8 +245,8 @@ export default function EmailSettingsPage() {
           <DetailItem label="Dernier succes" value={formatDate(inboundStatus?.last_success_at ?? null)} />
         </div>
         <p className="muted">
-          La lecture Gmail requiert le scope gmail.readonly. Les comptes connectes avant ce changement peuvent devoir
-          se reconnecter pour autoriser la lecture des reponses.
+          La lecture requiert gmail.readonly et le retrait des etoiles requiert gmail.modify. Les anciens comptes
+          doivent etre reconnectes une fois pour accorder les deux droits.
         </p>
         {inboundStatus?.last_error ? <p className="muted">Derniere erreur: {inboundStatus.last_error}</p> : null}
       </section>

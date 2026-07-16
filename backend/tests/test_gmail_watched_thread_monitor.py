@@ -212,6 +212,23 @@ class FakeWatchedGmailProvider:
         )
 
 
+class ToggleStarRemovalProvider(FakeWatchedGmailProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_star_removal = True
+
+    def remove_message_label_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        provider_message_id: str,
+        label: str,
+    ) -> None:
+        if self.fail_star_removal:
+            raise EmailProviderError("Gmail account must be reconnected with the gmail.modify permission", 409)
+        super().remove_message_label_for_account(db, account, provider_message_id, label)
+
+
 class FakeLightweightWatchedGmailProvider(FakeWatchedGmailProvider):
     def __init__(self) -> None:
         super().__init__()
@@ -1655,6 +1672,51 @@ def test_positive_watched_thread_removes_every_starred_message_in_thread(
     assert watched.star_active is False
     assert set(provider.removed_labels) == {("star-1", "STARRED"), ("star-2", "STARRED")}
     assert result.positive_responses >= 1
+
+
+def test_positive_star_removal_failure_stays_pending_and_retries_after_scope_grant(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    provider = ToggleStarRemovalProvider()
+    provider.starred_payloads = [payload("star-1", starred=True)]
+    provider.thread_payloads = {
+        "thread-f93ba": [
+            payload("star-1", starred=True),
+            payload("reply-positive-1", body="Bonjour, un paiement de 24.99 EUR est accorde pour F93BA."),
+        ]
+    }
+    install_fake_classifier(monkeypatch)
+    service = GmailWatchedThreadMonitorService(provider)
+
+    first_result = service.process_account(db_session, owner, account)
+
+    watched = db_session.scalar(select(GmailWatchedThread))
+    starred_message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "star-1")
+    )
+    assert watched is not None
+    assert starred_message is not None
+    assert watched.status == "payment_confirmed"
+    assert watched.star_active is True
+    assert "STARRED" in starred_message.provider_labels_json
+    assert provider.removed_labels == []
+    assert any("gmail.modify" in error for error in first_result.errors)
+
+    account.scopes = "https://www.googleapis.com/auth/gmail.modify"
+    provider.fail_star_removal = False
+    db_session.commit()
+
+    second_result = service.process_watched_threads(db_session, owner, account)
+
+    db_session.refresh(watched)
+    db_session.refresh(starred_message)
+    assert second_result.errors == []
+    assert watched.star_active is False
+    assert "STARRED" not in starred_message.provider_labels_json
+    assert provider.removed_labels == [("star-1", "STARRED")]
 
 
 def test_watched_thread_processes_only_latest_external_reply(

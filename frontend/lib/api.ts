@@ -386,6 +386,8 @@ export type EmailAccount = {
   id: number;
   provider: EmailProviderName;
   email_address: string | null;
+  scopes: string | null;
+  gmail_modify_enabled: boolean;
   connected_at: string;
   disconnected_at: string | null;
 };

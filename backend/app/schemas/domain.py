@@ -702,6 +702,8 @@ class EmailAccountRead(BaseModel):
     id: int
     provider: EmailProviderName
     email_address: str | None
+    scopes: str | None = None
+    gmail_modify_enabled: bool = False
     connected_at: datetime
     disconnected_at: datetime | None
 
