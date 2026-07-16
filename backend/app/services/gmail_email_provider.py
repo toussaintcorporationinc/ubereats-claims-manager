@@ -33,6 +33,7 @@ from app.services.email_provider import (
     InboundEmailPayload,
 )
 from app.services.file_storage_service import FileStorageError, resolve_evidence_path
+from app.services.gmail_scope_service import gmail_scopes_allow_modify, gmail_scopes_with_modify
 from app.services.token_cipher_service import TokenCipherService
 
 GMAIL_AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -106,6 +107,7 @@ class GmailEmailProvider:
     def build_authorization_url(self, user: User) -> str:
         settings = get_settings()
         self.ensure_enabled_and_configured(require_secret=False)
+        requested_scopes = gmail_scopes_with_modify(settings.gmail_scopes)
         state = create_access_token(
             str(user.id),
             {"purpose": "gmail_oauth_state", "provider": self.provider},
@@ -115,7 +117,7 @@ class GmailEmailProvider:
                 "client_id": settings.gmail_oauth_client_id,
                 "redirect_uri": settings.gmail_oauth_redirect_uri,
                 "response_type": "code",
-                "scope": settings.gmail_scopes,
+                "scope": requested_scopes,
                 "access_type": "offline",
                 "prompt": "consent",
                 "state": state,
@@ -137,7 +139,7 @@ class GmailEmailProvider:
             raise EmailProviderError("Gmail OAuth response did not include an access token", 502)
         refresh_token = token_payload.get("refresh_token")
         expires_in = int(token_payload.get("expires_in") or 3600)
-        scopes = token_payload.get("scope") or settings.gmail_scopes
+        scopes = token_payload.get("scope") or gmail_scopes_with_modify(settings.gmail_scopes)
         email_address = self.fetch_email_address(access_token)
 
         account = self.get_account_by_email(db, user.id, email_address)
@@ -597,6 +599,11 @@ class GmailEmailProvider:
         message_id: str,
         label_id: str,
     ) -> None:
+        if not gmail_scopes_allow_modify(account.scopes):
+            raise EmailProviderError(
+                "Gmail account must be reconnected with the gmail.modify permission",
+                409,
+            )
         access_token = self.access_token_for_external_call(db, account)
         self.post_json(
             f"{GMAIL_MESSAGES_URL}/{quote(message_id, safe='')}/modify",

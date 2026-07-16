@@ -36,6 +36,7 @@ from app.services.gmail_inbound_sync_service import (
     starred_payload_identity_context,
 )
 from app.services.gmail_quota import parse_gmail_retry_after
+from app.services.gmail_scope_service import gmail_scopes_allow_modify
 from app.services.autopilot_identity_repair_service import find_or_create_order_from_starred_text
 from app.services.appeal_workflow_service import AppealWorkflowError, ensure_workflow_for_claim_order, mark_appeal_sent
 from app.services.autopilot_service import (
@@ -51,6 +52,7 @@ logger = logging.getLogger(__name__)
 FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed", "manual_review", "skipped"}
 SKIPPABLE_FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed"}
 POSITIVE_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confirmed"}
+POSITIVE_WATCHED_STATUSES = {"positive", "payment_confirmed"}
 REFUSAL_REVIEW_TYPES = {"refused"}
 EVIDENCE_REVIEW_TYPES = {"evidence_requested", "information_requested"}
 FAST_POSITIVE_MARKERS = (
@@ -232,13 +234,32 @@ class GmailWatchedThreadMonitorService:
         if remaining_thread_budget <= 0:
             active_threads: list[GmailWatchedThread] = []
         else:
-            active_threads = self.get_active_watched_threads(db, account, max_per_cycle=remaining_thread_budget)
+            can_modify_stars = gmail_scopes_allow_modify(account.scopes)
+            active_threads = self.get_active_watched_threads(
+                db,
+                account,
+                max_per_cycle=remaining_thread_budget,
+                include_positive_star_cleanup=can_modify_stars,
+            )
+            if not can_modify_stars and self.count_pending_positive_star_cleanup(db, account):
+                result.errors.append("gmail_unstar:reconnect_required:gmail.modify")
         result.watched_threads_seen += len(active_threads)
         order_identifier_index = (
             self.sync_service.build_order_identifier_index(db, user) if active_threads else {}
         )
 
         for watched in active_threads:
+            if watched.status in POSITIVE_WATCHED_STATUSES:
+                self.remove_thread_star(
+                    db,
+                    user,
+                    watched,
+                    allow_remote_lookup=True,
+                    result=result,
+                )
+                watched.last_processed_at = utc_now()
+                db.flush()
+                continue
             try:
                 payloads = self.fetch_thread_payloads(db, account, watched)
             except Exception as exc:  # noqa: BLE001 - a broken thread must not stop the mailbox cycle.
@@ -1192,14 +1213,18 @@ class GmailWatchedThreadMonitorService:
         account: EmailAccount,
         *,
         max_per_cycle: int,
+        include_positive_star_cleanup: bool = False,
     ) -> list[GmailWatchedThread]:
+        statuses = ["active", "manual_review"]
+        if include_positive_star_cleanup:
+            statuses.extend(sorted(POSITIVE_WATCHED_STATUSES))
         return list(
             db.scalars(
                 select(GmailWatchedThread)
                 .options(selectinload(GmailWatchedThread.claim_order))
                 .where(
                     GmailWatchedThread.email_account_id == account.id,
-                    GmailWatchedThread.status.in_(["active", "manual_review"]),
+                    GmailWatchedThread.status.in_(statuses),
                     GmailWatchedThread.star_active.is_(True),
                 )
                 .order_by(
@@ -1209,6 +1234,18 @@ class GmailWatchedThreadMonitorService:
                 )
                 .limit(max_per_cycle)
             ).all()
+        )
+
+    def count_pending_positive_star_cleanup(self, db: Session, account: EmailAccount) -> int:
+        return int(
+            db.scalar(
+                select(func.count(GmailWatchedThread.id)).where(
+                    GmailWatchedThread.email_account_id == account.id,
+                    GmailWatchedThread.status.in_(sorted(POSITIVE_WATCHED_STATUSES)),
+                    GmailWatchedThread.star_active.is_(True),
+                )
+            )
+            or 0
         )
 
     def close_missing_watched_thread(
@@ -1681,7 +1718,13 @@ class GmailWatchedThreadMonitorService:
             result.positive_responses += 1
             if review_type == "payment_confirmed":
                 result.payment_confirmed += 1
-            self.remove_thread_star(db, user, watched, allow_remote_lookup=allow_remote_star_lookup)
+            self.remove_thread_star(
+                db,
+                user,
+                watched,
+                allow_remote_lookup=allow_remote_star_lookup,
+                result=result,
+            )
         elif review_type in REFUSAL_REVIEW_TYPES:
             item.status = "refused"
             item.reason = "uber_refusal"
@@ -1727,17 +1770,44 @@ class GmailWatchedThreadMonitorService:
         watched: GmailWatchedThread,
         *,
         allow_remote_lookup: bool = False,
-    ) -> None:
+        result: GmailWatchedThreadMonitorResult | None = None,
+    ) -> bool:
         starred_message_ids = self.starred_message_ids_for_thread(db, watched, allow_remote_lookup=allow_remote_lookup)
         remover = getattr(self.provider, "remove_message_label_for_account", None)
-        if callable(remover) and starred_message_ids:
+        account = db.get(EmailAccount, watched.email_account_id)
+        failure_reason: str | None = None
+        if not callable(remover):
+            failure_reason = "provider_unsupported"
+        elif account is None:
+            failure_reason = "email_account_missing"
+        elif not starred_message_ids:
+            failure_reason = "starred_message_id_missing"
+        else:
             try:
-                account = db.get(EmailAccount, watched.email_account_id)
-                if account is not None:
-                    for message_id in sorted(starred_message_ids):
-                        remover(db, account, message_id, "STARRED")
+                for message_id in sorted(starred_message_ids):
+                    remover(db, account, message_id, "STARRED")
             except Exception as exc:  # noqa: BLE001 - payment accounting must not fail on label cleanup.
-                logger.warning("Unable to remove Gmail star for watched thread %s: %s", watched.id, exc)
+                failure_reason = str(exc)[:240]
+
+        if failure_reason is not None:
+            error = f"gmail_unstar:{failure_reason}"
+            logger.warning("Unable to remove Gmail star for watched thread %s: %s", watched.id, failure_reason)
+            if result is not None and error not in result.errors:
+                result.errors.append(error)
+            add_audit_log(
+                db,
+                entity_type="gmail_watched_thread",
+                entity_id=watched.id,
+                action="gmail_watched_thread.star_removal_failed",
+                user_id=user.id,
+                new_value={
+                    "gmail_thread_id": watched.gmail_thread_id,
+                    "reason": failure_reason,
+                },
+            )
+            db.flush()
+            return False
+
         labels_text = cast(InboundEmailMessage.provider_labels_json, String)
         starred_messages = list(
             db.scalars(
@@ -1760,6 +1830,8 @@ class GmailWatchedThreadMonitorService:
             user_id=user.id,
             new_value={"gmail_thread_id": watched.gmail_thread_id},
         )
+        db.flush()
+        return True
 
     def starred_message_ids_for_thread(
         self,

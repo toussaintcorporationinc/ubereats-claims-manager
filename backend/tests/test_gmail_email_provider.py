@@ -3,6 +3,7 @@ from collections.abc import Generator
 from datetime import timedelta
 from email import policy
 from email.parser import BytesParser
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
@@ -330,6 +331,54 @@ def test_oauth_start_returns_authorization_url_if_enabled(client: TestClient, gm
     assert authorization_url.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
     assert "client_secret" not in authorization_url
     assert "test-client-id" in authorization_url
+    requested_scopes = parse_qs(urlparse(authorization_url).query)["scope"][0].split()
+    assert "https://www.googleapis.com/auth/gmail.modify" in requested_scopes
+
+
+def test_remove_message_label_requires_gmail_modify_scope(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    account = connect_gmail_account(db_session, owner.id)
+    provider = GmailEmailProvider()
+    post_calls: list[tuple[str, dict, dict]] = []
+    monkeypatch.setattr(provider, "post_json", lambda *args: post_calls.append(args))
+
+    with pytest.raises(EmailProviderError) as exc_info:
+        provider.remove_message_label_for_account(db_session, account, "message-1", "STARRED")
+
+    assert exc_info.value.status_code == 409
+    assert "gmail.modify" in exc_info.value.message
+    assert post_calls == []
+
+
+def test_gmail_accounts_report_modify_permission(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    account = connect_gmail_account(db_session, owner.id)
+
+    missing_response = client.get("/v1/email/gmail/accounts")
+
+    assert missing_response.status_code == 200
+    assert missing_response.json()[0]["gmail_modify_enabled"] is False
+
+    account.scopes = (
+        "https://www.googleapis.com/auth/gmail.compose "
+        "https://www.googleapis.com/auth/gmail.modify"
+    )
+    db_session.commit()
+
+    ready_response = client.get("/v1/email/gmail/accounts")
+
+    assert ready_response.status_code == 200
+    assert ready_response.json()[0]["gmail_modify_enabled"] is True
 
 
 def test_oauth_callback_refuses_invalid_state(unauthenticated_client: TestClient, gmail_enabled: None) -> None:
