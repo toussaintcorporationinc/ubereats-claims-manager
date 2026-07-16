@@ -593,6 +593,41 @@ def test_starred_identity_repair_reuses_existing_order_after_duplicate_race(
     )
 
 
+@pytest.mark.parametrize(
+    "protected_status",
+    ["accepted", "payment_to_verify", "payment_confirmed", "closed"],
+)
+def test_starred_identity_repair_preserves_positive_order_status(
+    db_session: Session,
+    gmail_case,
+    protected_status: str,
+) -> None:
+    owner, _account, order = gmail_case
+    order.status = protected_status
+    db_session.commit()
+
+    linked = identity_repair_service.create_or_update_order_from_identity(
+        db_session,
+        owner,
+        order.restaurant,
+        ResolvedOrderIdentity(
+            order_number=order.uber_order_number,
+            display_id=order.uber_order_number,
+            customer_name=order.customer_name,
+            order_date=order.order_date,
+            order_amount=order.order_amount,
+            currency=order.currency,
+            source="test",
+        ),
+        source="test",
+        case_type="refund",
+    )
+
+    assert linked is not None
+    assert linked.id == order.id
+    assert linked.status == protected_status
+
+
 def test_starred_discovery_uses_full_history_not_cycle_limit(
     db_session: Session,
     gmail_case,

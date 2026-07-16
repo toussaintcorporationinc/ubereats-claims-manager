@@ -48,6 +48,12 @@ INVALID_ORDER_IDENTIFIERS = {
     "SUJET",
     "THREAD",
 }
+IDENTITY_REPAIR_PROTECTED_STATUSES = {
+    "accepted",
+    "payment_to_verify",
+    "payment_confirmed",
+    "closed",
+}
 
 
 def repair_order_identity_for_autopilot(db: Session, user: User, order: ClaimOrder) -> bool:
@@ -154,9 +160,7 @@ def find_or_create_order_from_inbound_attachments(
         created = True
     else:
         apply_identity_to_order(order, identity)
-        if order.status not in {"payment_confirmed", "accepted", "closed"}:
-            order.status = "refused"
-            order.updated_at = utc_now()
+        mark_existing_order_refused_for_appeal(order)
         db.flush()
 
     ensure_workflow_for_claim_order(db, order, user)
@@ -609,15 +613,11 @@ def create_or_update_order_from_identity(
             if order is None:
                 raise
             apply_identity_to_order(order, identity)
-            if order.status not in {"payment_confirmed", "accepted", "closed"}:
-                order.status = "refused"
-                order.updated_at = utc_now()
+            mark_existing_order_refused_for_appeal(order)
             db.flush()
     else:
         apply_identity_to_order(order, identity)
-        if order.status not in {"payment_confirmed", "accepted", "closed"}:
-            order.status = "refused"
-            order.updated_at = utc_now()
+        mark_existing_order_refused_for_appeal(order)
         db.flush()
 
     ensure_workflow_for_claim_order(db, order, user)
@@ -635,6 +635,13 @@ def create_or_update_order_from_identity(
         },
     )
     return order
+
+
+def mark_existing_order_refused_for_appeal(order: ClaimOrder) -> None:
+    if order.status in IDENTITY_REPAIR_PROTECTED_STATUSES:
+        return
+    order.status = "refused"
+    order.updated_at = utc_now()
 
 
 def apply_identity_to_order(order: ClaimOrder, identity: ResolvedOrderIdentity) -> bool:
