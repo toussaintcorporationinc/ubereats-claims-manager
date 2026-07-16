@@ -42,6 +42,7 @@ from app.services.gmail_watched_thread_monitor_service import (
     GmailWatchedThreadMonitorService,
     bounded_fast_classification_body,
     classify_unlinked_watched_message,
+    payload_is_uber_support_survey,
 )
 from app.services.order_identity_resolution_service import ResolvedOrderIdentity
 
@@ -425,6 +426,27 @@ def test_fast_unlinked_positive_payment_wins_over_old_refusal_text() -> None:
     assert review_type == "payment_confirmed"
     assert reason == "fast_unlinked_payment_positive"
     assert confidence == Decimal("0.84")
+
+
+def test_support_survey_ignores_quoted_decision_but_not_decision_with_survey_footer() -> None:
+    standalone_survey = payload(
+        "survey-with-quote",
+        subject="Commercant - Assistance client",
+        body=(
+            "Partagez votre experience avec le service d'assistance Uber. "
+            "Ancien message cite : nous maintenons le refus."
+        ),
+    )
+    decision_with_footer = payload(
+        "decision-with-survey-footer",
+        body=(
+            "Bonjour, un paiement de 24.99 EUR est accorde pour F93BA. "
+            "Partagez votre experience avec le service d'assistance Uber."
+        ),
+    )
+
+    assert payload_is_uber_support_survey(standalone_survey) is True
+    assert payload_is_uber_support_survey(decision_with_footer) is False
 
 
 def test_starred_message_creates_watched_thread_and_work_item(
@@ -918,6 +940,110 @@ def test_refused_work_items_are_sent_before_older_evidence_requests(
     assert refused_item.status == "processed"
     assert refused_item.reason == "gmail_reply_sent"
     assert evidence_item.status == "evidence_needed"
+
+
+def test_old_submitted_ack_is_relaunched_in_thread_with_cooldown(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_COOLDOWN_HOURS", "48")
+    get_settings.cache_clear()
+    message = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=order.id,
+        provider="gmail",
+        provider_message_id="reply-submitted-old",
+        provider_thread_id="thread-submitted-old",
+        gmail_history_id="history-submitted-old",
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject="Restaurant Support Help Center ENVOYE",
+        snippet="Support SUBMITTED",
+        body_text="Votre demande a bien ete envoyee a l'assistance.",
+        received_at=utc_now() - timedelta(days=3),
+        raw_headers_json={},
+        provider_labels_json=["INBOX"],
+        match_status="linked",
+        match_reason="order_number_match",
+        review_status="reviewed",
+    )
+    db_session.add(message)
+    db_session.flush()
+    db_session.add(
+        GmailResponseAnalysis(
+            inbound_message_id=message.id,
+            order_id=order.id,
+            recommended_review_type="followup_needed",
+            status="analyzed",
+            confidence_score=Decimal("0.66"),
+            reason="waiting_or_under_review_keywords",
+        )
+    )
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-submitted-old",
+        first_starred_message_id="star-submitted-old",
+        claim_order_id=order.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="manual_review",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.flush()
+    item = GmailStarredWorkItem(
+        watched_thread_id=watched.id,
+        email_account_id=account.id,
+        gmail_thread_id=watched.gmail_thread_id,
+        provider_message_id=message.provider_message_id,
+        inbound_message_id=message.id,
+        status="manual_review",
+        reason="waiting_or_under_review_keywords",
+        processed_at=message.received_at,
+    )
+    db_session.add(item)
+    db_session.commit()
+    provider = FakeWatchedGmailProvider()
+    service = GmailWatchedThreadMonitorService(provider)
+
+    first_result = GmailWatchedThreadMonitorResult()
+    service.send_pending_actionable_replies(db_session, owner, account, result=first_result, max_items=10)
+
+    db_session.refresh(item)
+    workflow = db_session.scalar(select(AppealWorkflow).where(AppealWorkflow.claim_order_id == order.id))
+    draft = db_session.scalar(select(EmailDraft).where(EmailDraft.order_id == order.id).order_by(EmailDraft.id.desc()))
+    assert workflow is not None
+    assert draft is not None
+    assert first_result.autopilot_sent_count == 1
+    assert provider.sent_drafts == [draft.provider_drafts[0].id]
+    assert item.status == "manual_review"
+    assert item.reason == "gmail_followup_reply_sent"
+    assert "Je vous relance concernant" in draft.body
+    assert "reexaminer le refus" not in draft.body
+    assert workflow.appeal_attempt_count == 1
+
+    second_result = GmailWatchedThreadMonitorResult()
+    service.send_pending_actionable_replies(db_session, owner, account, result=second_result, max_items=10)
+
+    db_session.refresh(item)
+    assert second_result.autopilot_sent_count == 0
+    assert second_result.autopilot_skipped_count == 1
+    assert item.reason == "followup_cooldown_active"
+    assert len(provider.sent_drafts) == 1
+
+    workflow.last_appeal_sent_at = utc_now() - timedelta(hours=49)
+    db_session.commit()
+    third_result = GmailWatchedThreadMonitorResult()
+    service.send_pending_actionable_replies(db_session, owner, account, result=third_result, max_items=10)
+
+    db_session.refresh(workflow)
+    assert third_result.autopilot_sent_count == 1
+    assert len(provider.sent_drafts) == 2
+    assert workflow.appeal_attempt_count == 2
 
 
 def test_refused_watched_thread_repairs_missing_order_from_thread_text_before_reply(
@@ -1748,6 +1874,92 @@ def test_watched_thread_processes_only_latest_external_reply(
     assert db_session.scalar(
         select(func.count(GmailStarredWorkItem.id)).where(GmailStarredWorkItem.provider_message_id == "reply-old-1")
     ) == 0
+
+
+def test_latest_uber_survey_falls_back_to_previous_positive_reply(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    account.scopes = "https://www.googleapis.com/auth/gmail.modify"
+    db_session.commit()
+    provider = FakeFastWatchedGmailProvider()
+    provider.starred_payloads = [payload("star-1", body="Ancienne reponse Uber pour F93BA.", starred=True)]
+    survey = payload(
+        "survey-1",
+        subject="Commercant - Assistance client",
+        body="Partagez votre experience avec le service d'assistance Uber.",
+    )
+    provider.latest_payloads = {"thread-f93ba": survey}
+    provider.thread_payloads = {
+        "thread-f93ba": [
+            payload("star-1", body="Ancienne reponse Uber pour F93BA.", starred=True),
+            payload("reply-positive-1", body="Bonjour, un paiement de 24.99 EUR est accorde pour F93BA."),
+            survey,
+        ]
+    }
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(db_session, owner, account)
+
+    watched = db_session.scalar(select(GmailWatchedThread))
+    positive_item = db_session.scalar(
+        select(GmailStarredWorkItem).where(GmailStarredWorkItem.provider_message_id == "reply-positive-1")
+    )
+    survey_item = db_session.scalar(
+        select(GmailStarredWorkItem).where(GmailStarredWorkItem.provider_message_id == "survey-1")
+    )
+    assert watched is not None
+    assert watched.status == "payment_confirmed"
+    assert watched.star_active is False
+    assert positive_item is not None
+    assert positive_item.status == "positive"
+    assert survey_item is None
+    assert result.positive_responses == 1
+    assert ("star-1", "STARRED") in provider.removed_labels
+
+
+def test_latest_uber_survey_falls_back_to_previous_refusal_reply(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    provider = FakeFastWatchedGmailProvider()
+    provider.starred_payloads = [payload("star-1", body="Ancienne reponse Uber pour F93BA.", starred=True)]
+    survey = payload(
+        "survey-refusal-1",
+        subject="Commercant - Assistance client",
+        body="Partagez votre experience avec le service d'assistance Uber.",
+    )
+    provider.latest_payloads = {"thread-f93ba": survey}
+    provider.thread_payloads = {
+        "thread-f93ba": [
+            payload("star-1", body="Ancienne reponse Uber pour F93BA.", starred=True),
+            payload("reply-refusal-1", body="Bonjour, nous maintenons le refus pour F93BA."),
+            survey,
+        ]
+    }
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(db_session, owner, account)
+
+    watched = db_session.scalar(select(GmailWatchedThread))
+    refused_item = db_session.scalar(
+        select(GmailStarredWorkItem).where(GmailStarredWorkItem.provider_message_id == "reply-refusal-1")
+    )
+    survey_item = db_session.scalar(
+        select(GmailStarredWorkItem).where(GmailStarredWorkItem.provider_message_id == "survey-refusal-1")
+    )
+    assert watched is not None
+    assert watched.status == "active"
+    assert watched.star_active is True
+    assert refused_item is not None
+    assert refused_item.status == "refused"
+    assert survey_item is None
+    assert result.refused_responses == 1
+    assert provider.removed_labels == []
 
 
 def test_watched_thread_skips_non_uber_external_reply(

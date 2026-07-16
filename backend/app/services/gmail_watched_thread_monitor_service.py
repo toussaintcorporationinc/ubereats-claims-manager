@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 import unicodedata
 
-from sqlalchemy import String, case, cast, func, select
+from sqlalchemy import String, and_, case, cast, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -114,6 +114,31 @@ FAST_EVIDENCE_MARKERS = (
     "fournir",
     "provide evidence",
     "additional information",
+)
+FAST_FOLLOWUP_MARKERS = (
+    "support submitted",
+    "case submitted",
+    "demande soumise",
+    "dossier soumis",
+    "demande envoyee",
+    "requete envoyee",
+    "restaurant support help center envoye",
+    "en cours de traitement",
+    "en cours d examen",
+    "under review",
+    "we are reviewing",
+)
+UBER_SUPPORT_SURVEY_MARKERS = (
+    "partagez votre experience avec le service d assistance uber",
+    "partagez votre experience avec le service d'assistance uber",
+    "partagez votre experience avec l assistance uber",
+    "partagez votre experience avec l'assistance uber",
+    "comment evalueriez vous votre experience",
+    "donnez votre avis sur l assistance uber",
+    "share your experience with uber support",
+    "rate your support experience",
+    "how would you rate your support experience",
+    "how did we do",
 )
 FAST_CLASSIFICATION_BODY_HEAD_CHARS = 12000
 FAST_CLASSIFICATION_BODY_TAIL_CHARS = 6000
@@ -397,10 +422,20 @@ class GmailWatchedThreadMonitorService:
                     InboundEmailMessage.id == GmailStarredWorkItem.inbound_message_id,
                 )
                 .outerjoin(ClaimOrder, ClaimOrder.id == InboundEmailMessage.order_id)
+                .outerjoin(
+                    GmailResponseAnalysis,
+                    GmailResponseAnalysis.inbound_message_id == InboundEmailMessage.id,
+                )
                 .where(
                     GmailStarredWorkItem.email_account_id == account.id,
                     GmailStarredWorkItem.inbound_message_id.is_not(None),
-                    GmailStarredWorkItem.status.in_(["refused", "evidence_needed"]),
+                    or_(
+                        GmailStarredWorkItem.status.in_(["refused", "evidence_needed"]),
+                        and_(
+                            GmailStarredWorkItem.status == "manual_review",
+                            GmailResponseAnalysis.recommended_review_type == "followup_needed",
+                        ),
+                    ),
                     GmailWatchedThread.status.in_(["active", "manual_review"]),
                     GmailWatchedThread.star_active.is_(True),
                 )
@@ -408,7 +443,8 @@ class GmailWatchedThreadMonitorService:
                     case(
                         (GmailStarredWorkItem.status == "refused", 0),
                         (GmailStarredWorkItem.status == "evidence_needed", 1),
-                        else_=2,
+                        (GmailStarredWorkItem.status == "manual_review", 2),
+                        else_=3,
                     ),
                     case((ClaimOrder.order_amount.is_(None), 1), else_=0),
                     ClaimOrder.order_amount.desc(),
@@ -448,6 +484,8 @@ class GmailWatchedThreadMonitorService:
     ) -> bool:
         if item.status == "evidence_needed":
             return self.send_evidence_reply_for_work_item(db, user, account, watched, item, message, result)
+        if item.status == "manual_review":
+            return self.send_followup_reply_for_work_item(db, user, account, watched, item, message, result)
         return self.send_refused_reply_for_work_item(db, user, account, watched, item, message, result)
 
     def send_refused_reply_for_work_item(
@@ -588,6 +626,170 @@ class GmailWatchedThreadMonitorService:
             entity_type="gmail_watched_thread",
             entity_id=watched.id,
             action="gmail_watched_thread.refusal_reply_sent",
+            user_id=user.id,
+            new_value={
+                "gmail_thread_id": watched.gmail_thread_id,
+                "provider_message_id": message.provider_message_id,
+                "order_id": order.id,
+            },
+        )
+        db.flush()
+        return True
+
+    def send_followup_reply_for_work_item(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        watched: GmailWatchedThread,
+        item: GmailStarredWorkItem,
+        message: InboundEmailMessage,
+        result: GmailWatchedThreadMonitorResult,
+    ) -> bool:
+        """Relance an old Uber acknowledgement that still has no decision."""
+        if not self.settings.autopilot_enabled or not self.settings.autopilot_appeals_enabled:
+            item.reason = "autopilot_disabled"
+            result.autopilot_skipped_count += 1
+            return False
+
+        order = message.order or (db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else None)
+        if order is None:
+            try:
+                order = self.repair_watched_thread_from_payloads(
+                    db,
+                    user,
+                    watched,
+                    self.fetch_thread_payloads(db, account, watched, prefer_full_thread=True),
+                )
+            except Exception as exc:  # noqa: BLE001 - one missing Gmail thread must not stop the queue.
+                item.reason = f"followup_identity_repair_failed:{str(exc)[:120]}"
+                self.mark_work_item_manual_review(db, item)
+                result.autopilot_skipped_count += 1
+                result.errors.append(f"followup_identity_repair:{str(exc)[:160]}")
+                return False
+        if order is None:
+            item.reason = "missing_linked_order_for_followup"
+            self.mark_work_item_manual_review(db, item)
+            result.autopilot_skipped_count += 1
+            return False
+        if message.order_id is None:
+            message.order_id = order.id
+        if watched.claim_order_id is None:
+            watched.claim_order_id = order.id
+            watched.linked_case_type = "claim_order"
+            watched.linked_case_id = order.id
+
+        workflow = ensure_workflow_for_claim_order(db, order, user)
+        watched.appeal_workflow_id = workflow.id
+        if workflow.appeal_attempt_count >= self.settings.autopilot_max_appeal_attempts:
+            item.reason = "max_appeal_attempts_reached"
+            self.mark_work_item_skipped(db, item)
+            result.autopilot_skipped_count += 1
+            return False
+
+        cooldown_reference = latest_datetime(
+            message.received_at or item.created_at,
+            workflow.last_appeal_sent_at,
+            order.last_followup_sent_at,
+        )
+        if datetime_within_cooldown(cooldown_reference, self.settings.autopilot_cooldown_hours):
+            item.reason = "followup_cooldown_active"
+            item.processed_at = utc_now()
+            item.updated_at = item.processed_at
+            result.autopilot_skipped_count += 1
+            db.flush()
+            return False
+
+        existing_attempt = self.latest_attempt_for_refusal_message(db, message)
+        refresh_restaurant_identity = self.attempt_uses_legacy_restaurant_name(existing_attempt)
+        if existing_attempt and existing_attempt.provider_draft and existing_attempt.provider_draft.status == "send_requested":
+            item.reason = "followup_send_already_requested"
+            result.autopilot_skipped_count += 1
+            return False
+
+        try:
+            attempt = (
+                existing_attempt
+                if existing_attempt
+                and existing_attempt.email_draft
+                and existing_attempt.provider_draft
+                and existing_attempt.provider_draft.status == "provider_draft_created"
+                and not refresh_restaurant_identity
+                else None
+            )
+            if (
+                refresh_restaurant_identity
+                and existing_attempt is not None
+                and existing_attempt.provider_draft is not None
+                and existing_attempt.provider_draft.status == "provider_draft_created"
+            ):
+                existing_attempt.provider_draft.status = "failed"
+                existing_attempt.provider_draft.last_error = "superseded_restaurant_identity"
+                existing_attempt.provider_draft.updated_at = utc_now()
+            if attempt is None:
+                attempt = create_starred_thread_reply_attempt(
+                    db,
+                    workflow=workflow,
+                    starred_message=message,
+                    user=user,
+                    reply_kind="followup",
+                )
+
+            provider_draft = attempt.provider_draft
+            if provider_draft is None:
+                provider_draft = self.create_draft_for_watched_account(
+                    db,
+                    user,
+                    account,
+                    attempt.email_draft,
+                    to_email=safe_autopilot_recipient(),
+                    include_evidence=True,
+                    watched=watched,
+                    reply_message=message,
+                )
+                attempt.provider_draft_id = provider_draft.id
+                attempt.status = "gmail_draft_created"
+                db.flush()
+
+            send_provider_draft(
+                db,
+                user,
+                provider_draft,
+                self.provider,
+                order_status_after_send=None,
+                require_reply_thread=True,
+            )
+            try:
+                mark_appeal_sent(db, workflow=workflow, user=user)
+            except AppealWorkflowError as exc:
+                if exc.message != "Appeal attempt is already marked as sent":
+                    raise
+        except AutopilotError as exc:
+            if exc.message == "gmail_account_daily_limit_reached":
+                item.reason = exc.message
+                result.autopilot_skipped_count += 1
+                return False
+            item.reason = f"followup_send_blocked:{exc.message}"
+            result.autopilot_failed_count += 1
+            result.errors.append(f"followup_send:{exc.message}")
+            return False
+        except Exception as exc:  # noqa: BLE001 - one Gmail thread must not stop the queue.
+            logger.exception("Unable to send Gmail followup for watched thread %s", watched.gmail_thread_id)
+            item.reason = f"followup_send_failed:{str(exc)[:120]}"
+            result.autopilot_failed_count += 1
+            result.errors.append(f"followup_send:{str(exc)[:160]}")
+            return False
+
+        item.status = "manual_review"
+        item.reason = "gmail_followup_reply_sent"
+        item.processed_at = utc_now()
+        item.updated_at = item.processed_at
+        result.autopilot_sent_count += 1
+        add_audit_log(
+            db,
+            entity_type="gmail_watched_thread",
+            entity_id=watched.id,
+            action="gmail_watched_thread.pending_reply_followup_sent",
             user_id=user.id,
             new_value={
                 "gmail_thread_id": watched.gmail_thread_id,
@@ -973,6 +1175,7 @@ class GmailWatchedThreadMonitorService:
             for payload in deduped.values()
             if not self.payload_from_account(payload, account)
             and sender_matches_filter(payload.from_email, self.settings.gmail_support_sender_filter)
+            and not payload_is_uber_support_survey(payload)
         ]
         if not candidates:
             return []
@@ -1310,11 +1513,17 @@ class GmailWatchedThreadMonitorService:
         prefer_full_thread: bool = False,
     ) -> list[InboundEmailPayload]:
         get_thread_messages = getattr(self.provider, "get_thread_messages_for_account", None)
-        if prefer_full_thread and watched.claim_order_id is None and callable(get_thread_messages):
+
+        def fetch_full_thread() -> list[InboundEmailPayload]:
+            if not callable(get_thread_messages):
+                return []
             try:
-                payloads = list(get_thread_messages(db, account, watched.gmail_thread_id, include_attachments=False))
+                return list(get_thread_messages(db, account, watched.gmail_thread_id, include_attachments=False))
             except TypeError:
-                payloads = list(get_thread_messages(db, account, watched.gmail_thread_id))
+                return list(get_thread_messages(db, account, watched.gmail_thread_id))
+
+        if prefer_full_thread and watched.claim_order_id is None and callable(get_thread_messages):
+            payloads = fetch_full_thread()
             if payloads:
                 return payloads
 
@@ -1322,26 +1531,28 @@ class GmailWatchedThreadMonitorService:
         if watched.claim_order_id is None and callable(get_latest_external_message):
             latest_payload = get_latest_external_message(db, account, watched.gmail_thread_id)
             if latest_payload is not None:
+                if payload_is_uber_support_survey(latest_payload):
+                    payloads = fetch_full_thread()
+                    if payloads:
+                        return payloads
                 return [latest_payload]
 
         if watched.claim_order_id is None and callable(get_thread_messages):
-            try:
-                payloads = list(get_thread_messages(db, account, watched.gmail_thread_id, include_attachments=False))
-            except TypeError:
-                payloads = list(get_thread_messages(db, account, watched.gmail_thread_id))
+            payloads = fetch_full_thread()
             if payloads:
                 return payloads
 
         if callable(get_latest_external_message):
             latest_payload = get_latest_external_message(db, account, watched.gmail_thread_id)
             if latest_payload is not None:
+                if payload_is_uber_support_survey(latest_payload):
+                    payloads = fetch_full_thread()
+                    if payloads:
+                        return payloads
                 return [latest_payload]
 
         if callable(get_thread_messages):
-            try:
-                return list(get_thread_messages(db, account, watched.gmail_thread_id, include_attachments=False))
-            except TypeError:
-                return list(get_thread_messages(db, account, watched.gmail_thread_id))
+            return fetch_full_thread()
         return [
             inbound_payload_from_message(message)
             for message in db.scalars(
@@ -1962,6 +2173,26 @@ def datetime_after(left: datetime, right: datetime | None) -> bool:
     return left > right
 
 
+def latest_datetime(*values: datetime | None) -> datetime | None:
+    available = [value for value in values if value is not None]
+    if not available:
+        return None
+    reference_tz = next((value.tzinfo for value in available if value.tzinfo is not None), None)
+    comparable = [value.replace(tzinfo=reference_tz) if value.tzinfo is None and reference_tz else value for value in available]
+    return max(comparable)
+
+
+def datetime_within_cooldown(value: datetime | None, cooldown_hours: int) -> bool:
+    if value is None or cooldown_hours <= 0:
+        return False
+    now = utc_now()
+    if value.tzinfo is None and now.tzinfo is not None:
+        value = value.replace(tzinfo=now.tzinfo)
+    elif value.tzinfo is not None and now.tzinfo is None:
+        now = now.replace(tzinfo=value.tzinfo)
+    return value + timedelta(hours=cooldown_hours) > now
+
+
 def gmail_resource_not_found(exc: Exception) -> bool:
     if isinstance(exc, EmailProviderError) and exc.status_code == 404:
         return True
@@ -1995,6 +2226,8 @@ def classify_unlinked_watched_message(message: InboundEmailMessage) -> tuple[str
         return "refused", "fast_unlinked_uber_refusal", Decimal("0.82")
     if any(marker in text for marker in FAST_EVIDENCE_MARKERS):
         return "evidence_requested", "fast_unlinked_evidence_requested", Decimal("0.75")
+    if any(marker in text for marker in FAST_FOLLOWUP_MARKERS):
+        return "followup_needed", "fast_unlinked_followup_needed", Decimal("0.66")
     return "manual_review", "fast_unlinked_manual_review", Decimal("0.50")
 
 
@@ -2002,6 +2235,24 @@ def normalize_fast_classification_text(text: str) -> str:
     normalized = unicodedata.normalize("NFKD", text.casefold())
     without_accents = "".join(char for char in normalized if not unicodedata.combining(char))
     return " ".join(without_accents.replace("\xa0", " ").split())
+
+
+def payload_is_uber_support_survey(payload: InboundEmailPayload) -> bool:
+    """Identify standalone satisfaction surveys without hiding real decisions."""
+    subject = normalize_fast_classification_text(payload.subject or "")
+    body_head = normalize_fast_classification_text((payload.body_text or "")[:1200])
+    lead = f"{subject} {body_head[:500]}".strip()
+    survey_positions = [lead.find(marker) for marker in UBER_SUPPORT_SURVEY_MARKERS if marker in lead]
+    if not survey_positions:
+        return False
+    text_before_survey = lead[: min(survey_positions)]
+    actionable_markers = (
+        *FAST_POSITIVE_MARKERS,
+        *FAST_REFUSAL_MARKERS,
+        *FAST_EVIDENCE_MARKERS,
+        *FAST_FOLLOWUP_MARKERS,
+    )
+    return not any(marker in text_before_survey for marker in actionable_markers)
 
 
 def bounded_fast_classification_body(body_text: str | None) -> str:
