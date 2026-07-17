@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import unescape
+from html.parser import HTMLParser
 import re
 import unicodedata
 
@@ -54,15 +56,30 @@ PAYMENT_CONTEXT_MARKERS = (
     "credited",
 )
 PAYMENT_APPROVAL_MARKERS = (
-    "accord",
-    "accept",
-    "approuv",
-    "rembours",
-    "verse",
-    "credite",
-    "applique",
+    "accorde",
+    "accepte",
+    "approuve",
+    "paiement accorde",
+    "remboursement accorde",
+    "remboursement accepte",
+    "remboursement approuve",
+    "sera rembourse",
+    "a ete rembourse",
+    "avons rembourse",
+    "remboursement effectue",
+    "remboursement traite",
+    "sera verse",
+    "a ete verse",
+    "avons verse",
+    "sera credite",
+    "a ete credite",
+    "avons credite",
+    "ajustement applique",
     "approved",
-    "paid",
+    "accepted",
+    "issued",
+    "processed",
+    "paid out",
     "credited",
 )
 PAYMENT_REJECTION_MARKERS = (
@@ -79,10 +96,44 @@ PAYMENT_REJECTION_MARKERS = (
     "cannot refund",
 )
 PAYMENT_AMOUNT_PATTERN = re.compile(
-    r"(?:€\s*\d+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?\s*(?:€|eur|euros?))",
+    r"(?<![\w])(?:€\s*\d+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?\s*(?:€|eur|euros?))(?![\w])",
     re.I,
 )
 PAYMENT_SIGNAL_TEXT_LIMIT = 12000
+IGNORED_HTML_TAGS = {"head", "script", "style", "svg", "title"}
+
+
+class VisibleEmailTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.chunks: list[str] = []
+        self.ignored_tag: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        normalized_tag = tag.casefold()
+        if self.ignored_tag is None and normalized_tag in IGNORED_HTML_TAGS:
+            self.ignored_tag = normalized_tag
+
+    def handle_endtag(self, tag: str) -> None:
+        normalized_tag = tag.casefold()
+        if normalized_tag == self.ignored_tag:
+            self.ignored_tag = None
+
+    def handle_data(self, data: str) -> None:
+        if self.ignored_tag is None and data.strip():
+            self.chunks.append(data)
+
+
+def visible_email_text(text: str) -> str:
+    if "<" not in text or ">" not in text:
+        return unescape(text)
+    parser = VisibleEmailTextParser()
+    try:
+        parser.feed(text)
+        parser.close()
+    except (ValueError, AssertionError):
+        return unescape(text)
+    return unescape(" ".join(parser.chunks))
 
 
 def normalize_payment_signal_text(text: str) -> str:
@@ -92,7 +143,11 @@ def normalize_payment_signal_text(text: str) -> str:
 
 
 def current_response_text(message: InboundEmailMessage) -> str:
-    text = "\n".join(part for part in (message.subject or "", message.snippet or "", message.body_text or "") if part)
+    text = "\n".join(
+        visible_email_text(part)
+        for part in (message.subject or "", message.snippet or "", message.body_text or "")
+        if part
+    )
     normalized_newlines = text.replace("\r\n", "\n").replace("\r", "\n")
     for marker in (
         "Continue this conversation by replying to this email.",
