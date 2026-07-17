@@ -26,6 +26,7 @@ from app.services.autopilot_identity_repair_service import (
 from app.services.autopilot_service import AutopilotError, iter_candidates, run_autopilot
 from app.services.appeal_workflow_service import ensure_workflow_for_claim_order
 from app.services.email_provider import EmailProvider, EmailProviderError, InboundEmailPayload
+from app.services.gmail_payment_signal_service import message_has_explicit_payment_confirmation
 from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
 
 FINAL_ORDER_STATUSES = {"accepted", "payment_confirmed", "refused", "closed"}
@@ -451,7 +452,10 @@ class GmailInboundSyncService:
             if analysis.recommended_review_type in ACTIONABLE_NEGATIVE_REVIEW_TYPES:
                 result.negative_responses_detected += 1
             elif analysis.recommended_review_type in POSITIVE_PAYMENT_REVIEW_TYPES:
-                self.remove_star_after_positive_signal(db, user, account, inbound_message, result)
+                if message_has_explicit_payment_confirmation(inbound_message):
+                    self.remove_star_after_positive_signal(db, user, account, inbound_message, result)
+                else:
+                    result.manual_review_messages += 1
         elif analysis.status == "manual_review":
             result.manual_review_messages += 1
         elif analysis.status == "failed":

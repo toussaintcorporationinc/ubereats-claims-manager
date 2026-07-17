@@ -1187,6 +1187,53 @@ def test_auto_sync_marks_unexpected_sync_failure_failed(
     get_settings.cache_clear()
 
 
+def test_auto_sync_second_account_failure_preserves_first_account_state(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class SecondAccountBrokenProvider(FakeInboundGmailProvider):
+        def __init__(self, failing_user_id: int) -> None:
+            super().__init__()
+            self.failing_user_id = failing_user_id
+
+        def list_messages(self, db: Session, user: User, query: str, max_results: int) -> list[str]:
+            if user.id == self.failing_user_id:
+                raise RuntimeError("second gmail account exploded")
+            return super().list_messages(db, user, query, max_results)
+
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_WATCHED_THREADS_ENABLED", "false")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    manager = User(
+        email="manager-sync@example.com",
+        hashed_password="test-password-hash",
+        full_name="Manager Sync",
+        role="manager",
+        active=True,
+    )
+    db_session.add(manager)
+    db_session.commit()
+    connect_gmail_account(db_session, owner.id, "first-account@example.com")
+    connect_gmail_account(db_session, manager.id, "second-account@example.com")
+    accounts = list(db_session.scalars(select(EmailAccount).order_by(EmailAccount.id)).all())
+    assert len(accounts) == 2
+
+    result = GmailInboundAutoSyncService(SecondAccountBrokenProvider(manager.id)).sync_due_accounts(db_session)
+
+    states = {
+        state.email_account_id: state
+        for state in db_session.scalars(select(GmailSyncState).order_by(GmailSyncState.email_account_id)).all()
+    }
+    assert result.accounts_synced == 1
+    assert result.errors == [f"email_account:{accounts[1].id}:second gmail account exploded"]
+    assert states[accounts[0].id].status == "success"
+    assert states[accounts[1].id].status == "failed"
+    get_settings.cache_clear()
+
+
 def test_auto_sync_limits_existing_reprocess_backlog(
     client: TestClient,
     db_session: Session,
@@ -2067,7 +2114,7 @@ def test_ai_gmail_analysis_applies_ambiguous_negative_response(
     get_settings.cache_clear()
 
 
-def test_ai_gmail_payment_confirmed_requires_amount(
+def test_ai_gmail_positive_without_amount_or_promise_requires_manual_review(
     client: TestClient,
     db_session: Session,
     gmail_inbound_enabled: None,
@@ -2114,13 +2161,13 @@ def test_ai_gmail_payment_confirmed_requires_amount(
 
     assert response.status_code == 200
     db_session.refresh(order)
-    assert order.status == "payment_to_verify"
+    assert order.status == "response_received"
     assert order.recovered_amount is None
     analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
     assert analysis is not None
-    assert analysis.status == "applied"
-    assert analysis.recommended_review_type == "payment_to_verify"
-    assert analysis.reason == "ai_payment_without_amount"
+    assert analysis.status == "manual_review"
+    assert analysis.recommended_review_type == "manual_review"
+    assert analysis.reason == "positive_without_explicit_payment_confirmation"
     get_settings.cache_clear()
 
 
