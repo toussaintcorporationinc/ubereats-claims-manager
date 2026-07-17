@@ -963,6 +963,152 @@ def test_existing_remote_draft_blocks_duplicate_draft_creation(
     assert provider.created_drafts == []
 
 
+def test_newer_uber_message_blocks_reply_to_stale_refusal(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    watched, item, _message = add_refused_work_item(
+        db_session,
+        account,
+        order,
+        thread_id="thread-stale-refusal",
+    )
+    provider = FakeFastWatchedGmailProvider()
+    provider.latest_payloads[watched.gmail_thread_id] = payload(
+        "newer-uber-message",
+        thread_id=watched.gmail_thread_id,
+    )
+    result = GmailWatchedThreadMonitorResult()
+
+    GmailWatchedThreadMonitorService(provider).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=10,
+    )
+
+    db_session.refresh(item)
+    db_session.refresh(watched)
+    assert result.autopilot_sent_count == 0
+    assert result.autopilot_skipped_count == 1
+    assert item.status == "skipped"
+    assert item.reason == "superseded_by_newer_uber_message"
+    assert watched.status == "manual_review"
+    assert provider.created_drafts == []
+    assert provider.sent_drafts == []
+
+
+def test_latest_uber_survey_blocks_automatic_reply_to_old_refusal(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    watched, item, _message = add_refused_work_item(
+        db_session,
+        account,
+        order,
+        thread_id="thread-latest-survey",
+    )
+    provider = FakeFastWatchedGmailProvider()
+    provider.latest_payloads[watched.gmail_thread_id] = payload(
+        "latest-support-survey",
+        thread_id=watched.gmail_thread_id,
+        subject="Commercant - Assistance client",
+        body="Partagez votre experience avec le service d'assistance Uber.",
+    )
+    result = GmailWatchedThreadMonitorResult()
+
+    GmailWatchedThreadMonitorService(provider).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=10,
+    )
+
+    db_session.refresh(item)
+    assert result.autopilot_sent_count == 0
+    assert item.status == "skipped"
+    assert item.reason == "latest_uber_reply_is_support_survey"
+    assert provider.created_drafts == []
+    assert provider.sent_drafts == []
+
+
+def test_sent_reply_after_message_blocks_cross_cycle_duplicate(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    watched, item, message = add_refused_work_item(
+        db_session,
+        account,
+        order,
+        thread_id="thread-cross-cycle-duplicate",
+    )
+    previous_draft = EmailDraft(
+        order_id=order.id,
+        draft_type="appeal_generic_refusal",
+        subject="Re: commande F93BA",
+        body="Relance deja envoyee dans ce fil.",
+        status="ready",
+    )
+    db_session.add(previous_draft)
+    db_session.flush()
+    db_session.add(
+        EmailProviderDraft(
+            email_draft_id=previous_draft.id,
+            email_account_id=account.id,
+            provider="gmail",
+            provider_draft_id="previous-cross-cycle-draft",
+            provider_thread_id=watched.gmail_thread_id,
+            provider_message_id="previous-cross-cycle-message",
+            to_email="restaurantsfrance@uber.com",
+            subject=previous_draft.subject,
+            status="sent",
+            created_by_user_id=owner.id,
+            sent_by_user_id=owner.id,
+            sent_at=utc_now(),
+        )
+    )
+    db_session.commit()
+    provider = FakeFastWatchedGmailProvider()
+    provider.latest_payloads[watched.gmail_thread_id] = payload(
+        message.provider_message_id,
+        thread_id=watched.gmail_thread_id,
+    )
+    result = GmailWatchedThreadMonitorResult()
+
+    GmailWatchedThreadMonitorService(provider).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=10,
+    )
+
+    db_session.refresh(item)
+    assert result.autopilot_sent_count == 0
+    assert result.autopilot_skipped_count == 1
+    assert item.status == "skipped"
+    assert item.reason == "reply_already_sent_after_message"
+    assert provider.created_drafts == []
+    assert provider.sent_drafts == []
+
+
 def test_watched_thread_with_different_linked_orders_never_sends(
     db_session: Session,
     gmail_case,
@@ -1413,14 +1559,20 @@ def test_refused_watched_thread_repairs_missing_order_from_thread_text_before_re
     assert len(provider.sent_drafts) == 1
     db_session.refresh(inbound)
     db_session.refresh(watched)
-    assert inbound.order_id == order.id
+    latest_inbound = db_session.scalar(
+        select(InboundEmailMessage).where(
+            InboundEmailMessage.provider_message_id == "latest-refusal-only",
+        )
+    )
+    assert latest_inbound is not None
+    assert latest_inbound.order_id == order.id
     assert watched.claim_order_id == order.id
     assert watched.linked_case_type == "claim_order"
     assert watched.linked_case_id == order.id
     attempt = db_session.scalar(select(AppealAttempt))
     assert attempt is not None
     assert attempt.status == "sent"
-    assert attempt.based_on_refusal_message_id == inbound.id
+    assert attempt.based_on_refusal_message_id == latest_inbound.id
     provider_draft = attempt.provider_draft
     assert provider_draft is not None
     assert provider_draft.status == "sent"
@@ -1434,7 +1586,7 @@ def test_refused_watched_thread_repairs_missing_order_from_thread_text_before_re
         )
     }
     assert "gmail_reply_sent" in work_item_reasons
-    assert "uber_refusal" in work_item_reasons
+    assert "superseded_by_newer_uber_message" in work_item_reasons
 
 
 def test_already_replied_refusal_leaves_actionable_queue(

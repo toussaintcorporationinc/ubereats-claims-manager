@@ -164,6 +164,8 @@ class GmailWatchedThreadMonitorService:
         self.provider = provider
         self.settings = settings or get_settings()
         self.sync_service = sync_service or GmailInboundSyncService(provider)
+        self._latest_external_message_cache: dict[tuple[int, str], InboundEmailPayload | None] = {}
+        self._latest_external_message_errors: set[tuple[int, str]] = set()
 
     def process_account(
         self,
@@ -392,8 +394,13 @@ class GmailWatchedThreadMonitorService:
         """
         if max_items <= 0:
             return 0
+        self._latest_external_message_cache.clear()
+        self._latest_external_message_errors.clear()
         block_reason = self.automatic_reply_block_reason(db, account)
         if block_reason is not None:
+            result.autopilot_skipped_count += 1
+            return 0
+        if not self.settings.autopilot_enabled or not self.settings.autopilot_appeals_enabled:
             result.autopilot_skipped_count += 1
             return 0
         items = list(
@@ -461,6 +468,26 @@ class GmailWatchedThreadMonitorService:
             if watched.gmail_thread_id in sent_threads:
                 item.reason = "thread_already_replied_this_cycle"
                 item.processed_at = utc_now()
+                result.autopilot_skipped_count += 1
+                continue
+            latest_reply_block_reason = self.latest_reply_block_reason(db, account, watched, message)
+            if latest_reply_block_reason is not None:
+                if latest_reply_block_reason in {
+                    "gmail_latest_reply_check_failed",
+                    "gmail_latest_reply_not_found",
+                }:
+                    item.reason = latest_reply_block_reason
+                    item.processed_at = utc_now()
+                    item.updated_at = item.processed_at
+                    result.autopilot_skipped_count += 1
+                    result.errors.append(f"{latest_reply_block_reason}:{watched.gmail_thread_id}")
+                    continue
+                self.mark_unsafe_reply_for_review(
+                    db,
+                    watched,
+                    item,
+                    reason=latest_reply_block_reason,
+                )
                 result.autopilot_skipped_count += 1
                 continue
             if self.send_actionable_reply_for_work_item(db, user, account, watched, item, message, result):
@@ -549,6 +576,91 @@ class GmailWatchedThreadMonitorService:
             and "DRAFT" in {str(label).strip().upper() for label in payload.provider_labels}
             for payload in payloads
         )
+
+    def latest_reply_block_reason(
+        self,
+        db: Session,
+        account: EmailAccount,
+        watched: GmailWatchedThread,
+        message: InboundEmailMessage,
+    ) -> str | None:
+        """Fail closed when a queued item is not Uber's latest message in the thread."""
+        cache_key = (account.id, watched.gmail_thread_id)
+        if cache_key in self._latest_external_message_errors:
+            return "gmail_latest_reply_check_failed"
+        if cache_key not in self._latest_external_message_cache:
+            latest_payload: InboundEmailPayload | None = None
+            get_latest = getattr(self.provider, "get_latest_external_thread_message_for_account", None)
+            if callable(get_latest):
+                try:
+                    latest_payload = get_latest(db, account, watched.gmail_thread_id)
+                except Exception as exc:  # noqa: BLE001 - a failed safety lookup must block sending.
+                    logger.warning(
+                        "Unable to verify latest Gmail reply for watched thread %s: %s",
+                        watched.gmail_thread_id,
+                        exc,
+                    )
+                    self._latest_external_message_errors.add(cache_key)
+                    return "gmail_latest_reply_check_failed"
+            if latest_payload is None:
+                latest_payload = self.latest_local_uber_message(db, account, watched.gmail_thread_id)
+            self._latest_external_message_cache[cache_key] = latest_payload
+
+        latest_payload = self._latest_external_message_cache[cache_key]
+        if latest_payload is None:
+            return "gmail_latest_reply_not_found"
+        if payload_is_uber_support_survey(latest_payload):
+            return "latest_uber_reply_is_support_survey"
+        if latest_payload.provider_message_id != message.provider_message_id:
+            return "superseded_by_newer_uber_message"
+        return None
+
+    def latest_local_uber_message(
+        self,
+        db: Session,
+        account: EmailAccount,
+        thread_id: str,
+    ) -> InboundEmailPayload | None:
+        messages = list(
+            db.scalars(
+                select(InboundEmailMessage)
+                .where(
+                    InboundEmailMessage.email_account_id == account.id,
+                    InboundEmailMessage.provider_thread_id == thread_id,
+                )
+                .order_by(
+                    InboundEmailMessage.received_at.desc().nullslast(),
+                    InboundEmailMessage.id.desc(),
+                )
+            ).all()
+        )
+        latest = next(
+            (
+                candidate
+                for candidate in messages
+                if sender_matches_filter(candidate.from_email, self.settings.gmail_support_sender_filter)
+            ),
+            None,
+        )
+        return inbound_payload_from_message(latest) if latest is not None else None
+
+    @staticmethod
+    def thread_reply_sent_after_message(
+        db: Session,
+        account: EmailAccount,
+        watched: GmailWatchedThread,
+        message: InboundEmailMessage,
+    ) -> bool:
+        statement = select(func.count(EmailProviderDraft.id)).where(
+            EmailProviderDraft.email_account_id == account.id,
+            EmailProviderDraft.provider == "gmail",
+            EmailProviderDraft.provider_thread_id == watched.gmail_thread_id,
+            EmailProviderDraft.status == "sent",
+            EmailProviderDraft.sent_at.is_not(None),
+        )
+        if message.received_at is not None:
+            statement = statement.where(EmailProviderDraft.sent_at >= message.received_at)
+        return int(db.scalar(statement) or 0) > 0
 
     @staticmethod
     def mark_unsafe_reply_for_review(
@@ -642,6 +754,16 @@ class GmailWatchedThreadMonitorService:
             return False
         if existing_attempt and existing_attempt.provider_draft and existing_attempt.provider_draft.status == "send_requested":
             item.reason = "reply_send_already_requested"
+            self.mark_work_item_skipped(db, item)
+            result.autopilot_skipped_count += 1
+            return False
+        if not refresh_restaurant_identity and self.thread_reply_sent_after_message(
+            db,
+            account,
+            watched,
+            message,
+        ):
+            item.reason = "reply_already_sent_after_message"
             self.mark_work_item_skipped(db, item)
             result.autopilot_skipped_count += 1
             return False
@@ -976,6 +1098,11 @@ class GmailWatchedThreadMonitorService:
             return False
         if provider_draft and provider_draft.status == "send_requested":
             item.reason = "proof_reply_send_already_requested"
+            self.mark_work_item_skipped(db, item)
+            result.autopilot_skipped_count += 1
+            return False
+        if self.thread_reply_sent_after_message(db, account, watched, message):
+            item.reason = "reply_already_sent_after_message"
             self.mark_work_item_skipped(db, item)
             result.autopilot_skipped_count += 1
             return False
