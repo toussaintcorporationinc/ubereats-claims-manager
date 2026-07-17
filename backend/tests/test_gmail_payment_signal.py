@@ -1,0 +1,51 @@
+from app.models import InboundEmailMessage
+from app.services.gmail_payment_signal_service import (
+    message_has_explicit_payment_confirmation,
+    text_has_explicit_payment_confirmation,
+)
+
+
+def test_uber_survey_html_tracking_token_is_not_a_payment_confirmation() -> None:
+    message = InboundEmailMessage(
+        email_account_id=1,
+        provider_message_id="survey-message",
+        from_email="support@uber.com",
+        subject="Contestation remboursement de commande",
+        snippet="Partagez votre experience avec le service d'assistance Uber.",
+        body_text="""
+            <!doctype html>
+            <html>
+              <head><meta charset="utf-8"><style>.remboursement { width: 1px; }</style></head>
+              <body>
+                <p>Nous accordons beaucoup d'importance a votre avis.</p>
+                <img src="https://tracking.example/O6eurexpxU5p6bOoiw" width="1" height="1">
+              </body>
+            </html>
+        """,
+    )
+
+    assert message_has_explicit_payment_confirmation(message) is False
+
+
+def test_amount_like_fragment_inside_identifier_is_not_a_payment_amount() -> None:
+    assert text_has_explicit_payment_confirmation("Remboursement O6eurexpxU5p6bOoiw") is False
+
+
+def test_visible_html_payment_approval_with_amount_is_confirmed() -> None:
+    message = InboundEmailMessage(
+        email_account_id=1,
+        provider_message_id="payment-message",
+        from_email="support@uber.com",
+        subject="Mise a jour de votre contestation",
+        body_text="<p>Un remboursement de <strong>24,90 EUR</strong> a ete accorde.</p>",
+    )
+
+    assert message_has_explicit_payment_confirmation(message) is True
+
+
+def test_explicit_payment_promise_without_amount_is_confirmed() -> None:
+    assert text_has_explicit_payment_confirmation("Nous allons vous rembourser.") is True
+
+
+def test_rejection_with_amount_is_not_confirmed() -> None:
+    assert text_has_explicit_payment_confirmation("Aucun remboursement de 24,90 EUR ne sera accorde.") is False
