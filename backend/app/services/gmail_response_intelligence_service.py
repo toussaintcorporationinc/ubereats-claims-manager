@@ -14,6 +14,7 @@ from app.models import ClaimOrder, GmailResponseAnalysis, InboundEmailMessage, U
 from app.models.domain import utc_now
 from app.schemas.domain import ClaimResponseReviewCreate
 from app.services.audit import add_audit_log
+from app.services.gmail_payment_signal_service import message_has_explicit_payment_confirmation
 from app.services.openai_structured_analysis_service import AIGmailClassification, OpenAIStructuredAnalysisService
 from app.services.response_review_service import ResponseReviewError, create_response_review
 
@@ -114,7 +115,7 @@ class GmailResponseIntelligenceService:
     ) -> GmailResponseAnalysis:
         self.ensure_message_access(db, user, message)
         order = message.order if message.order_id else None
-        classification = self.classify_message(message)
+        classification = self.guard_positive_payment_classification(message, self.classify_message(message))
         analysis = self.upsert_analysis(db, user, message, order, classification)
 
         if message.match_status != "linked" or order is None:
@@ -173,6 +174,28 @@ class GmailResponseIntelligenceService:
             },
         )
         return analysis
+
+    @staticmethod
+    def guard_positive_payment_classification(
+        message: InboundEmailMessage,
+        classification: GmailResponseClassification,
+    ) -> GmailResponseClassification:
+        if classification.review_type not in {"accepted", "payment_to_verify", "payment_confirmed"}:
+            return classification
+        if message_has_explicit_payment_confirmation(message):
+            return classification
+        return GmailResponseClassification(
+            review_type="manual_review",
+            confidence_score=min(classification.confidence_score, Decimal("0.50")),
+            reason="positive_without_explicit_payment_confirmation",
+            detected_amount=classification.detected_amount,
+            evidence_requested=classification.evidence_requested,
+            matched_keywords=classification.matched_keywords,
+            notes=limited_note(
+                "Signal positif ambigu: aucun montant approuve ni promesse explicite de paiement.",
+                classification.notes,
+            ),
+        )
 
     def classify_message(self, message: InboundEmailMessage) -> GmailResponseClassification:
         text = normalize_text(

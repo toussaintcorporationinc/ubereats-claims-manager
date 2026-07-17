@@ -35,13 +35,20 @@ from app.services.gmail_inbound_sync_service import (
     sender_matches_filter,
     starred_payload_identity_context,
 )
+from app.services.gmail_payment_signal_service import (
+    EXPLICIT_PAYMENT_PROMISE_MARKERS,
+    message_has_explicit_payment_confirmation,
+    text_has_explicit_payment_confirmation,
+)
 from app.services.gmail_quota import parse_gmail_retry_after
 from app.services.gmail_scope_service import gmail_scopes_allow_modify
 from app.services.autopilot_identity_repair_service import find_or_create_order_from_starred_text
 from app.services.appeal_workflow_service import AppealWorkflowError, ensure_workflow_for_claim_order, mark_appeal_sent
 from app.services.autopilot_service import (
     AutopilotError,
+    autopilot_is_emergency_stopped,
     create_starred_thread_reply_attempt,
+    gmail_account_sent_today_count,
     safe_autopilot_recipient,
     send_provider_draft,
 )
@@ -55,30 +62,6 @@ POSITIVE_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confirmed"}
 POSITIVE_WATCHED_STATUSES = {"positive", "payment_confirmed"}
 REFUSAL_REVIEW_TYPES = {"refused"}
 EVIDENCE_REVIEW_TYPES = {"evidence_requested", "information_requested"}
-FAST_POSITIVE_MARKERS = (
-    "paiement accorde",
-    "paiement a ete accorde",
-    "remboursement accorde",
-    "remboursement a ete accorde",
-    "est accorde",
-    "regularisation",
-    "sera verse",
-    "sera credite",
-    "sera ajoute a votre prochain versement",
-    "sera ajoutee a votre prochain versement",
-    "apparaitra dans votre prochain versement",
-    "apparaitra sur votre prochain versement",
-    "ajoute a votre prochain versement",
-    "ajoutee a votre prochain versement",
-    "nous avons applique un ajustement",
-    "ajustement a ete applique",
-    "nous avons procede au paiement",
-    "a ete credite",
-    "payment approved",
-    "refund approved",
-    "we have credited",
-    "we will credit",
-)
 FAST_REFUSAL_MARKERS = (
     "maintenons le refus",
     "refus",
@@ -409,6 +392,10 @@ class GmailWatchedThreadMonitorService:
         """
         if max_items <= 0:
             return 0
+        block_reason = self.automatic_reply_block_reason(db, account)
+        if block_reason is not None:
+            result.autopilot_skipped_count += 1
+            return 0
         items = list(
             db.scalars(
                 select(GmailStarredWorkItem)
@@ -462,6 +449,15 @@ class GmailWatchedThreadMonitorService:
             if watched is None or message is None:
                 result.autopilot_skipped_count += 1
                 continue
+            if item.gmail_thread_id != watched.gmail_thread_id or message.provider_thread_id != watched.gmail_thread_id:
+                self.mark_unsafe_reply_for_review(
+                    db,
+                    watched,
+                    item,
+                    reason="gmail_reply_thread_mismatch",
+                )
+                result.autopilot_skipped_count += 1
+                continue
             if watched.gmail_thread_id in sent_threads:
                 item.reason = "thread_already_replied_this_cycle"
                 item.processed_at = utc_now()
@@ -471,6 +467,103 @@ class GmailWatchedThreadMonitorService:
                 sent_threads.add(watched.gmail_thread_id)
                 sent_count += 1
         return sent_count
+
+    def automatic_reply_block_reason(self, db: Session, account: EmailAccount) -> str | None:
+        if autopilot_is_emergency_stopped(db):
+            return "autopilot_emergency_stopped"
+        limit = self.settings.autopilot_per_gmail_account_daily_limit
+        if limit > 0 and gmail_account_sent_today_count(db, account.id) >= limit:
+            return "gmail_account_daily_limit_reached"
+        return None
+
+    def reply_thread_integrity_error(
+        self,
+        db: Session,
+        account: EmailAccount,
+        watched: GmailWatchedThread,
+        message: InboundEmailMessage,
+        order: ClaimOrder,
+    ) -> str | None:
+        if message.provider_thread_id != watched.gmail_thread_id:
+            return "gmail_reply_thread_mismatch"
+        if watched.claim_order_id is not None and watched.claim_order_id != order.id:
+            return "gmail_thread_order_mismatch"
+        if message.order_id is not None and message.order_id != order.id:
+            return "gmail_thread_order_mismatch"
+
+        linked_order_ids = set(
+            db.scalars(
+                select(InboundEmailMessage.order_id)
+                .where(
+                    InboundEmailMessage.email_account_id == account.id,
+                    InboundEmailMessage.provider_thread_id == watched.gmail_thread_id,
+                    InboundEmailMessage.order_id.is_not(None),
+                )
+                .distinct()
+            ).all()
+        )
+        if watched.claim_order_id is not None:
+            linked_order_ids.add(watched.claim_order_id)
+        linked_order_ids.add(order.id)
+        if len(linked_order_ids) > 1:
+            return "gmail_thread_contains_multiple_orders"
+
+        drafted_order_ids = set(
+            db.scalars(
+                select(EmailDraft.order_id)
+                .join(EmailProviderDraft, EmailProviderDraft.email_draft_id == EmailDraft.id)
+                .where(
+                    EmailProviderDraft.email_account_id == account.id,
+                    EmailProviderDraft.provider == "gmail",
+                    EmailProviderDraft.provider_thread_id == watched.gmail_thread_id,
+                )
+                .distinct()
+            ).all()
+        )
+        if any(drafted_order_id != order.id for drafted_order_id in drafted_order_ids):
+            return "gmail_thread_contains_multiple_orders"
+        return None
+
+    def remote_thread_has_account_draft(
+        self,
+        db: Session,
+        account: EmailAccount,
+        watched: GmailWatchedThread,
+    ) -> bool:
+        get_thread_messages = getattr(self.provider, "get_thread_messages_for_account", None)
+        if not callable(get_thread_messages):
+            return False
+        try:
+            payloads = list(
+                get_thread_messages(
+                    db,
+                    account,
+                    watched.gmail_thread_id,
+                    include_attachments=False,
+                )
+            )
+        except TypeError:
+            payloads = list(get_thread_messages(db, account, watched.gmail_thread_id))
+        return any(
+            self.payload_from_account(payload, account)
+            and "DRAFT" in {str(label).strip().upper() for label in payload.provider_labels}
+            for payload in payloads
+        )
+
+    @staticmethod
+    def mark_unsafe_reply_for_review(
+        db: Session,
+        watched: GmailWatchedThread,
+        item: GmailStarredWorkItem,
+        *,
+        reason: str,
+    ) -> None:
+        watched.status = "manual_review"
+        item.status = "skipped"
+        item.reason = reason
+        item.processed_at = utc_now()
+        item.updated_at = item.processed_at
+        db.flush()
 
     def send_actionable_reply_for_work_item(
         self,
@@ -503,7 +596,7 @@ class GmailWatchedThreadMonitorService:
             result.autopilot_skipped_count += 1
             return False
 
-        order = message.order or (db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else None)
+        order = db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else message.order
         if order is None:
             try:
                 order = self.repair_watched_thread_from_payloads(
@@ -521,6 +614,11 @@ class GmailWatchedThreadMonitorService:
         if order is None:
             item.reason = "missing_linked_order_for_starred_reply"
             self.mark_work_item_manual_review(db, item)
+            result.autopilot_skipped_count += 1
+            return False
+        integrity_error = self.reply_thread_integrity_error(db, account, watched, message, order)
+        if integrity_error is not None:
+            self.mark_unsafe_reply_for_review(db, watched, item, reason=integrity_error)
             result.autopilot_skipped_count += 1
             return False
         if message.order_id is None:
@@ -574,6 +672,15 @@ class GmailWatchedThreadMonitorService:
                 provider_draft = None
 
             if provider_draft is None:
+                if self.remote_thread_has_account_draft(db, account, watched):
+                    self.mark_unsafe_reply_for_review(
+                        db,
+                        watched,
+                        item,
+                        reason="gmail_draft_already_exists_in_thread",
+                    )
+                    result.autopilot_skipped_count += 1
+                    return False
                 provider_draft = self.create_draft_for_watched_account(
                     db,
                     user,
@@ -652,7 +759,7 @@ class GmailWatchedThreadMonitorService:
             result.autopilot_skipped_count += 1
             return False
 
-        order = message.order or (db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else None)
+        order = db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else message.order
         if order is None:
             try:
                 order = self.repair_watched_thread_from_payloads(
@@ -670,6 +777,11 @@ class GmailWatchedThreadMonitorService:
         if order is None:
             item.reason = "missing_linked_order_for_followup"
             self.mark_work_item_manual_review(db, item)
+            result.autopilot_skipped_count += 1
+            return False
+        integrity_error = self.reply_thread_integrity_error(db, account, watched, message, order)
+        if integrity_error is not None:
+            self.mark_unsafe_reply_for_review(db, watched, item, reason=integrity_error)
             result.autopilot_skipped_count += 1
             return False
         if message.order_id is None:
@@ -737,6 +849,15 @@ class GmailWatchedThreadMonitorService:
 
             provider_draft = attempt.provider_draft
             if provider_draft is None:
+                if self.remote_thread_has_account_draft(db, account, watched):
+                    self.mark_unsafe_reply_for_review(
+                        db,
+                        watched,
+                        item,
+                        reason="gmail_draft_already_exists_in_thread",
+                    )
+                    result.autopilot_skipped_count += 1
+                    return False
                 provider_draft = self.create_draft_for_watched_account(
                     db,
                     user,
@@ -815,7 +936,7 @@ class GmailWatchedThreadMonitorService:
             result.autopilot_skipped_count += 1
             return False
 
-        order = message.order or (db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else None)
+        order = db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else message.order
         if order is None:
             try:
                 order = self.repair_watched_thread_from_payloads(
@@ -833,6 +954,11 @@ class GmailWatchedThreadMonitorService:
         if order is None:
             item.reason = "missing_linked_order_for_proof_reply"
             self.mark_work_item_manual_review(db, item)
+            result.autopilot_skipped_count += 1
+            return False
+        integrity_error = self.reply_thread_integrity_error(db, account, watched, message, order)
+        if integrity_error is not None:
+            self.mark_unsafe_reply_for_review(db, watched, item, reason=integrity_error)
             result.autopilot_skipped_count += 1
             return False
         if message.order_id is None:
@@ -856,6 +982,15 @@ class GmailWatchedThreadMonitorService:
 
         try:
             if provider_draft is None or provider_draft.status != "provider_draft_created":
+                if self.remote_thread_has_account_draft(db, account, watched):
+                    self.mark_unsafe_reply_for_review(
+                        db,
+                        watched,
+                        item,
+                        reason="gmail_draft_already_exists_in_thread",
+                    )
+                    result.autopilot_skipped_count += 1
+                    return False
                 draft = create_email_draft(db, order.id, "proof_reply", user_id=user.id)
                 provider_draft = self.create_draft_for_watched_account(
                     db,
@@ -1884,14 +2019,18 @@ class GmailWatchedThreadMonitorService:
         message: InboundEmailMessage,
     ) -> None:
         if message.order_id:
-            watched.claim_order_id = message.order_id
-            watched.linked_case_type = "claim_order"
-            watched.linked_case_id = message.order_id
-            order = message.order
-            if order and order.customer_refund_disputes:
-                watched.customer_refund_dispute_id = order.customer_refund_disputes[0].id
-            if order and order.appeal_workflows:
-                watched.appeal_workflow_id = order.appeal_workflows[0].id
+            if watched.claim_order_id is None:
+                watched.claim_order_id = message.order_id
+                watched.linked_case_type = "claim_order"
+                watched.linked_case_id = message.order_id
+            if watched.claim_order_id == message.order_id:
+                order = message.order
+                if order and order.customer_refund_disputes:
+                    watched.customer_refund_dispute_id = order.customer_refund_disputes[0].id
+                if order and order.appeal_workflows:
+                    watched.appeal_workflow_id = order.appeal_workflows[0].id
+            else:
+                watched.status = "manual_review"
         if message.gmail_history_id:
             watched.last_seen_history_id = message.gmail_history_id
         if message.received_at and datetime_after(message.received_at, watched.last_message_at):
@@ -1910,6 +2049,11 @@ class GmailWatchedThreadMonitorService:
         *,
         allow_remote_star_lookup: bool = False,
     ) -> None:
+        thread_order_conflict = bool(
+            watched.claim_order_id
+            and message.order_id
+            and watched.claim_order_id != message.order_id
+        )
         self.update_watched_links_from_message(watched, message)
         analysis = message.response_analysis
         if analysis is None and message.id is not None:
@@ -1922,13 +2066,19 @@ class GmailWatchedThreadMonitorService:
         item.inbound_message_id = message.id
         item.processed_at = utc_now()
         watched.last_processed_at = item.processed_at
-        if review_type in POSITIVE_REVIEW_TYPES:
+        explicit_payment_confirmation = message_has_explicit_payment_confirmation(message)
+        if thread_order_conflict:
+            item.status = "manual_review"
+            item.reason = "gmail_thread_order_mismatch"
+            watched.status = "manual_review"
+            watched.star_active = True
+            result.manual_reviews += 1
+        elif explicit_payment_confirmation:
             item.status = "positive"
-            item.reason = review_type
-            watched.status = "payment_confirmed" if review_type == "payment_confirmed" else "positive"
+            item.reason = "payment_confirmed"
+            watched.status = "payment_confirmed"
             result.positive_responses += 1
-            if review_type == "payment_confirmed":
-                result.payment_confirmed += 1
+            result.payment_confirmed += 1
             self.remove_thread_star(
                 db,
                 user,
@@ -1936,6 +2086,12 @@ class GmailWatchedThreadMonitorService:
                 allow_remote_lookup=allow_remote_star_lookup,
                 result=result,
             )
+        elif review_type in POSITIVE_REVIEW_TYPES:
+            item.status = "manual_review"
+            item.reason = "positive_without_explicit_payment_confirmation"
+            watched.status = "manual_review"
+            watched.star_active = True
+            result.manual_reviews += 1
         elif review_type in REFUSAL_REVIEW_TYPES:
             item.status = "refused"
             item.reason = "uber_refusal"
@@ -2209,18 +2365,17 @@ def gmail_resource_not_found(exc: Exception) -> bool:
 
 
 def classify_unlinked_watched_message(message: InboundEmailMessage) -> tuple[str, str, Decimal]:
-    text = normalize_fast_classification_text(
-        "\n".join(
-            part
-            for part in (
-                message.subject or "",
-                message.snippet or "",
-                bounded_fast_classification_body(message.body_text),
-            )
-            if part.strip()
+    raw_text = "\n".join(
+        part
+        for part in (
+            message.subject or "",
+            message.snippet or "",
+            bounded_fast_classification_body(message.body_text),
         )
+        if part.strip()
     )
-    if any(marker in text for marker in FAST_POSITIVE_MARKERS):
+    text = normalize_fast_classification_text(raw_text)
+    if text_has_explicit_payment_confirmation(raw_text):
         return "payment_confirmed", "fast_unlinked_payment_positive", Decimal("0.84")
     if any(marker in text for marker in FAST_REFUSAL_MARKERS):
         return "refused", "fast_unlinked_uber_refusal", Decimal("0.82")
@@ -2246,8 +2401,9 @@ def payload_is_uber_support_survey(payload: InboundEmailPayload) -> bool:
     if not survey_positions:
         return False
     text_before_survey = lead[: min(survey_positions)]
+    if text_has_explicit_payment_confirmation(text_before_survey):
+        return False
     actionable_markers = (
-        *FAST_POSITIVE_MARKERS,
         *FAST_REFUSAL_MARKERS,
         *FAST_EVIDENCE_MARKERS,
         *FAST_FOLLOWUP_MARKERS,

@@ -27,6 +27,7 @@ from app.models import (
 )
 from app.models.domain import utc_now
 from app.services.appeal_workflow_service import AppealWorkflowError
+from app.services.autopilot_service import create_emergency_stop
 from app.services.email_provider import EmailProviderError, EmailSendResult, InboundEmailPayload
 from app.services import autopilot_identity_repair_service as identity_repair_service
 from app.services.gmail_inbound_sync_service import (
@@ -319,10 +320,11 @@ def payload(
     from_email: str = "restaurantsfrance@uber.com",
     to_email: str = "tiramisumaisonfrance@gmail.com",
     starred: bool = False,
+    labels: list[str] | None = None,
 ) -> InboundEmailPayload:
-    labels = ["INBOX"]
-    if starred:
-        labels.append("STARRED")
+    provider_labels = list(labels) if labels is not None else ["INBOX"]
+    if starred and "STARRED" not in provider_labels:
+        provider_labels.append("STARRED")
     return InboundEmailPayload(
         provider_message_id=provider_message_id,
         provider_thread_id=thread_id,
@@ -338,8 +340,64 @@ def payload(
             "to": to_email,
             "subject": subject,
         },
-        provider_labels=labels,
+        provider_labels=provider_labels,
     )
+
+
+def add_refused_work_item(
+    db: Session,
+    account: EmailAccount,
+    watched_order: ClaimOrder,
+    *,
+    thread_id: str,
+    message_order: ClaimOrder | None = None,
+) -> tuple[GmailWatchedThread, GmailStarredWorkItem, InboundEmailMessage]:
+    linked_order = message_order or watched_order
+    message = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=linked_order.id,
+        provider="gmail",
+        provider_message_id=f"message-{thread_id}",
+        provider_thread_id=thread_id,
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject=f"Re: commande {linked_order.uber_order_number}",
+        snippet=f"Refus commande {linked_order.uber_order_number}",
+        body_text=f"Uber refuse la commande {linked_order.uber_order_number}.",
+        received_at=utc_now(),
+        raw_headers_json={},
+        provider_labels_json=["INBOX", "STARRED"],
+        match_status="linked",
+        match_reason="order_number_match",
+        review_status="reviewed",
+    )
+    db.add(message)
+    db.flush()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id=thread_id,
+        first_starred_message_id=message.provider_message_id,
+        claim_order_id=watched_order.id,
+        linked_case_type="claim_order",
+        linked_case_id=watched_order.id,
+        status="active",
+        star_active=True,
+    )
+    db.add(watched)
+    db.flush()
+    item = GmailStarredWorkItem(
+        watched_thread_id=watched.id,
+        email_account_id=account.id,
+        gmail_thread_id=thread_id,
+        provider_message_id=message.provider_message_id,
+        inbound_message_id=message.id,
+        status="refused",
+        reason="uber_refusal",
+        processed_at=utc_now(),
+    )
+    db.add(item)
+    db.commit()
+    return watched, item, message
 
 
 def install_fake_classifier(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -782,6 +840,175 @@ def test_existing_refused_watched_thread_sends_same_thread_reply_without_global_
     assert work_item is not None
     assert work_item.status == "processed"
     assert work_item.reason == "gmail_reply_sent"
+
+
+def test_emergency_stop_blocks_watched_thread_draft_creation(
+    db_session: Session,
+    gmail_case,
+) -> None:
+    owner, account, order = gmail_case
+    add_refused_work_item(db_session, account, order, thread_id="thread-emergency-stop")
+    create_emergency_stop(db_session, owner)
+    db_session.commit()
+    provider = FakeWatchedGmailProvider()
+    result = GmailWatchedThreadMonitorResult()
+
+    GmailWatchedThreadMonitorService(provider).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=10,
+    )
+
+    assert result.autopilot_sent_count == 0
+    assert result.autopilot_skipped_count == 1
+    assert provider.created_drafts == []
+    assert provider.sent_drafts == []
+
+
+def test_account_quota_is_checked_before_remote_draft_creation(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_PER_GMAIL_ACCOUNT_DAILY_LIMIT", "1")
+    get_settings.cache_clear()
+    add_refused_work_item(db_session, account, order, thread_id="thread-quota-preflight")
+    sent_email_draft = EmailDraft(
+        order_id=order.id,
+        draft_type="appeal_generic_refusal",
+        subject="Already sent",
+        body="Already sent",
+        status="ready",
+    )
+    db_session.add(sent_email_draft)
+    db_session.flush()
+    db_session.add(
+        EmailProviderDraft(
+            email_draft_id=sent_email_draft.id,
+            email_account_id=account.id,
+            provider="gmail",
+            provider_draft_id="already-sent-draft",
+            provider_thread_id="already-sent-thread",
+            provider_message_id="already-sent-message",
+            to_email="restaurantsfrance@uber.com",
+            subject=sent_email_draft.subject,
+            status="sent",
+            created_by_user_id=owner.id,
+            sent_by_user_id=owner.id,
+            sent_at=utc_now(),
+        )
+    )
+    db_session.commit()
+    provider = FakeWatchedGmailProvider()
+    result = GmailWatchedThreadMonitorResult()
+
+    GmailWatchedThreadMonitorService(provider).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=10,
+    )
+
+    assert result.autopilot_sent_count == 0
+    assert result.autopilot_skipped_count == 1
+    assert provider.created_drafts == []
+
+
+def test_existing_remote_draft_blocks_duplicate_draft_creation(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    watched, item, _message = add_refused_work_item(
+        db_session,
+        account,
+        order,
+        thread_id="thread-existing-remote-draft",
+    )
+    provider = FakeWatchedGmailProvider()
+    provider.thread_payloads[watched.gmail_thread_id] = [
+        payload(
+            "orphan-gmail-draft",
+            thread_id=watched.gmail_thread_id,
+            from_email=account.email_address or "",
+            to_email="restaurantsfrance@uber.com",
+            labels=["DRAFT"],
+        )
+    ]
+    result = GmailWatchedThreadMonitorResult()
+
+    GmailWatchedThreadMonitorService(provider).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=10,
+    )
+
+    db_session.refresh(item)
+    db_session.refresh(watched)
+    assert result.autopilot_sent_count == 0
+    assert result.autopilot_skipped_count == 1
+    assert item.status == "skipped"
+    assert item.reason == "gmail_draft_already_exists_in_thread"
+    assert watched.status == "manual_review"
+    assert provider.created_drafts == []
+
+
+def test_watched_thread_with_different_linked_orders_never_sends(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    other_order = ClaimOrder(
+        restaurant_id=order.restaurant_id,
+        uber_order_number="OTHER1",
+        customer_name="Other customer",
+        order_date=date(2026, 6, 19),
+        order_amount=Decimal("19.90"),
+        currency="EUR",
+        status="refused",
+    )
+    db_session.add(other_order)
+    db_session.commit()
+    watched, item, _message = add_refused_work_item(
+        db_session,
+        account,
+        order,
+        thread_id="thread-multiple-orders",
+        message_order=other_order,
+    )
+    provider = FakeWatchedGmailProvider()
+    result = GmailWatchedThreadMonitorResult()
+
+    GmailWatchedThreadMonitorService(provider).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=10,
+    )
+
+    db_session.refresh(item)
+    db_session.refresh(watched)
+    assert result.autopilot_sent_count == 0
+    assert result.autopilot_skipped_count == 1
+    assert item.status == "skipped"
+    assert item.reason == "gmail_thread_order_mismatch"
+    assert watched.status == "manual_review"
+    assert provider.created_drafts == []
 
 
 def test_refused_reply_already_sent_workflow_after_provider_send_counts_as_success(
@@ -1776,6 +2003,41 @@ def test_missing_watched_thread_is_closed_and_removed_from_hot_queue(
     assert item.status == "skipped"
     assert item.reason == "gmail_thread_not_found"
     assert "STARRED" not in inbound.provider_labels_json
+
+
+def test_ambiguous_acceptance_keeps_star_even_when_analysis_calls_it_positive(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    provider = FakeWatchedGmailProvider()
+    provider.starred_payloads = [payload("star-ambiguous", starred=True)]
+    provider.thread_payloads = {
+        "thread-f93ba": [
+            payload("star-ambiguous", starred=True),
+            payload(
+                "reply-ambiguous",
+                body="Votre demande est accordee et transmise a notre equipe pour examen.",
+            ),
+        ]
+    }
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(db_session, owner, account)
+
+    watched = db_session.scalar(select(GmailWatchedThread))
+    ambiguous_item = db_session.scalar(
+        select(GmailStarredWorkItem).where(GmailStarredWorkItem.provider_message_id == "reply-ambiguous")
+    )
+    assert watched is not None
+    assert ambiguous_item is not None
+    assert watched.status == "manual_review"
+    assert watched.star_active is True
+    assert ambiguous_item.status == "manual_review"
+    assert ambiguous_item.reason == "positive_without_explicit_payment_confirmation"
+    assert provider.removed_labels == []
+    assert result.positive_responses == 0
 
 
 def test_non_starred_positive_reply_in_watched_thread_is_processed_and_star_removed(

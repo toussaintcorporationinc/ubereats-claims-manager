@@ -130,6 +130,7 @@ class GmailInboundAutoSyncService:
                         )
                     else:
                         self.mark_sync_success(db, sync_service, account_id, user.id, watched_result)
+                    db.commit()
                     result.accounts_synced += 1
                     continue
 
@@ -152,6 +153,7 @@ class GmailInboundAutoSyncService:
                 self.add_account_result(result, account_result)
                 result.accounts_synced += 1
                 users_needing_workspace_machine[user.id] = user
+                db.commit()
             except EmailProviderError as exc:
                 db.rollback()
                 self.mark_sync_failure(db, sync_service, account_id, user.id, exc.message)
