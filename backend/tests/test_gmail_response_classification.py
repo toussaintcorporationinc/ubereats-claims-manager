@@ -1,5 +1,5 @@
 from app.models import InboundEmailMessage
-from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
+from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService, detect_amount
 from app.services.gmail_watched_thread_monitor_service import classify_unlinked_watched_message
 
 
@@ -95,3 +95,31 @@ def test_fast_watched_classifier_detects_next_payout_positive() -> None:
     assert review_type == "payment_confirmed"
     assert reason == "fast_unlinked_payment_positive"
     assert confidence >= 0
+
+
+def test_adjusted_payment_is_confirmed_and_amount_is_rounded() -> None:
+    message = InboundEmailMessage(
+        email_account_id=1,
+        provider_message_id="msg-adjusted-payment",
+        provider_thread_id="thread-adjusted-payment",
+        subject="Contestation d'annulation de commande",
+        body_text=(
+            "Apres examen, le client a annule la commande apres l'avoir acceptee. "
+            "Nous avons ajuste votre paiement de 37,383 EUR. "
+            "Ce montant sera visible sur votre prochain releve de paiement."
+        ),
+        provider_labels_json=["STARRED"],
+    )
+
+    classification = GmailResponseIntelligenceService().classify_message(message)
+    fast_review_type, fast_reason, _confidence = classify_unlinked_watched_message(message)
+
+    assert classification.review_type == "payment_confirmed"
+    assert classification.reason == "payment_confirmed_with_amount"
+    assert str(classification.detected_amount) == "37.38"
+    assert fast_review_type == "payment_confirmed"
+    assert fast_reason == "fast_unlinked_payment_positive"
+
+
+def test_three_decimal_payment_amount_does_not_match_only_the_trailing_digits() -> None:
+    assert str(detect_amount("Nous avons ajuste votre paiement de 25.483 EUR.")) == "25.48"

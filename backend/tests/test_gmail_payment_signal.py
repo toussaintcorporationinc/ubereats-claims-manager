@@ -49,3 +49,19 @@ def test_explicit_payment_promise_without_amount_is_confirmed() -> None:
 
 def test_rejection_with_amount_is_not_confirmed() -> None:
     assert text_has_explicit_payment_confirmation("Aucun remboursement de 24,90 EUR ne sera accorde.") is False
+
+
+def test_adjusted_payment_with_amount_is_confirmed() -> None:
+    text = (
+        "Apres examen, le client a annule la commande apres l'avoir acceptee. "
+        "Nous avons ajuste votre paiement de 37,383 EUR. "
+        "Ce montant sera visible sur votre prochain releve de paiement."
+    )
+
+    assert text_has_explicit_payment_confirmation(text) is True
+
+
+def test_client_acceptance_near_payment_under_review_is_not_confirmed() -> None:
+    text = "Le client a accepte la commande. Le paiement de 24,90 EUR reste en cours d'examen."
+
+    assert text_has_explicit_payment_confirmation(text) is False

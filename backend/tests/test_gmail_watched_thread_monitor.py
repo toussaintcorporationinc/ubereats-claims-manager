@@ -2316,6 +2316,37 @@ def test_non_starred_positive_reply_in_watched_thread_is_processed_and_star_remo
     assert result.positive_responses >= 1
 
 
+def test_emergency_stop_keeps_star_on_positive_watched_thread(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    provider = FakeWatchedGmailProvider()
+    provider.starred_payloads = [payload("star-emergency-positive", starred=True)]
+    provider.thread_payloads = {
+        "thread-f93ba": [
+            payload("star-emergency-positive", starred=True),
+            payload(
+                "reply-emergency-positive",
+                body="Nous avons ajuste votre paiement de 24.99 EUR.",
+            ),
+        ]
+    }
+    install_fake_classifier(monkeypatch)
+    create_emergency_stop(db_session, owner)
+    db_session.commit()
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(db_session, owner, account)
+
+    watched = db_session.scalar(select(GmailWatchedThread))
+    assert watched is not None
+    assert watched.status == "payment_confirmed"
+    assert watched.star_active is True
+    assert provider.removed_labels == []
+    assert result.positive_responses >= 1
+
+
 def test_positive_watched_thread_removes_every_starred_message_in_thread(
     db_session: Session,
     gmail_case,

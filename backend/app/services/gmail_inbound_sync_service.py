@@ -23,7 +23,12 @@ from app.services.autopilot_identity_repair_service import (
     find_or_create_order_from_starred_text,
     repair_order_identity_from_inbound_attachments,
 )
-from app.services.autopilot_service import AutopilotError, iter_candidates, run_autopilot
+from app.services.autopilot_service import (
+    AutopilotError,
+    autopilot_is_emergency_stopped,
+    iter_candidates,
+    run_autopilot,
+)
 from app.services.appeal_workflow_service import ensure_workflow_for_claim_order
 from app.services.email_provider import EmailProvider, EmailProviderError, InboundEmailPayload
 from app.services.gmail_payment_signal_service import message_has_explicit_payment_confirmation
@@ -471,6 +476,8 @@ class GmailInboundSyncService:
         inbound_message: InboundEmailMessage,
         result: GmailInboundSyncResult,
     ) -> None:
+        if autopilot_is_emergency_stopped(db):
+            return
         labels = normalize_gmail_labels(inbound_message.provider_labels_json)
         if "STARRED" not in labels or not inbound_message.provider_message_id:
             return

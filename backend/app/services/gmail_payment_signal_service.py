@@ -12,6 +12,8 @@ EXPLICIT_PAYMENT_PROMISE_MARKERS = (
     "paiement a ete accorde",
     "remboursement accorde",
     "remboursement a ete accorde",
+    "remboursement accepte",
+    "remboursement approuve",
     "nous allons vous rembourser",
     "vous serez rembourse",
     "sera verse",
@@ -24,12 +26,17 @@ EXPLICIT_PAYMENT_PROMISE_MARKERS = (
     "ajoutee a votre prochain versement",
     "nous avons applique un ajustement",
     "ajustement a ete applique",
+    "nous avons ajuste votre paiement",
+    "votre paiement a ete ajuste",
     "nous avons procede au paiement",
     "a ete credite",
     "payment approved",
     "refund approved",
+    "refund accepted",
     "we have credited",
     "we will credit",
+    "we adjusted your payment",
+    "we have adjusted your payment",
     "payment has been issued",
     "payment was processed",
     "payment processed",
@@ -57,7 +64,6 @@ PAYMENT_CONTEXT_MARKERS = (
 )
 PAYMENT_APPROVAL_MARKERS = (
     "accorde",
-    "accepte",
     "approuve",
     "paiement accorde",
     "remboursement accorde",
@@ -76,9 +82,7 @@ PAYMENT_APPROVAL_MARKERS = (
     "avons credite",
     "ajustement applique",
     "approved",
-    "accepted",
     "issued",
-    "processed",
     "paid out",
     "credited",
 )
@@ -96,7 +100,7 @@ PAYMENT_REJECTION_MARKERS = (
     "cannot refund",
 )
 PAYMENT_AMOUNT_PATTERN = re.compile(
-    r"(?<![\w])(?:€\s*\d+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?\s*(?:€|eur|euros?))(?![\w])",
+    r"(?<![\w.,])(?:€\s*\d+(?:[.,]\d{1,3})?|\d+(?:[.,]\d{1,3})?\s*(?:€|eur|euros?))(?![\w.,])",
     re.I,
 )
 PAYMENT_SIGNAL_TEXT_LIMIT = 12000
@@ -169,17 +173,14 @@ def text_has_explicit_payment_confirmation(text: str) -> bool:
         for marker in EXPLICIT_PAYMENT_PROMISE_MARKERS
         if marker in normalized
     ]
-    has_amount = PAYMENT_AMOUNT_PATTERN.search(text) is not None
-    if (
-        has_amount
-        and any(marker in normalized for marker in PAYMENT_CONTEXT_MARKERS)
-        and any(marker in normalized for marker in PAYMENT_APPROVAL_MARKERS)
-    ):
-        positive_positions.extend(
-            normalized.find(marker)
-            for marker in PAYMENT_APPROVAL_MARKERS
-            if marker in normalized
+    for amount_match in PAYMENT_AMOUNT_PATTERN.finditer(text):
+        context = normalize_payment_signal_text(
+            text[max(0, amount_match.start() - 160) : min(len(text), amount_match.end() + 160)]
         )
+        if any(marker in context for marker in PAYMENT_CONTEXT_MARKERS) and any(
+            marker in context for marker in PAYMENT_APPROVAL_MARKERS
+        ):
+            positive_positions.append(amount_match.start())
     if not positive_positions:
         return False
     rejection_positions = [

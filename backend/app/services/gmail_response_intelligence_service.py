@@ -14,7 +14,7 @@ from app.models import ClaimOrder, GmailResponseAnalysis, InboundEmailMessage, U
 from app.models.domain import utc_now
 from app.schemas.domain import ClaimResponseReviewCreate
 from app.services.audit import add_audit_log
-from app.services.gmail_payment_signal_service import message_has_explicit_payment_confirmation
+from app.services.gmail_payment_signal_service import current_response_text, message_has_explicit_payment_confirmation
 from app.services.openai_structured_analysis_service import AIGmailClassification, OpenAIStructuredAnalysisService
 from app.services.response_review_service import ResponseReviewError, create_response_review
 
@@ -198,13 +198,7 @@ class GmailResponseIntelligenceService:
         )
 
     def classify_message(self, message: InboundEmailMessage) -> GmailResponseClassification:
-        text = normalize_text(
-            " ".join(
-                value
-                for value in [message.subject, message.snippet, message.body_text]
-                if value
-            )
-        )
+        text = normalize_text(current_response_text(message))
         is_starred = message_has_provider_label(message, "STARRED")
         amount = detect_amount(text)
         matches = {key: matching_keywords(text, keywords) for key, keywords in KEYWORDS.items()}
@@ -568,12 +562,16 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
         "ajustement applique",
         "ajustement a ete applique",
         "nous avons applique un ajustement",
+        "nous avons ajuste votre paiement",
+        "votre paiement a ete ajuste",
         "nous avons procede au paiement",
         "nous avons procede a un paiement",
         "nous avons credite",
         "nous vous avons credite",
         "credite sur votre compte",
         "montant ajoute",
+        "we adjusted your payment",
+        "we have adjusted your payment",
     ),
     "payment_to_verify": (
         "will be paid",
@@ -700,6 +698,8 @@ def positive_payment_pattern_matches(text: str) -> list[str]:
         "remboursement_accorde_pattern": r"\bremboursement\b.{0,80}\b(?:accorde|effectue|confirme|credite|verse)\b",
         "regularisation_accordee_pattern": r"\bregularisation\b.{0,80}\b(?:accordee|effectuee|confirmee|creditee|versee)\b",
         "ajustement_accorde_pattern": r"\bajustement\b.{0,80}\b(?:accorde|effectue|confirme|credite|verse)\b",
+        "paiement_ajuste_pattern": r"\b(?:avons\s+ajuste\s+votre\s+paiement|votre\s+paiement\s+a\s+ete\s+ajuste)\b",
+        "payment_adjusted_pattern": r"\b(?:we\s+(?:have\s+)?adjusted\s+your\s+payment|your\s+payment\s+was\s+adjusted)\b",
         "prochain_versement_pattern": r"\b(?:sera|a ete)?\s*(?:ajoutee?|creditee?)\b.{0,80}\bprochain versement\b",
         "paiement_prochain_versement_pattern": r"\b(?:paiement|montant|regularisation|compensation)\b.{0,100}\bprochain versement\b",
     }
@@ -736,10 +736,12 @@ def message_has_provider_label(message: InboundEmailMessage, label: str) -> bool
 
 
 def detect_amount(text: str) -> Decimal | None:
+    number = r"-?(?:\d{1,3}(?:[ .]\d{3})+(?:[,.]\d{1,3})?|\d+(?:[,.]\d{1,3})?)"
+    decimal_number = r"-?(?:\d{1,3}(?:[ .]\d{3})*[,.]\d{1,3}|\d+[,.]\d{1,3})"
     amount_patterns = [
-        r"(?:€\s*)?(-?\d{1,3}(?:[ .]\d{3})*(?:[,.]\d{2})|-?\d+(?:[,.]\d{2}))\s*(?:€|eur|euros)",
-        r"(?:amount|montant|payment|paiement|compensation|reimbursement|remboursement)\D{0,20}"
-        r"(-?\d{1,3}(?:[ .]\d{3})*(?:[,.]\d{2})|-?\d+(?:[,.]\d{2}))",
+        rf"(?<![\w.,])(?:€\s*)?({number})\s*(?:€|eur|euros?)(?![\w.,])",
+        rf"(?:amount|montant|payment|paiement|compensation|reimbursement|remboursement)\D{{0,20}}"
+        rf"(?<![\w.,])({decimal_number})(?![\w.,])",
     ]
     for pattern in amount_patterns:
         match = re.search(pattern, text)
