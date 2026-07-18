@@ -48,6 +48,7 @@ from app.services.autopilot_service import (
     AutopilotError,
     autopilot_is_emergency_stopped,
     create_starred_thread_reply_attempt,
+    gmail_account_send_pacing_active,
     gmail_account_sent_last_24_hours_count,
     safe_autopilot_recipient,
     send_provider_draft,
@@ -451,6 +452,10 @@ class GmailWatchedThreadMonitorService:
         sent_count = 0
         sent_threads: set[str] = set()
         for item in items:
+            current_block_reason = self.automatic_reply_block_reason(db, account)
+            if current_block_reason is not None:
+                result.autopilot_skipped_count += 1
+                break
             watched = item.watched_thread
             message = item.inbound_message
             if watched is None or message is None:
@@ -501,6 +506,8 @@ class GmailWatchedThreadMonitorService:
         limit = self.settings.autopilot_per_gmail_account_daily_limit
         if limit > 0 and gmail_account_sent_last_24_hours_count(db, account.id) >= limit:
             return "gmail_account_daily_limit_reached"
+        if gmail_account_send_pacing_active(db, account.id, limit):
+            return "gmail_account_send_pacing_active"
         return None
 
     def reply_thread_integrity_error(
@@ -832,7 +839,7 @@ class GmailWatchedThreadMonitorService:
                     if exc.message != "Appeal attempt is already marked as sent":
                         raise
         except AutopilotError as exc:
-            if exc.message == "gmail_account_daily_limit_reached":
+            if exc.message in {"gmail_account_daily_limit_reached", "gmail_account_send_pacing_active"}:
                 item.reason = exc.message
                 result.autopilot_skipped_count += 1
                 return False
@@ -1008,7 +1015,7 @@ class GmailWatchedThreadMonitorService:
                 if exc.message != "Appeal attempt is already marked as sent":
                     raise
         except AutopilotError as exc:
-            if exc.message == "gmail_account_daily_limit_reached":
+            if exc.message in {"gmail_account_daily_limit_reached", "gmail_account_send_pacing_active"}:
                 item.reason = exc.message
                 result.autopilot_skipped_count += 1
                 return False
@@ -1146,7 +1153,7 @@ class GmailWatchedThreadMonitorService:
             result.autopilot_skipped_count += 1
             return False
         except AutopilotError as exc:
-            if exc.message == "gmail_account_daily_limit_reached":
+            if exc.message in {"gmail_account_daily_limit_reached", "gmail_account_send_pacing_active"}:
                 item.reason = exc.message
                 result.autopilot_skipped_count += 1
                 return False
