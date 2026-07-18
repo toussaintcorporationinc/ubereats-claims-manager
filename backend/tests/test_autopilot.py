@@ -32,7 +32,11 @@ from app.models import (
 from app.models.domain import utc_now
 from app.services.openai_structured_analysis_service import AIProofExtraction, OpenAIStructuredAnalysisService
 from app.routes.email import get_gmail_provider
-from app.services.autopilot_service import gmail_account_sent_last_24_hours_count, iter_candidates
+from app.services.autopilot_service import (
+    gmail_account_send_pacing_active,
+    gmail_account_sent_last_24_hours_count,
+    iter_candidates,
+)
 from app.services.autopilot_identity_repair_service import find_or_create_order_from_starred_text
 from app.services.email_provider import EmailConnectionStatus, EmailSendResult
 
@@ -525,6 +529,36 @@ def test_gmail_account_limit_uses_a_rolling_24_hour_window(
     db_session.commit()
 
     assert gmail_account_sent_last_24_hours_count(db_session, account.id) == 1
+    assert gmail_account_send_pacing_active(db_session, account.id, 500) is False
+
+    recent_draft = EmailDraft(
+        order_id=order["order_id"],
+        draft_type="initial_claim",
+        subject="Recent paced draft",
+        body="Just sent.",
+        status="created",
+    )
+    db_session.add(recent_draft)
+    db_session.flush()
+    db_session.add(
+        EmailProviderDraft(
+            email_draft_id=recent_draft.id,
+            email_account_id=account.id,
+            provider="gmail",
+            provider_draft_id="recent-paced-draft",
+            provider_thread_id="recent-paced-thread",
+            provider_message_id="recent-paced-message",
+            to_email="restaurantsfrance@uber.com",
+            subject=recent_draft.subject,
+            status="sent",
+            created_by_user_id=1,
+            sent_by_user_id=1,
+            sent_at=utc_now(),
+        )
+    )
+    db_session.commit()
+
+    assert gmail_account_send_pacing_active(db_session, account.id, 500) is True
 
 
 def test_autopilot_does_not_send_final_status(

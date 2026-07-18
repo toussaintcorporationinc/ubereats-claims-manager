@@ -918,6 +918,87 @@ def test_account_quota_is_checked_before_remote_draft_creation(
     assert provider.created_drafts == []
 
 
+def test_account_send_pacing_is_checked_before_remote_draft_creation(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_PER_GMAIL_ACCOUNT_DAILY_LIMIT", "500")
+    get_settings.cache_clear()
+    add_refused_work_item(db_session, account, order, thread_id="thread-pacing-preflight")
+    sent_email_draft = EmailDraft(
+        order_id=order.id,
+        draft_type="appeal_generic_refusal",
+        subject="Recently sent",
+        body="Recently sent",
+        status="ready",
+    )
+    db_session.add(sent_email_draft)
+    db_session.flush()
+    db_session.add(
+        EmailProviderDraft(
+            email_draft_id=sent_email_draft.id,
+            email_account_id=account.id,
+            provider="gmail",
+            provider_draft_id="recently-sent-draft",
+            provider_thread_id="recently-sent-thread",
+            provider_message_id="recently-sent-message",
+            to_email="restaurantsfrance@uber.com",
+            subject=sent_email_draft.subject,
+            status="sent",
+            created_by_user_id=owner.id,
+            sent_by_user_id=owner.id,
+            sent_at=utc_now(),
+        )
+    )
+    db_session.commit()
+    provider = FakeWatchedGmailProvider()
+    result = GmailWatchedThreadMonitorResult()
+
+    GmailWatchedThreadMonitorService(provider).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=10,
+    )
+
+    assert result.autopilot_sent_count == 0
+    assert result.autopilot_skipped_count == 1
+    assert provider.created_drafts == []
+    assert provider.sent_drafts == []
+
+
+def test_account_send_pacing_allows_only_one_send_per_worker_cycle(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_PER_GMAIL_ACCOUNT_DAILY_LIMIT", "500")
+    get_settings.cache_clear()
+    add_refused_work_item(db_session, account, order, thread_id="thread-paced-first")
+    add_refused_work_item(db_session, account, order, thread_id="thread-paced-second")
+    provider = FakeWatchedGmailProvider()
+    result = GmailWatchedThreadMonitorResult()
+
+    GmailWatchedThreadMonitorService(provider).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=10,
+    )
+
+    assert result.autopilot_sent_count == 1
+    assert result.autopilot_skipped_count == 1
+    assert len(provider.created_drafts) == 1
+    assert len(provider.sent_drafts) == 1
+
+
 def test_existing_remote_draft_blocks_duplicate_draft_creation(
     db_session: Session,
     gmail_case,
@@ -1059,6 +1140,7 @@ def test_sent_reply_after_message_blocks_cross_cycle_duplicate(
         order,
         thread_id="thread-cross-cycle-duplicate",
     )
+    message.received_at = utc_now() - timedelta(minutes=10)
     previous_draft = EmailDraft(
         order_id=order.id,
         draft_type="appeal_generic_refusal",
@@ -1081,7 +1163,7 @@ def test_sent_reply_after_message_blocks_cross_cycle_duplicate(
             status="sent",
             created_by_user_id=owner.id,
             sent_by_user_id=owner.id,
-            sent_at=utc_now(),
+            sent_at=utc_now() - timedelta(minutes=5),
         )
     )
     db_session.commit()
@@ -1434,6 +1516,9 @@ def test_old_submitted_ack_is_relaunched_in_thread_with_cooldown(
     assert "reexaminer le refus" not in draft.body
     assert workflow.appeal_attempt_count == 1
 
+    draft.provider_drafts[0].sent_at = utc_now() - timedelta(minutes=5)
+    db_session.commit()
+
     second_result = GmailWatchedThreadMonitorResult()
     service.send_pending_actionable_replies(db_session, owner, account, result=second_result, max_items=10)
 
@@ -1611,7 +1696,7 @@ def test_already_replied_refusal_leaves_actionable_queue(
         subject="Re: Contestation de remboursement de commande F93BA",
         snippet="Nous maintenons le refus.",
         body_text="Nous maintenons le refus pour la commande F93BA.",
-        received_at=utc_now(),
+        received_at=utc_now() - timedelta(minutes=10),
         raw_headers_json={},
         provider_labels_json=["INBOX", "STARRED"],
         match_status="linked",
@@ -1651,7 +1736,7 @@ def test_already_replied_refusal_leaves_actionable_queue(
         to_email="restaurantsfrance@uber.com",
         subject=draft.subject,
         status="sent",
-        sent_at=utc_now(),
+        sent_at=utc_now() - timedelta(minutes=5),
         created_by_user_id=owner.id,
     )
     db_session.add(provider_draft)
@@ -1906,7 +1991,7 @@ def test_crousty_best_refusal_reply_is_reissued_once_with_asian_passion(
         to_email="restaurantsfrance@uber.com",
         subject=old_draft.subject,
         status=old_provider_status,
-        sent_at=utc_now() if old_provider_status == "sent" else None,
+        sent_at=utc_now() - timedelta(minutes=5) if old_provider_status == "sent" else None,
         created_by_user_id=owner.id,
     )
     db_session.add(old_provider_draft)

@@ -152,6 +152,30 @@ def gmail_account_sent_last_24_hours_count(db: Session, email_account_id: int | 
     )
 
 
+def gmail_account_send_pacing_active(
+    db: Session,
+    email_account_id: int | None,
+    daily_limit: int,
+) -> bool:
+    if email_account_id is None or daily_limit <= 0:
+        return False
+    minimum_interval_seconds = (24 * 60 * 60 + daily_limit - 1) // daily_limit
+    window_start = utc_now() - timedelta(seconds=minimum_interval_seconds)
+    return (
+        db.scalar(
+            select(EmailProviderDraft.id)
+            .where(
+                EmailProviderDraft.provider == "gmail",
+                EmailProviderDraft.email_account_id == email_account_id,
+                EmailProviderDraft.status == "sent",
+                EmailProviderDraft.sent_at >= window_start,
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
 def create_emergency_stop(db: Session, user: User) -> AutopilotRun:
     run = AutopilotRun(
         started_by_user_id=user.id,
@@ -838,6 +862,8 @@ def provider_draft_limit_skip_reason(db: Session, provider_draft: EmailProviderD
         return None
     if gmail_account_sent_last_24_hours_count(db, provider_draft.email_account_id) >= limit:
         return "gmail_account_daily_limit_reached"
+    if gmail_account_send_pacing_active(db, provider_draft.email_account_id, limit):
+        return "gmail_account_send_pacing_active"
     return None
 
 
