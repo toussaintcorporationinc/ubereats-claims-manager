@@ -135,16 +135,17 @@ def sent_today_count(db: Session, restaurant_id: int | None = None) -> int:
     return int(db.scalar(statement) or 0)
 
 
-def gmail_account_sent_today_count(db: Session, email_account_id: int | None) -> int:
+def gmail_account_sent_last_24_hours_count(db: Session, email_account_id: int | None) -> int:
     if email_account_id is None:
         return 0
+    window_start = utc_now() - timedelta(hours=24)
     return int(
         db.scalar(
             select(func.count(EmailProviderDraft.id)).where(
                 EmailProviderDraft.provider == "gmail",
                 EmailProviderDraft.email_account_id == email_account_id,
                 EmailProviderDraft.status == "sent",
-                EmailProviderDraft.sent_at >= today_utc_start(),
+                EmailProviderDraft.sent_at >= window_start,
             )
         )
         or 0
@@ -835,7 +836,7 @@ def provider_draft_limit_skip_reason(db: Session, provider_draft: EmailProviderD
     limit = settings.autopilot_per_gmail_account_daily_limit
     if limit <= 0 or provider_draft.provider != "gmail" or provider_draft.email_account_id is None:
         return None
-    if gmail_account_sent_today_count(db, provider_draft.email_account_id) >= limit:
+    if gmail_account_sent_last_24_hours_count(db, provider_draft.email_account_id) >= limit:
         return "gmail_account_daily_limit_reached"
     return None
 

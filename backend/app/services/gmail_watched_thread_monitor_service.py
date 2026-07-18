@@ -48,7 +48,7 @@ from app.services.autopilot_service import (
     AutopilotError,
     autopilot_is_emergency_stopped,
     create_starred_thread_reply_attempt,
-    gmail_account_sent_today_count,
+    gmail_account_sent_last_24_hours_count,
     safe_autopilot_recipient,
     send_provider_draft,
 )
@@ -499,7 +499,7 @@ class GmailWatchedThreadMonitorService:
         if autopilot_is_emergency_stopped(db):
             return "autopilot_emergency_stopped"
         limit = self.settings.autopilot_per_gmail_account_daily_limit
-        if limit > 0 and gmail_account_sent_today_count(db, account.id) >= limit:
+        if limit > 0 and gmail_account_sent_last_24_hours_count(db, account.id) >= limit:
             return "gmail_account_daily_limit_reached"
         return None
 

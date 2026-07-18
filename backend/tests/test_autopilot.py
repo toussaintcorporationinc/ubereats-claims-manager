@@ -32,7 +32,7 @@ from app.models import (
 from app.models.domain import utc_now
 from app.services.openai_structured_analysis_service import AIProofExtraction, OpenAIStructuredAnalysisService
 from app.routes.email import get_gmail_provider
-from app.services.autopilot_service import iter_candidates
+from app.services.autopilot_service import gmail_account_sent_last_24_hours_count, iter_candidates
 from app.services.autopilot_identity_repair_service import find_or_create_order_from_starred_text
 from app.services.email_provider import EmailConnectionStatus, EmailSendResult
 
@@ -481,6 +481,50 @@ def test_autopilot_respects_per_gmail_account_daily_limit(
     sent_drafts = db_session.scalars(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent")).all()
     assert len(sent_drafts) == 1
     get_settings.cache_clear()
+
+
+def test_gmail_account_limit_uses_a_rolling_24_hour_window(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = create_restaurant(client)
+    order = create_ready_order(client, restaurant["id"], "AUTO-ROLLING-24H")
+    account = add_gmail_account(db_session)
+    for index, sent_at in enumerate(
+        (
+            utc_now() - timedelta(hours=23),
+            utc_now() - timedelta(hours=25),
+        ),
+        start=1,
+    ):
+        draft = EmailDraft(
+            order_id=order["order_id"],
+            draft_type="initial_claim",
+            subject=f"Rolling quota draft {index}",
+            body="Already sent.",
+            status="created",
+        )
+        db_session.add(draft)
+        db_session.flush()
+        db_session.add(
+            EmailProviderDraft(
+                email_draft_id=draft.id,
+                email_account_id=account.id,
+                provider="gmail",
+                provider_draft_id=f"rolling-quota-draft-{index}",
+                provider_thread_id=f"rolling-quota-thread-{index}",
+                provider_message_id=f"rolling-quota-message-{index}",
+                to_email="restaurantsfrance@uber.com",
+                subject=draft.subject,
+                status="sent",
+                created_by_user_id=1,
+                sent_by_user_id=1,
+                sent_at=sent_at,
+            )
+        )
+    db_session.commit()
+
+    assert gmail_account_sent_last_24_hours_count(db_session, account.id) == 1
 
 
 def test_autopilot_does_not_send_final_status(
