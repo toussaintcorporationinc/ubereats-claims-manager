@@ -39,6 +39,7 @@ from app.services.gmail_payment_signal_service import (
     EXPLICIT_PAYMENT_PROMISE_MARKERS,
     message_has_explicit_payment_confirmation,
     text_has_explicit_payment_confirmation,
+    visible_email_text,
 )
 from app.services.gmail_quota import parse_gmail_retry_after
 from app.services.gmail_scope_service import gmail_scopes_allow_modify
@@ -2528,9 +2529,12 @@ def normalize_fast_classification_text(text: str) -> str:
 
 def payload_is_uber_support_survey(payload: InboundEmailPayload) -> bool:
     """Identify standalone satisfaction surveys without hiding real decisions."""
-    subject = normalize_fast_classification_text(payload.subject or "")
-    body_head = normalize_fast_classification_text((payload.body_text or "")[:1200])
-    lead = f"{subject} {body_head[:500]}".strip()
+    visible_text = " ".join(
+        visible_email_text(part)
+        for part in (payload.subject or "", payload.snippet or "", payload.body_text or "")
+        if part
+    )
+    lead = normalize_fast_classification_text(visible_text[:12000])
     survey_positions = [lead.find(marker) for marker in UBER_SUPPORT_SURVEY_MARKERS if marker in lead]
     if not survey_positions:
         return False

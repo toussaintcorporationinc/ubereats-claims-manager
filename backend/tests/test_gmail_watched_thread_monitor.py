@@ -1100,12 +1100,20 @@ def test_latest_uber_survey_blocks_automatic_reply_to_old_refusal(
         order,
         thread_id="thread-latest-survey",
     )
+    long_html_survey = (
+        "<html><head><style>"
+        + ("tracking-css " * 500)
+        + "</style></head><body><p>"
+        + "Partagez votre experience avec le service d'assistance Uber. "
+        + "Nous accordons beaucoup d'importance a votre avis."
+        + "</p></body></html>"
+    )
     provider = FakeFastWatchedGmailProvider()
     provider.latest_payloads[watched.gmail_thread_id] = payload(
         "latest-support-survey",
         thread_id=watched.gmail_thread_id,
         subject="Commercant - Assistance client",
-        body="Partagez votre experience avec le service d'assistance Uber.",
+        body=long_html_survey,
     )
     result = GmailWatchedThreadMonitorResult()
 
