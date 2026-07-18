@@ -37,6 +37,7 @@ from app.services.email_provider import (
     InboundEmailPayload,
 )
 from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncService
+from app.services.autopilot_service import create_emergency_stop
 from app.services.gmail_inbound_sync_service import (
     GMAIL_STARRED_URGENT_QUERY,
     GMAIL_STARRED_WITH_ATTACHMENT_QUERY,
@@ -1719,6 +1720,47 @@ def test_sync_payment_signal_wins_over_starred_gmail_label(
     assert analysis is not None
     assert analysis.recommended_review_type == "payment_confirmed"
     assert analysis.reason == "payment_confirmed_with_amount"
+
+
+def test_emergency_stop_applies_payment_but_keeps_inbound_star(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-INBOUND-STOP-PAID",
+        thread_id="thread-stop-paid",
+    )
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-stop-paid",
+            thread_id="thread-stop-paid",
+            body_text="Nous avons ajuste votre paiement de 21,24 EUR.",
+            provider_labels=["STARRED"],
+        )
+    ]
+    create_emergency_stop(db_session, owner)
+    db_session.commit()
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    db_session.refresh(order)
+    assert order.status == "payment_confirmed"
+    assert str(order.recovered_amount) == "21.24"
+    assert fake_gmail_provider.removed_labels == []
+    message = db_session.scalar(
+        select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-stop-paid")
+    )
+    assert message is not None
+    assert message.provider_labels_json == ["STARRED"]
 
 
 def test_sync_french_payment_approved_with_old_refusal_conflict_is_counted(

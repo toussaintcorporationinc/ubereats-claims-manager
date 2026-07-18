@@ -247,11 +247,12 @@ class GmailWatchedThreadMonitorService:
             active_threads: list[GmailWatchedThread] = []
         else:
             can_modify_stars = gmail_scopes_allow_modify(account.scopes)
+            star_mutations_allowed = can_modify_stars and not autopilot_is_emergency_stopped(db)
             active_threads = self.get_active_watched_threads(
                 db,
                 account,
                 max_per_cycle=remaining_thread_budget,
-                include_positive_star_cleanup=can_modify_stars,
+                include_positive_star_cleanup=star_mutations_allowed,
             )
             if not can_modify_stars and self.count_pending_positive_star_cleanup(db, account):
                 result.errors.append("gmail_unstar:reconnect_required:gmail.modify")
@@ -2274,6 +2275,8 @@ class GmailWatchedThreadMonitorService:
         allow_remote_lookup: bool = False,
         result: GmailWatchedThreadMonitorResult | None = None,
     ) -> bool:
+        if autopilot_is_emergency_stopped(db):
+            return False
         starred_message_ids = self.starred_message_ids_for_thread(db, watched, allow_remote_lookup=allow_remote_lookup)
         remover = getattr(self.provider, "remove_message_label_for_account", None)
         account = db.get(EmailAccount, watched.email_account_id)
