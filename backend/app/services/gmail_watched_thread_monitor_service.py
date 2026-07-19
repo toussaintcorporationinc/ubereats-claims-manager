@@ -266,6 +266,8 @@ class GmailWatchedThreadMonitorService:
 
         for watched in active_threads:
             if watched.status in POSITIVE_WATCHED_STATUSES:
+                if self.block_unverified_positive_star_cleanup(db, user, watched, result):
+                    continue
                 self.remove_thread_star(
                     db,
                     user,
@@ -2259,6 +2261,71 @@ class GmailWatchedThreadMonitorService:
             watched.last_message_at = message.received_at
         if self.labels_include_starred(message.provider_labels_json):
             watched.star_active = True
+
+    def block_unverified_positive_star_cleanup(
+        self,
+        db: Session,
+        user: User,
+        watched: GmailWatchedThread,
+        result: GmailWatchedThreadMonitorResult,
+    ) -> bool:
+        item = db.scalar(
+            select(GmailStarredWorkItem)
+            .where(
+                GmailStarredWorkItem.watched_thread_id == watched.id,
+                GmailStarredWorkItem.status == "positive",
+            )
+            .order_by(
+                GmailStarredWorkItem.processed_at.desc().nullslast(),
+                GmailStarredWorkItem.id.desc(),
+            )
+            .limit(1)
+        )
+        message = db.get(InboundEmailMessage, item.inbound_message_id) if item and item.inbound_message_id else None
+        if item is None or message is None:
+            block_reason = "positive_payment_message_missing"
+        elif not message_has_explicit_payment_confirmation(message):
+            block_reason = "positive_without_explicit_payment_confirmation"
+        elif watched.claim_order_id and message.order_id and watched.claim_order_id != message.order_id:
+            block_reason = "gmail_thread_order_mismatch"
+        else:
+            analysis = message.response_analysis
+            if analysis is None:
+                analysis = db.scalar(
+                    select(GmailResponseAnalysis)
+                    .where(GmailResponseAnalysis.inbound_message_id == message.id)
+                    .order_by(GmailResponseAnalysis.id.desc())
+                )
+            block_reason = self.positive_accounting_block_reason(db, message, analysis)
+
+        if block_reason is None:
+            return False
+
+        now = utc_now()
+        if item is not None:
+            item.status = "manual_review"
+            item.reason = block_reason
+            item.processed_at = now
+        previous_status = watched.status
+        watched.status = "manual_review"
+        watched.star_active = True
+        watched.last_processed_at = now
+        result.manual_reviews += 1
+        add_audit_log(
+            db,
+            entity_type="gmail_watched_thread",
+            entity_id=watched.id,
+            action="gmail_watched_thread.legacy_positive_cleanup_blocked",
+            user_id=user.id,
+            old_value={"status": previous_status},
+            new_value={
+                "status": watched.status,
+                "reason": block_reason,
+                "gmail_thread_id": watched.gmail_thread_id,
+            },
+        )
+        db.flush()
+        return True
 
     def update_work_item_status(
         self,

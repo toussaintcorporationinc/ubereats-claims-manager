@@ -2418,6 +2418,143 @@ def test_positive_star_removal_failure_stays_pending_and_retries_after_scope_gra
     assert provider.removed_labels == [("star-1", "STARRED")]
 
 
+def test_legacy_positive_cleanup_keeps_unlinked_payment_starred(
+    db_session: Session,
+    gmail_case,
+) -> None:
+    owner, account, _order = gmail_case
+    account.scopes = "https://www.googleapis.com/auth/gmail.modify"
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-legacy-positive-unlinked",
+        first_starred_message_id="legacy-positive-unlinked",
+        status="payment_confirmed",
+        star_active=True,
+    )
+    message = InboundEmailMessage(
+        email_account_id=account.id,
+        provider="gmail",
+        provider_message_id="legacy-positive-unlinked",
+        provider_thread_id=watched.gmail_thread_id,
+        from_email="restaurantsfrance@uber.com",
+        body_text="Nous avons ajuste votre paiement de 24.99 EUR pour la commande ABC12.",
+        match_status="unlinked",
+        match_reason="no_match",
+        review_status="reviewed",
+        provider_labels_json=["INBOX", "STARRED"],
+    )
+    db_session.add_all([watched, message])
+    db_session.flush()
+    analysis = GmailResponseAnalysis(
+        inbound_message_id=message.id,
+        recommended_review_type="payment_confirmed",
+        status="analyzed",
+        confidence_score=Decimal("0.92"),
+        reason="fast_unlinked_payment_positive",
+        detected_amount=Decimal("24.99"),
+    )
+    item = GmailStarredWorkItem(
+        watched_thread_id=watched.id,
+        email_account_id=account.id,
+        inbound_message_id=message.id,
+        gmail_thread_id=watched.gmail_thread_id,
+        provider_message_id=message.provider_message_id,
+        status="positive",
+        reason="payment_confirmed",
+        processed_at=utc_now(),
+    )
+    db_session.add_all([analysis, item])
+    db_session.commit()
+    provider = FakeWatchedGmailProvider()
+
+    result = GmailWatchedThreadMonitorService(provider).process_watched_threads(
+        db_session,
+        owner,
+        account,
+        max_threads=1,
+        process_local_backlog=False,
+    )
+
+    assert watched.status == "manual_review"
+    assert watched.star_active is True
+    assert item.status == "manual_review"
+    assert item.reason == "positive_payment_unlinked"
+    assert result.manual_reviews == 1
+    assert provider.removed_labels == []
+
+
+def test_legacy_positive_cleanup_keeps_conflicting_amount_starred(
+    db_session: Session,
+    gmail_case,
+) -> None:
+    owner, account, order = gmail_case
+    account.scopes = "https://www.googleapis.com/auth/gmail.modify"
+    order.status = "payment_confirmed"
+    order.recovered_amount = Decimal("30.98")
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-legacy-positive-conflict",
+        first_starred_message_id="legacy-positive-conflict",
+        claim_order_id=order.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="payment_confirmed",
+        star_active=True,
+    )
+    message = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=order.id,
+        provider="gmail",
+        provider_message_id="legacy-positive-conflict",
+        provider_thread_id=watched.gmail_thread_id,
+        from_email="restaurantsfrance@uber.com",
+        body_text="Nous avons ajuste votre paiement de 25.18 EUR pour la commande F93BA.",
+        match_status="linked",
+        match_reason="order_number_match",
+        review_status="ignored",
+        provider_labels_json=["INBOX", "STARRED"],
+    )
+    db_session.add_all([watched, message])
+    db_session.flush()
+    analysis = GmailResponseAnalysis(
+        inbound_message_id=message.id,
+        order_id=order.id,
+        recommended_review_type="payment_confirmed",
+        status="ignored",
+        confidence_score=Decimal("0.92"),
+        reason="order_already_final:payment_confirmed",
+        detected_amount=Decimal("25.18"),
+    )
+    item = GmailStarredWorkItem(
+        watched_thread_id=watched.id,
+        email_account_id=account.id,
+        inbound_message_id=message.id,
+        gmail_thread_id=watched.gmail_thread_id,
+        provider_message_id=message.provider_message_id,
+        status="positive",
+        reason="payment_confirmed",
+        processed_at=utc_now(),
+    )
+    db_session.add_all([analysis, item])
+    db_session.commit()
+    provider = FakeWatchedGmailProvider()
+
+    result = GmailWatchedThreadMonitorService(provider).process_watched_threads(
+        db_session,
+        owner,
+        account,
+        max_threads=1,
+        process_local_backlog=False,
+    )
+
+    assert watched.status == "manual_review"
+    assert watched.star_active is True
+    assert item.status == "manual_review"
+    assert item.reason == "positive_payment_amount_conflict"
+    assert result.manual_reviews == 1
+    assert provider.removed_labels == []
+
+
 def test_watched_thread_processes_only_latest_external_reply(
     db_session: Session,
     gmail_case,
