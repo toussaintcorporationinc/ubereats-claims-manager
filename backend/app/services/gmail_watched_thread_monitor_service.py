@@ -542,14 +542,8 @@ class GmailWatchedThreadMonitorService:
                 .limit(max(max_items, MAX_LOCAL_REPLY_CANDIDATES_PER_CYCLE))
             ).all()
         )
-        sent_count = 0
-        sent_threads: set[str] = set()
-        remote_preflight_count = 0
+        remote_candidates: list[GmailStarredWorkItem] = []
         for item in items:
-            current_block_reason = self.automatic_reply_block_reason(db, account)
-            if current_block_reason is not None:
-                result.autopilot_skipped_count += 1
-                break
             watched = item.watched_thread
             message = item.inbound_message
             if watched is None or message is None:
@@ -564,11 +558,6 @@ class GmailWatchedThreadMonitorService:
                 )
                 result.autopilot_skipped_count += 1
                 continue
-            if watched.gmail_thread_id in sent_threads:
-                item.reason = "thread_already_replied_this_cycle"
-                item.processed_at = utc_now()
-                result.autopilot_skipped_count += 1
-                continue
             latest_local_payload = self.latest_local_uber_message(db, account, watched.gmail_thread_id)
             if (
                 latest_local_payload is not None
@@ -580,6 +569,26 @@ class GmailWatchedThreadMonitorService:
                     item,
                     reason="superseded_by_newer_uber_message",
                 )
+                result.autopilot_skipped_count += 1
+                continue
+            remote_candidates.append(item)
+
+        sent_count = 0
+        sent_threads: set[str] = set()
+        remote_preflight_count = 0
+        for item in remote_candidates:
+            current_block_reason = self.automatic_reply_block_reason(db, account)
+            if current_block_reason is not None:
+                result.autopilot_skipped_count += 1
+                break
+            watched = item.watched_thread
+            message = item.inbound_message
+            if watched is None or message is None:
+                result.autopilot_skipped_count += 1
+                continue
+            if watched.gmail_thread_id in sent_threads:
+                item.reason = "thread_already_replied_this_cycle"
+                item.processed_at = utc_now()
                 result.autopilot_skipped_count += 1
                 continue
             if remote_preflight_count >= max_items:
