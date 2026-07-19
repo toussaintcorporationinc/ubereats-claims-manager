@@ -345,7 +345,8 @@ class GmailWatchedThreadMonitorService:
                     continue
 
                 positive_link_block_reason: str | None = None
-                if message_has_explicit_payment_confirmation(message):
+                explicit_payment_confirmation = message_has_explicit_payment_confirmation(message)
+                if explicit_payment_confirmation:
                     resolved_order, positive_link_block_reason = self.resolve_positive_response_order(
                         db,
                         user,
@@ -364,11 +365,12 @@ class GmailWatchedThreadMonitorService:
                         )
                         thread_order = resolved_order
 
-                if positive_link_block_reason is not None:
-                    self.process_unlinked_watched_message_fast(db, user, message, sync_result)
-                elif thread_order is None and message.match_status != "linked":
-                    self.process_unlinked_watched_message_fast(db, user, message, sync_result)
-                    if message_has_explicit_payment_confirmation(message):
+                    needs_full_identity_repair = bool(
+                        positive_link_block_reason is not None
+                        or thread_order is None
+                        or message.match_status != "linked"
+                    )
+                    if needs_full_identity_repair:
                         try:
                             identity_payloads = self.fetch_thread_payloads(
                                 db,
@@ -376,18 +378,27 @@ class GmailWatchedThreadMonitorService:
                                 watched,
                                 prefer_full_thread=True,
                             )
-                            repaired_order = self.repair_watched_thread_from_payloads(
+                            repaired_order = self.repair_positive_watched_thread_from_payloads(
                                 db,
                                 user,
                                 watched,
                                 identity_payloads,
+                                ignore_existing_link=positive_link_block_reason is not None,
                             )
                         except Exception as exc:  # noqa: BLE001 - one identity failure must not stop Gmail sync.
                             repaired_order = None
                             result.errors.append(
                                 f"positive_identity_repair:{watched.gmail_thread_id}:{str(exc)[:120]}"
                             )
-                        if repaired_order is not None:
+                        response_order_number = current_response_order_number(message)
+                        if repaired_order is not None and (
+                            not response_order_number
+                            or order_identifiers_equivalent(
+                                response_order_number,
+                                repaired_order.uber_order_number,
+                                repaired_order.internal_reference,
+                            )
+                        ):
                             self.relink_positive_message_order(
                                 db,
                                 user,
@@ -395,16 +406,13 @@ class GmailWatchedThreadMonitorService:
                                 message,
                                 repaired_order,
                             )
-                            self.sync_service.reprocess_existing_message(
-                                db,
-                                user,
-                                account,
-                                message,
-                                sync_result,
-                                apply_reviews=True,
-                                payload=payload,
-                            )
                             thread_order = repaired_order
+                            positive_link_block_reason = None
+
+                if positive_link_block_reason is not None:
+                    self.process_unlinked_watched_message_fast(db, user, message, sync_result)
+                elif thread_order is None and message.match_status != "linked":
+                    self.process_unlinked_watched_message_fast(db, user, message, sync_result)
                 else:
                     self.sync_service.reprocess_existing_message(
                         db,
@@ -1929,6 +1937,22 @@ class GmailWatchedThreadMonitorService:
             },
         )
         return order
+
+    def repair_positive_watched_thread_from_payloads(
+        self,
+        db: Session,
+        user: User,
+        watched: GmailWatchedThread,
+        payloads: list[InboundEmailPayload],
+        *,
+        ignore_existing_link: bool,
+    ) -> ClaimOrder | None:
+        if not ignore_existing_link:
+            return self.repair_watched_thread_from_payloads(db, user, watched, payloads)
+        context = watched_thread_identity_context(payloads)
+        if not context:
+            return None
+        return find_or_create_order_from_starred_text(db, user, context)
 
     def process_unlinked_watched_message_fast(
         self,
