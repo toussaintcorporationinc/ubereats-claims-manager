@@ -475,10 +475,7 @@ class GmailEmailProvider:
         """
         access_token = self.access_token_for_external_call(db, account)
         payload = self.get_json(
-            (
-                f"{GMAIL_THREADS_URL}/{quote(thread_id, safe='')}?format=metadata"
-                "&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date"
-            ),
+            f"{GMAIL_THREADS_URL}/{quote(thread_id, safe='')}?format=full",
             {"Authorization": f"Bearer {access_token}"},
         )
         messages = payload.get("messages")
@@ -487,8 +484,8 @@ class GmailEmailProvider:
 
         account_email = (account.email_address or "").strip().lower()
         sender_filter = (get_settings().gmail_support_sender_filter or "").strip().lower()
-        candidates: list[tuple[int, int, str]] = []
-        fallbacks: list[tuple[int, int, str]] = []
+        candidates: list[tuple[int, int, dict[str, Any]]] = []
+        fallbacks: list[tuple[int, int, dict[str, Any]]] = []
         for index, item in enumerate(messages):
             if not isinstance(item, dict) or not item.get("id"):
                 continue
@@ -498,7 +495,7 @@ class GmailEmailProvider:
                 internal_date = int(item.get("internalDate") or 0)
             except (TypeError, ValueError):
                 internal_date = 0
-            candidate = (internal_date, index, str(item["id"]))
+            candidate = (internal_date, index, item)
             fallbacks.append(candidate)
             if sender_filter:
                 if sender_filter in from_email:
@@ -506,16 +503,14 @@ class GmailEmailProvider:
             elif not account_email or account_email not in from_email:
                 candidates.append(candidate)
 
-        chosen = max(candidates if sender_filter else candidates or fallbacks, default=None)
+        chosen = max(
+            candidates if sender_filter else candidates or fallbacks,
+            key=lambda candidate: (candidate[0], candidate[1]),
+            default=None,
+        )
         if chosen is None:
             return None
-        return self.get_message_for_account_payload(
-            db,
-            account,
-            chosen[2],
-            include_attachments=False,
-            enrich_starred=False,
-        )
+        return self.parse_gmail_message(chosen[2], attachments=[])
 
     def enrich_starred_message_with_thread_context(
         self,

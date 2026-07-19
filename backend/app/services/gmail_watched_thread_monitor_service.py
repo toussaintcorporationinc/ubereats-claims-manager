@@ -619,6 +619,14 @@ class GmailWatchedThreadMonitorService:
                     item,
                     reason=latest_reply_block_reason,
                 )
+                if latest_reply_block_reason == "superseded_by_newer_uber_message":
+                    self.queue_latest_external_message_for_processing(
+                        db,
+                        user,
+                        account,
+                        watched,
+                        result,
+                    )
                 result.autopilot_skipped_count += 1
                 continue
             if self.send_actionable_reply_for_work_item(db, user, account, watched, item, message, result):
@@ -747,6 +755,74 @@ class GmailWatchedThreadMonitorService:
         if latest_payload.provider_message_id != message.provider_message_id:
             return "superseded_by_newer_uber_message"
         return None
+
+    def queue_latest_external_message_for_processing(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        watched: GmailWatchedThread,
+        result: GmailWatchedThreadMonitorResult,
+    ) -> bool:
+        """Persist the newer Uber reply discovered by the send safety check.
+
+        The reply is deliberately left pending. The next local-backlog pass runs
+        the normal classification, payment accounting, star, and reply rules.
+        """
+        payload = self._latest_external_message_cache.get((account.id, watched.gmail_thread_id))
+        if (
+            payload is None
+            or not payload.provider_message_id
+            or payload.provider_thread_id != watched.gmail_thread_id
+            or self.payload_from_account(payload, account)
+            or not sender_matches_filter(payload.from_email, self.settings.gmail_support_sender_filter)
+            or payload_is_uber_support_survey(payload)
+        ):
+            return False
+
+        sync_result = GmailInboundSyncResult(status="success")
+        message = self.upsert_inbound_message(
+            db,
+            user,
+            account,
+            payload,
+            order_identifier_index=self.sync_service.build_order_identifier_index(db, user),
+            sync_result=sync_result,
+        )
+        thread_order = db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else None
+        if thread_order is not None and message.order_id is None:
+            self.sync_service.record_linked_message(
+                db,
+                user,
+                message,
+                thread_order,
+                match_reason="order_number_match",
+            )
+            message.review_status = "unreviewed"
+            message.reviewed_at = None
+            message.reviewed_by_user_id = None
+            sync_result.linked_messages += 1
+
+        self.update_watched_links_from_message(watched, message)
+        _work_item, created = self.ensure_work_item(db, watched, account, message)
+        if created:
+            result.work_items_created += 1
+            result.new_messages_detected += 1
+        result.errors.extend(sync_result.errors)
+        add_audit_log(
+            db,
+            entity_type="gmail_watched_thread",
+            entity_id=watched.id,
+            action="gmail_watched_thread.newer_reply_queued",
+            user_id=user.id,
+            new_value={
+                "gmail_thread_id": watched.gmail_thread_id,
+                "provider_message_id": message.provider_message_id,
+                "work_item_created": created,
+            },
+        )
+        db.flush()
+        return created
 
     def latest_local_uber_message(
         self,

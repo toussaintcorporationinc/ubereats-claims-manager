@@ -1251,11 +1251,32 @@ def test_newer_uber_message_blocks_reply_to_stale_refusal(
 
     db_session.refresh(item)
     db_session.refresh(watched)
+    queued_message = db_session.scalar(
+        select(InboundEmailMessage).where(
+            InboundEmailMessage.email_account_id == account.id,
+            InboundEmailMessage.provider_message_id == "newer-uber-message",
+        )
+    )
+    queued_item = db_session.scalar(
+        select(GmailStarredWorkItem).where(
+            GmailStarredWorkItem.email_account_id == account.id,
+            GmailStarredWorkItem.provider_message_id == "newer-uber-message",
+        )
+    )
     assert result.autopilot_sent_count == 0
     assert result.autopilot_skipped_count == 1
+    assert result.new_messages_detected == 1
+    assert result.work_items_created == 1
     assert item.status == "skipped"
     assert item.reason == "superseded_by_newer_uber_message"
     assert watched.status == "manual_review"
+    assert watched.star_active is True
+    assert queued_message is not None
+    assert queued_message.provider_thread_id == watched.gmail_thread_id
+    assert queued_message.order_id == order.id
+    assert queued_item is not None
+    assert queued_item.inbound_message_id == queued_message.id
+    assert queued_item.status == "pending"
     assert provider.created_drafts == []
     assert provider.sent_drafts == []
 
