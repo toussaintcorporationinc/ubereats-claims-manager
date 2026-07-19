@@ -550,6 +550,78 @@ def test_quota_failure_skips_starred_discovery_for_account_cycle(
     assert result.errors == [quota_error]
 
 
+def test_local_stale_scan_continues_past_remote_preflight_budget(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    add_refused_work_item(db_session, account, order, thread_id="thread-remote-budget")
+    add_refused_work_item(db_session, account, order, thread_id="thread-local-blocker")
+    stale_watched, stale_item, stale_message = add_refused_work_item(
+        db_session,
+        account,
+        order,
+        thread_id="thread-local-stale",
+    )
+    newer_message = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=order.id,
+        provider="gmail",
+        provider_message_id="message-thread-local-current",
+        provider_thread_id=stale_watched.gmail_thread_id,
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        subject=f"Re: commande {order.uber_order_number}",
+        snippet=f"Refus commande {order.uber_order_number}",
+        body_text=f"Uber refuse la commande {order.uber_order_number}.",
+        received_at=stale_message.received_at + timedelta(seconds=1),
+        raw_headers_json={},
+        provider_labels_json=["INBOX", "STARRED"],
+        match_status="linked",
+        match_reason="order_number_match",
+        review_status="reviewed",
+    )
+    db_session.add(newer_message)
+    db_session.flush()
+    db_session.add(
+        GmailStarredWorkItem(
+            watched_thread_id=stale_watched.id,
+            email_account_id=account.id,
+            gmail_thread_id=stale_watched.gmail_thread_id,
+            provider_message_id=newer_message.provider_message_id,
+            inbound_message_id=newer_message.id,
+            status="refused",
+            reason="uber_refusal",
+            processed_at=utc_now(),
+        )
+    )
+    db_session.commit()
+    provider = FakeFastWatchedGmailProvider()
+    provider.latest_payloads["thread-remote-budget"] = payload(
+        "remote-newer-message",
+        thread_id="thread-remote-budget",
+    )
+    result = GmailWatchedThreadMonitorResult()
+
+    GmailWatchedThreadMonitorService(provider).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=1,
+    )
+
+    assert provider.latest_calls == ["thread-remote-budget"]
+    assert stale_item.status == "skipped"
+    assert stale_item.reason == "superseded_by_newer_uber_message"
+    assert result.autopilot_sent_count == 0
+    assert provider.created_drafts == []
+
+
 def test_fast_unlinked_classification_bounds_long_gmail_threads() -> None:
     body = (
         "ancienne conversation sans decision " * 5000
