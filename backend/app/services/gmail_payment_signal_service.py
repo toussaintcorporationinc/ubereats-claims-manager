@@ -193,3 +193,16 @@ def text_has_explicit_payment_confirmation(text: str) -> bool:
 
 def message_has_explicit_payment_confirmation(message: InboundEmailMessage) -> bool:
     return text_has_explicit_payment_confirmation(current_response_text(message))
+
+
+def current_response_order_number(message: InboundEmailMessage) -> str | None:
+    text = normalize_payment_signal_text(current_response_text(message))
+    patterns = (
+        r"\bcommande\s+n(?:o|°|º)\s*[\s.:#-]*([a-z0-9][a-z0-9-]{3,11})\b",
+        r"\bcommande\s+(?:numero|number|id)\s*[\s.:#-]*([a-z0-9][a-z0-9-]{3,11})\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).upper()
+    return None

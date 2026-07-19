@@ -2631,7 +2631,7 @@ def test_watched_thread_uses_fast_latest_external_message_when_available(
     ) == 1
 
 
-def test_unlinked_watched_thread_prefers_latest_external_before_full_thread(
+def test_unlinked_positive_fetches_full_thread_but_keeps_star_without_identity(
     db_session: Session,
     gmail_case,
     monkeypatch: pytest.MonkeyPatch,
@@ -2676,15 +2676,7 @@ def test_unlinked_watched_thread_prefers_latest_external_before_full_thread(
     def fail_reprocess(*args, **kwargs):  # noqa: ANN002, ANN003
         raise AssertionError("unlinked watched threads must use the fast classifier")
 
-    def fail_identity_repair(*args, **kwargs):  # noqa: ANN002, ANN003
-        raise AssertionError("unlinked watched threads must not run slow identity repair")
-
     monkeypatch.setattr(GmailInboundSyncService, "reprocess_existing_message", fail_reprocess)
-    monkeypatch.setattr(
-        GmailWatchedThreadMonitorService,
-        "repair_watched_thread_from_payloads",
-        fail_identity_repair,
-    )
 
     result = GmailWatchedThreadMonitorService(provider).process_account(
         db_session,
@@ -2695,13 +2687,283 @@ def test_unlinked_watched_thread_prefers_latest_external_before_full_thread(
     )
 
     assert provider.latest_calls == ["thread-unlinked"]
-    assert provider.thread_include_attachments_calls == []
+    assert provider.thread_include_attachments_calls == [False]
     assert result.processed_messages == 1
     positive_item = db_session.scalar(
         select(GmailStarredWorkItem).where(GmailStarredWorkItem.provider_message_id == "reply-positive-latest")
     )
     assert positive_item is not None
-    assert positive_item.status == "positive"
+    assert positive_item.status == "manual_review"
+    assert positive_item.reason == "positive_payment_unlinked"
+    db_session.refresh(watched)
+    assert watched.star_active is True
+    assert provider.removed_labels == []
+
+
+def test_unlinked_positive_is_linked_and_accounted_before_star_removal(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    provider = FakeFastWatchedGmailProvider()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-unlinked-accounted",
+        first_starred_message_id="star-unlinked-accounted",
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.commit()
+    provider.latest_payloads = {
+        "thread-unlinked-accounted": payload(
+            "reply-unlinked-accounted",
+            thread_id="thread-unlinked-accounted",
+            body="Nous avons ajuste votre paiement de 24.99 EUR.",
+        )
+    }
+    provider.thread_payloads = {
+        "thread-unlinked-accounted": [
+            payload(
+                "star-unlinked-accounted",
+                thread_id="thread-unlinked-accounted",
+                from_email=account.email_address,
+                body="Contestation complete avec identite de commande.",
+                starred=True,
+            ),
+            provider.latest_payloads["thread-unlinked-accounted"],
+        ]
+    }
+
+    def repair_to_order(self, db, user, watched_thread, payloads):  # noqa: ANN001, ARG001
+        watched_thread.claim_order_id = order.id
+        watched_thread.linked_case_type = "claim_order"
+        watched_thread.linked_case_id = order.id
+        return order
+
+    monkeypatch.setattr(GmailWatchedThreadMonitorService, "repair_watched_thread_from_payloads", repair_to_order)
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    message = db_session.scalar(
+        select(InboundEmailMessage).where(
+            InboundEmailMessage.provider_message_id == "reply-unlinked-accounted"
+        )
+    )
+    item = db_session.scalar(
+        select(GmailStarredWorkItem).where(
+            GmailStarredWorkItem.provider_message_id == "reply-unlinked-accounted"
+        )
+    )
+    assert message is not None
+    assert item is not None
+    assert message.order_id == order.id
+    assert item.status == "positive"
+    assert item.reason == "payment_confirmed"
+    assert watched.star_active is False
+    assert provider.removed_labels == [("star-unlinked-accounted", "STARRED")]
+    assert result.positive_responses == 1
+
+
+def test_positive_amount_conflict_keeps_star_for_review(
+    db_session: Session,
+    gmail_case,
+) -> None:
+    owner, account, order = gmail_case
+    order.status = "payment_confirmed"
+    order.recovered_amount = Decimal("20.39")
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-positive-conflict",
+        first_starred_message_id="star-positive-conflict",
+        claim_order_id=order.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="active",
+        star_active=True,
+    )
+    message = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=order.id,
+        provider="gmail",
+        provider_message_id="reply-positive-conflict",
+        provider_thread_id=watched.gmail_thread_id,
+        from_email="restaurantsfrance@uber.com",
+        body_text="Nous avons ajuste votre paiement de 20.09 EUR.",
+        match_status="linked",
+        match_reason="thread_id_match",
+        review_status="unreviewed",
+        provider_labels_json=[],
+    )
+    db_session.add_all([watched, message])
+    db_session.flush()
+    analysis = GmailResponseAnalysis(
+        inbound_message_id=message.id,
+        order_id=order.id,
+        recommended_review_type="payment_confirmed",
+        status="ignored",
+        confidence_score=Decimal("0.92"),
+        reason="order_already_final:payment_confirmed",
+        detected_amount=Decimal("20.09"),
+    )
+    item = GmailStarredWorkItem(
+        watched_thread_id=watched.id,
+        email_account_id=account.id,
+        inbound_message_id=message.id,
+        gmail_thread_id=watched.gmail_thread_id,
+        provider_message_id=message.provider_message_id,
+        status="pending",
+    )
+    db_session.add_all([analysis, item])
+    db_session.commit()
+    provider = FakeWatchedGmailProvider()
+    result = GmailWatchedThreadMonitorResult()
+
+    GmailWatchedThreadMonitorService(provider).update_work_item_status(
+        db_session,
+        owner,
+        watched,
+        item,
+        message,
+        result,
+    )
+
+    assert item.status == "manual_review"
+    assert item.reason == "positive_payment_amount_conflict"
+    assert watched.star_active is True
+    assert provider.removed_labels == []
+
+
+def test_positive_response_order_number_relinks_wrong_watched_order_before_accounting(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, wrong_order = gmail_case
+    target_order = ClaimOrder(
+        restaurant_id=wrong_order.restaurant_id,
+        uber_order_number="0A04C",
+        order_amount=Decimal("24.99"),
+        status="waiting_uber_response",
+    )
+    db_session.add(target_order)
+    db_session.flush()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-wrong-positive-order",
+        first_starred_message_id="star-wrong-positive-order",
+        claim_order_id=wrong_order.id,
+        linked_case_type="claim_order",
+        linked_case_id=wrong_order.id,
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.commit()
+    provider = FakeFastWatchedGmailProvider()
+    provider.latest_payloads = {
+        watched.gmail_thread_id: payload(
+            "reply-correct-positive-order",
+            thread_id=watched.gmail_thread_id,
+            body=(
+                "Concernant la commande N° . 0A04C, "
+                "nous avons ajuste votre paiement de 24.99 EUR."
+            ),
+        )
+    }
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    message = db_session.scalar(
+        select(InboundEmailMessage).where(
+            InboundEmailMessage.provider_message_id == "reply-correct-positive-order"
+        )
+    )
+    item = db_session.scalar(
+        select(GmailStarredWorkItem).where(
+            GmailStarredWorkItem.provider_message_id == "reply-correct-positive-order"
+        )
+    )
+    assert message is not None
+    assert item is not None
+    assert message.order_id == target_order.id
+    assert watched.claim_order_id == target_order.id
+    assert watched.linked_case_id == target_order.id
+    assert item.status == "positive"
+    assert provider.removed_labels == [("star-wrong-positive-order", "STARRED")]
+    assert result.positive_responses == 1
+
+
+def test_positive_response_with_unresolved_order_mismatch_keeps_star(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, wrong_order = gmail_case
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-unresolved-positive-order",
+        first_starred_message_id="star-unresolved-positive-order",
+        claim_order_id=wrong_order.id,
+        linked_case_type="claim_order",
+        linked_case_id=wrong_order.id,
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.commit()
+    provider = FakeFastWatchedGmailProvider()
+    provider.latest_payloads = {
+        watched.gmail_thread_id: payload(
+            "reply-unresolved-positive-order",
+            thread_id=watched.gmail_thread_id,
+            body=(
+                "Concernant la commande N° ZZ999, "
+                "nous avons ajuste votre paiement de 24.99 EUR."
+            ),
+        )
+    }
+
+    def fail_reprocess(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("a mismatched positive response must not be applied to the linked order")
+
+    monkeypatch.setattr(GmailInboundSyncService, "reprocess_existing_message", fail_reprocess)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    item = db_session.scalar(
+        select(GmailStarredWorkItem).where(
+            GmailStarredWorkItem.provider_message_id == "reply-unresolved-positive-order"
+        )
+    )
+    assert item is not None
+    assert item.status == "manual_review"
+    assert item.reason == "positive_payment_order_mismatch"
+    assert watched.claim_order_id == wrong_order.id
+    assert watched.star_active is True
+    assert provider.removed_labels == []
+    assert result.positive_responses == 0
 
 
 def test_pending_local_work_item_is_processed_before_fetching_gmail(

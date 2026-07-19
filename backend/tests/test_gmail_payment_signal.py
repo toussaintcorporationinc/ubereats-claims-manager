@@ -1,5 +1,6 @@
 from app.models import InboundEmailMessage
 from app.services.gmail_payment_signal_service import (
+    current_response_order_number,
     message_has_explicit_payment_confirmation,
     text_has_explicit_payment_confirmation,
 )
@@ -65,3 +66,13 @@ def test_client_acceptance_near_payment_under_review_is_not_confirmed() -> None:
     text = "Le client a accepte la commande. Le paiement de 24,90 EUR reste en cours d'examen."
 
     assert text_has_explicit_payment_confirmation(text) is False
+
+
+def test_current_response_order_number_handles_uber_punctuation() -> None:
+    message = InboundEmailMessage(
+        email_account_id=1,
+        provider_message_id="payment-order-number",
+        body_text="Nous avons ajuste le paiement de la commande N° . 0A04C.",
+    )
+
+    assert current_response_order_number(message) == "0A04C"

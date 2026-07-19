@@ -10,6 +10,7 @@ from sqlalchemy import String, and_, case, cast, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.auth import can_access_restaurant
 from app.core.config import Settings, get_settings
 from app.models import (
     AppealAttempt,
@@ -17,6 +18,7 @@ from app.models import (
     EmailAccount,
     EmailDraft,
     EmailProviderDraft,
+    EmailThread,
     EvidenceRequestTask,
     GmailResponseAnalysis,
     GmailStarredWorkItem,
@@ -37,6 +39,7 @@ from app.services.gmail_inbound_sync_service import (
 )
 from app.services.gmail_payment_signal_service import (
     EXPLICIT_PAYMENT_PROMISE_MARKERS,
+    current_response_order_number,
     message_has_explicit_payment_confirmation,
     text_has_explicit_payment_confirmation,
     visible_email_text,
@@ -341,7 +344,74 @@ class GmailWatchedThreadMonitorService:
                 ):
                     continue
 
-                if thread_order is None and message.match_status != "linked":
+                positive_link_block_reason: str | None = None
+                explicit_payment_confirmation = message_has_explicit_payment_confirmation(message)
+                if explicit_payment_confirmation:
+                    resolved_order, positive_link_block_reason = self.resolve_positive_response_order(
+                        db,
+                        user,
+                        message,
+                        thread_order,
+                    )
+                    if resolved_order is not None and (
+                        thread_order is None or resolved_order.id != thread_order.id
+                    ):
+                        self.relink_positive_message_order(
+                            db,
+                            user,
+                            watched,
+                            message,
+                            resolved_order,
+                        )
+                        thread_order = resolved_order
+
+                    needs_full_identity_repair = bool(
+                        positive_link_block_reason is not None
+                        or thread_order is None
+                        or message.match_status != "linked"
+                    )
+                    if needs_full_identity_repair:
+                        try:
+                            identity_payloads = self.fetch_thread_payloads(
+                                db,
+                                account,
+                                watched,
+                                prefer_full_thread=True,
+                            )
+                            repaired_order = self.repair_positive_watched_thread_from_payloads(
+                                db,
+                                user,
+                                watched,
+                                identity_payloads,
+                                ignore_existing_link=positive_link_block_reason is not None,
+                            )
+                        except Exception as exc:  # noqa: BLE001 - one identity failure must not stop Gmail sync.
+                            repaired_order = None
+                            result.errors.append(
+                                f"positive_identity_repair:{watched.gmail_thread_id}:{str(exc)[:120]}"
+                            )
+                        response_order_number = current_response_order_number(message)
+                        if repaired_order is not None and (
+                            not response_order_number
+                            or order_identifiers_equivalent(
+                                response_order_number,
+                                repaired_order.uber_order_number,
+                                repaired_order.internal_reference,
+                            )
+                        ):
+                            self.relink_positive_message_order(
+                                db,
+                                user,
+                                watched,
+                                message,
+                                repaired_order,
+                            )
+                            thread_order = repaired_order
+                            positive_link_block_reason = None
+
+                if positive_link_block_reason is not None:
+                    self.process_unlinked_watched_message_fast(db, user, message, sync_result)
+                elif thread_order is None and message.match_status != "linked":
                     self.process_unlinked_watched_message_fast(db, user, message, sync_result)
                 else:
                     self.sync_service.reprocess_existing_message(
@@ -1868,6 +1938,22 @@ class GmailWatchedThreadMonitorService:
         )
         return order
 
+    def repair_positive_watched_thread_from_payloads(
+        self,
+        db: Session,
+        user: User,
+        watched: GmailWatchedThread,
+        payloads: list[InboundEmailPayload],
+        *,
+        ignore_existing_link: bool,
+    ) -> ClaimOrder | None:
+        if not ignore_existing_link:
+            return self.repair_watched_thread_from_payloads(db, user, watched, payloads)
+        context = watched_thread_identity_context(payloads)
+        if not context:
+            return None
+        return find_or_create_order_from_starred_text(db, user, context)
+
     def process_unlinked_watched_message_fast(
         self,
         db: Session,
@@ -2203,13 +2289,18 @@ class GmailWatchedThreadMonitorService:
         item.processed_at = utc_now()
         watched.last_processed_at = item.processed_at
         explicit_payment_confirmation = message_has_explicit_payment_confirmation(message)
+        positive_accounting_block_reason = (
+            self.positive_accounting_block_reason(db, message, analysis)
+            if explicit_payment_confirmation
+            else None
+        )
         if thread_order_conflict:
             item.status = "manual_review"
             item.reason = "gmail_thread_order_mismatch"
             watched.status = "manual_review"
             watched.star_active = True
             result.manual_reviews += 1
-        elif explicit_payment_confirmation:
+        elif explicit_payment_confirmation and positive_accounting_block_reason is None:
             item.status = "positive"
             item.reason = "payment_confirmed"
             watched.status = "payment_confirmed"
@@ -2222,6 +2313,12 @@ class GmailWatchedThreadMonitorService:
                 allow_remote_lookup=allow_remote_star_lookup,
                 result=result,
             )
+        elif explicit_payment_confirmation:
+            item.status = "manual_review"
+            item.reason = positive_accounting_block_reason
+            watched.status = "manual_review"
+            watched.star_active = True
+            result.manual_reviews += 1
         elif review_type in POSITIVE_REVIEW_TYPES:
             item.status = "manual_review"
             item.reason = "positive_without_explicit_payment_confirmation"
@@ -2265,6 +2362,125 @@ class GmailWatchedThreadMonitorService:
                 "review_type": review_type,
             },
         )
+
+    @staticmethod
+    def positive_accounting_block_reason(
+        db: Session,
+        message: InboundEmailMessage,
+        analysis: GmailResponseAnalysis | None,
+    ) -> str | None:
+        if message.order_id is None:
+            return "positive_payment_unlinked"
+        order = db.get(ClaimOrder, message.order_id)
+        if order is None:
+            return "positive_payment_unlinked"
+        response_order_number = current_response_order_number(message)
+        if response_order_number and not order_identifiers_equivalent(
+            response_order_number,
+            order.uber_order_number,
+            order.internal_reference,
+        ):
+            return "positive_payment_order_mismatch"
+        if analysis is None or analysis.recommended_review_type not in POSITIVE_REVIEW_TYPES:
+            return "positive_payment_not_accounted"
+        if analysis.status == "applied":
+            return None
+        if order.status != "payment_confirmed":
+            return "positive_payment_not_accounted"
+        if analysis.detected_amount is None:
+            return None if order.recovered_amount is not None else "positive_payment_amount_not_recorded"
+        if order.recovered_amount is None:
+            return "positive_payment_amount_not_recorded"
+        if order.recovered_amount != analysis.detected_amount:
+            return "positive_payment_amount_conflict"
+        return None
+
+    @staticmethod
+    def resolve_positive_response_order(
+        db: Session,
+        user: User,
+        message: InboundEmailMessage,
+        current_order: ClaimOrder | None,
+    ) -> tuple[ClaimOrder | None, str | None]:
+        response_order_number = current_response_order_number(message)
+        if not response_order_number:
+            return current_order, None
+        if current_order is not None and order_identifiers_equivalent(
+            response_order_number,
+            current_order.uber_order_number,
+            current_order.internal_reference,
+        ):
+            return current_order, None
+        candidates = list(
+            db.scalars(
+                select(ClaimOrder).where(
+                    or_(
+                        func.upper(ClaimOrder.uber_order_number) == response_order_number.upper(),
+                        func.upper(ClaimOrder.internal_reference) == response_order_number.upper(),
+                    )
+                )
+            ).all()
+        )
+        accessible_candidates = [
+            order for order in candidates if can_access_restaurant(db, user, order.restaurant_id)
+        ]
+        if len(accessible_candidates) == 1:
+            return accessible_candidates[0], None
+        if current_order is not None:
+            return current_order, "positive_payment_order_mismatch"
+        return None, None
+
+    def relink_positive_message_order(
+        self,
+        db: Session,
+        user: User,
+        watched: GmailWatchedThread,
+        message: InboundEmailMessage,
+        order: ClaimOrder,
+    ) -> None:
+        previous_order_id = message.order_id or watched.claim_order_id
+        self.sync_service.record_linked_message(
+            db,
+            user,
+            message,
+            order,
+            match_reason="order_number_match",
+        )
+        message.order = order
+        message.review_status = "unreviewed"
+        message.reviewed_at = None
+        message.reviewed_by_user_id = None
+        watched.claim_order_id = order.id
+        watched.linked_case_type = "claim_order"
+        watched.linked_case_id = order.id
+        watched.customer_refund_dispute_id = (
+            order.customer_refund_disputes[0].id if order.customer_refund_disputes else None
+        )
+        watched.appeal_workflow_id = order.appeal_workflows[0].id if order.appeal_workflows else None
+        email_thread = db.scalar(
+            select(EmailThread).where(
+                EmailThread.provider == "gmail",
+                EmailThread.direction == "inbound",
+                EmailThread.message_id == message.provider_message_id,
+            )
+        )
+        if email_thread is not None:
+            email_thread.order_id = order.id
+        if previous_order_id != order.id:
+            add_audit_log(
+                db,
+                entity_type="gmail_watched_thread",
+                entity_id=watched.id,
+                action="gmail_watched_thread.positive_order_relinked",
+                user_id=user.id,
+                old_value={"claim_order_id": previous_order_id},
+                new_value={
+                    "claim_order_id": order.id,
+                    "uber_order_number": order.uber_order_number,
+                    "provider_message_id": message.provider_message_id,
+                },
+            )
+        db.flush()
 
     def remove_thread_star(
         self,
@@ -2449,6 +2665,20 @@ def inbound_payload_from_message(message: InboundEmailMessage) -> InboundEmailPa
         provider_labels=message.provider_labels_json or [],
         attachments=[],
     )
+
+
+def order_identifiers_equivalent(response_identifier: str, *order_identifiers: str | None) -> bool:
+    response = "".join(character for character in response_identifier.upper() if character.isalnum())
+    if not response:
+        return False
+    response_confusion_key = response.replace("O", "0")
+    for value in order_identifiers:
+        candidate = "".join(character for character in str(value or "").upper() if character.isalnum())
+        if candidate and (
+            candidate == response or candidate.replace("O", "0") == response_confusion_key
+        ):
+            return True
+    return False
 
 
 def watched_thread_next_sync_at(last_processed_at: datetime | None, *, settings: Settings | None = None) -> datetime:
