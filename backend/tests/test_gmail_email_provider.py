@@ -598,6 +598,59 @@ def test_gmail_provider_enriches_starred_message_with_full_thread(
     assert any("/threads/thread-starred-context?format=full" in url for url in requested_urls)
 
 
+def test_gmail_provider_gets_latest_external_message_with_one_full_thread_request(
+    db_session: Session,
+    gmail_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = User(email="latest-owner@example.com", full_name="Latest Owner", role="owner", hashed_password="hash")
+    db_session.add(owner)
+    db_session.commit()
+    db_session.refresh(owner)
+    account = connect_gmail_account(db_session, owner.id, "tiramisumaisonfrance@gmail.com")
+    sent_claim = gmail_text_payload(
+        "msg-sent-claim",
+        "thread-latest-external",
+        "Contestation F93BA",
+        "Bonjour, je conteste la commande F93BA.",
+        from_email=account.email_address,
+        to_email="restaurantsfrance@uber.com",
+        labels=["SENT"],
+    )
+    uber_reply = gmail_text_payload(
+        "msg-latest-uber",
+        "thread-latest-external",
+        "Re: Contestation F93BA",
+        "Nous maintenons le refus pour F93BA.",
+        from_email="restaurantsfrance@uber.com",
+        to_email=account.email_address,
+        labels=["INBOX"],
+    )
+    provider = GmailEmailProvider()
+    requested_urls: list[str] = []
+
+    monkeypatch.setattr(provider, "access_token_for_external_call", lambda db, account: "access-token")
+
+    def fake_get_json(url: str, headers: dict[str, str]) -> dict:
+        requested_urls.append(url)
+        return {"id": "thread-latest-external", "messages": [sent_claim, uber_reply]}
+
+    monkeypatch.setattr(provider, "get_json", fake_get_json)
+
+    latest = provider.get_latest_external_thread_message_for_account(
+        db_session,
+        account,
+        "thread-latest-external",
+    )
+
+    assert latest is not None
+    assert latest.provider_message_id == "msg-latest-uber"
+    assert latest.body_text == "Nous maintenons le refus pour F93BA."
+    assert requested_urls == [
+        "https://gmail.googleapis.com/gmail/v1/users/me/threads/thread-latest-external?format=full"
+    ]
+
+
 def test_gmail_provider_disconnects_revoked_authorization(
     db_session: Session,
     gmail_enabled: None,
