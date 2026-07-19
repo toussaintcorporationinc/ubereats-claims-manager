@@ -16,7 +16,11 @@ from app.schemas.domain import ClaimResponseReviewCreate
 from app.services.audit import add_audit_log
 from app.services.gmail_payment_signal_service import current_response_text, message_has_explicit_payment_confirmation
 from app.services.openai_structured_analysis_service import AIGmailClassification, OpenAIStructuredAnalysisService
-from app.services.response_review_service import ResponseReviewError, create_response_review
+from app.services.response_review_service import (
+    PROTECTED_ORDER_STATUSES,
+    ResponseReviewError,
+    create_response_review,
+)
 
 AUTO_APPLY_REVIEW_TYPES = {
     "accepted",
@@ -129,6 +133,17 @@ class GmailResponseIntelligenceService:
             analysis.status = "ignored"
             analysis.reason = "already_reviewed"
             analysis.error_message = None
+            db.flush()
+            return analysis
+
+        if order.status in PROTECTED_ORDER_STATUSES:
+            analysis.status = "ignored"
+            analysis.reason = f"order_already_final:{order.status}"
+            analysis.error_message = None
+            message.review_status = "ignored"
+            message.reviewed_at = utc_now()
+            message.reviewed_by_user_id = user.id
+            message.updated_at = utc_now()
             db.flush()
             return analysis
 

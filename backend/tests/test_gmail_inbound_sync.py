@@ -1763,6 +1763,57 @@ def test_emergency_stop_applies_payment_but_keeps_inbound_star(
     assert message.provider_labels_json == ["STARRED"]
 
 
+def test_sync_ignores_old_response_after_payment_is_confirmed(
+    client: TestClient,
+    db_session: Session,
+    gmail_inbound_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    order = create_sent_email_context(
+        db_session,
+        client,
+        restaurant_id=restaurant["id"],
+        order_number="UBER-INBOUND-FINAL-PAID",
+        thread_id="thread-final-paid",
+    )
+    order.status = "payment_confirmed"
+    order.result = "payment_confirmed"
+    order.recovered_amount = Decimal("31.20")
+    db_session.commit()
+    fake_gmail_provider.messages = [
+        inbound_payload(
+            "msg-old-refusal-after-payment",
+            thread_id="thread-final-paid",
+            body_text="Nous maintenons notre decision. Aucun remboursement ne sera accorde.",
+            provider_labels=["STARRED"],
+        )
+    ]
+
+    response = sync_inbound(client)
+
+    assert response.status_code == 200
+    assert response.json()["errors"] == []
+    db_session.refresh(order)
+    assert order.status == "payment_confirmed"
+    assert str(order.recovered_amount) == "31.20"
+    message = db_session.scalar(
+        select(InboundEmailMessage).where(
+            InboundEmailMessage.provider_message_id == "msg-old-refusal-after-payment"
+        )
+    )
+    assert message is not None
+    assert message.review_status == "ignored"
+    analysis = db_session.scalar(
+        select(GmailResponseAnalysis).where(GmailResponseAnalysis.inbound_message_id == message.id)
+    )
+    assert analysis is not None
+    assert analysis.status == "ignored"
+    assert analysis.reason == "order_already_final:payment_confirmed"
+
+
 def test_sync_french_payment_approved_with_old_refusal_conflict_is_counted(
     client: TestClient,
     db_session: Session,
