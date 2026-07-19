@@ -343,6 +343,47 @@ class GmailWatchedThreadMonitorService:
 
                 if thread_order is None and message.match_status != "linked":
                     self.process_unlinked_watched_message_fast(db, user, message, sync_result)
+                    if message_has_explicit_payment_confirmation(message):
+                        try:
+                            identity_payloads = self.fetch_thread_payloads(
+                                db,
+                                account,
+                                watched,
+                                prefer_full_thread=True,
+                            )
+                            repaired_order = self.repair_watched_thread_from_payloads(
+                                db,
+                                user,
+                                watched,
+                                identity_payloads,
+                            )
+                        except Exception as exc:  # noqa: BLE001 - one identity failure must not stop Gmail sync.
+                            repaired_order = None
+                            result.errors.append(
+                                f"positive_identity_repair:{watched.gmail_thread_id}:{str(exc)[:120]}"
+                            )
+                        if repaired_order is not None:
+                            self.sync_service.record_linked_message(
+                                db,
+                                user,
+                                message,
+                                repaired_order,
+                                match_reason="order_number_match",
+                            )
+                            message.order = repaired_order
+                            message.review_status = "unreviewed"
+                            message.reviewed_at = None
+                            message.reviewed_by_user_id = None
+                            self.sync_service.reprocess_existing_message(
+                                db,
+                                user,
+                                account,
+                                message,
+                                sync_result,
+                                apply_reviews=True,
+                                payload=payload,
+                            )
+                            thread_order = repaired_order
                 else:
                     self.sync_service.reprocess_existing_message(
                         db,
@@ -2203,13 +2244,18 @@ class GmailWatchedThreadMonitorService:
         item.processed_at = utc_now()
         watched.last_processed_at = item.processed_at
         explicit_payment_confirmation = message_has_explicit_payment_confirmation(message)
+        positive_accounting_block_reason = (
+            self.positive_accounting_block_reason(db, message, analysis)
+            if explicit_payment_confirmation
+            else None
+        )
         if thread_order_conflict:
             item.status = "manual_review"
             item.reason = "gmail_thread_order_mismatch"
             watched.status = "manual_review"
             watched.star_active = True
             result.manual_reviews += 1
-        elif explicit_payment_confirmation:
+        elif explicit_payment_confirmation and positive_accounting_block_reason is None:
             item.status = "positive"
             item.reason = "payment_confirmed"
             watched.status = "payment_confirmed"
@@ -2222,6 +2268,12 @@ class GmailWatchedThreadMonitorService:
                 allow_remote_lookup=allow_remote_star_lookup,
                 result=result,
             )
+        elif explicit_payment_confirmation:
+            item.status = "manual_review"
+            item.reason = positive_accounting_block_reason
+            watched.status = "manual_review"
+            watched.star_active = True
+            result.manual_reviews += 1
         elif review_type in POSITIVE_REVIEW_TYPES:
             item.status = "manual_review"
             item.reason = "positive_without_explicit_payment_confirmation"
@@ -2265,6 +2317,31 @@ class GmailWatchedThreadMonitorService:
                 "review_type": review_type,
             },
         )
+
+    @staticmethod
+    def positive_accounting_block_reason(
+        db: Session,
+        message: InboundEmailMessage,
+        analysis: GmailResponseAnalysis | None,
+    ) -> str | None:
+        if message.order_id is None:
+            return "positive_payment_unlinked"
+        order = db.get(ClaimOrder, message.order_id)
+        if order is None:
+            return "positive_payment_unlinked"
+        if analysis is None or analysis.recommended_review_type not in POSITIVE_REVIEW_TYPES:
+            return "positive_payment_not_accounted"
+        if analysis.status == "applied":
+            return None
+        if order.status != "payment_confirmed":
+            return "positive_payment_not_accounted"
+        if analysis.detected_amount is None:
+            return None if order.recovered_amount is not None else "positive_payment_amount_not_recorded"
+        if order.recovered_amount is None:
+            return "positive_payment_amount_not_recorded"
+        if order.recovered_amount != analysis.detected_amount:
+            return "positive_payment_amount_conflict"
+        return None
 
     def remove_thread_star(
         self,
