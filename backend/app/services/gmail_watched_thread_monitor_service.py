@@ -63,7 +63,8 @@ logger = logging.getLogger(__name__)
 
 FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed", "manual_review", "skipped"}
 SKIPPABLE_FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed"}
-MAX_AUTOPILOT_REPLY_CANDIDATES_PER_CYCLE = 3
+MAX_AUTOPILOT_REPLY_CANDIDATES_PER_CYCLE = 1
+MAX_LOCAL_REPLY_CANDIDATES_PER_CYCLE = 25
 POSITIVE_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confirmed"}
 POSITIVE_WATCHED_STATUSES = {"positive", "payment_confirmed"}
 REFUSAL_REVIEW_TYPES = {"refused"}
@@ -171,7 +172,7 @@ class GmailWatchedThreadMonitorService:
         self.settings = settings or get_settings()
         self.sync_service = sync_service or GmailInboundSyncService(provider)
         self._latest_external_message_cache: dict[tuple[int, str], InboundEmailPayload | None] = {}
-        self._latest_external_message_errors: set[tuple[int, str]] = set()
+        self._latest_external_message_errors: dict[tuple[int, str], str] = {}
 
     def process_account(
         self,
@@ -195,6 +196,16 @@ class GmailWatchedThreadMonitorService:
 
         if process_new_messages:
             self.process_watched_threads(db, user, account, result=result, max_threads=max_threads)
+
+        if any(
+            parse_gmail_retry_after(
+                error,
+                safety_seconds=self.settings.gmail_quota_retry_safety_seconds,
+            )
+            is not None
+            for error in result.errors
+        ):
+            return result
 
         if discover_starred:
             self.discover_from_starred_messages(
@@ -528,11 +539,12 @@ class GmailWatchedThreadMonitorService:
                     GmailStarredWorkItem.processed_at.asc().nullsfirst(),
                     GmailStarredWorkItem.id.asc(),
                 )
-                .limit(max_items)
+                .limit(max(max_items, MAX_LOCAL_REPLY_CANDIDATES_PER_CYCLE))
             ).all()
         )
         sent_count = 0
         sent_threads: set[str] = set()
+        remote_preflight_count = 0
         for item in items:
             current_block_reason = self.automatic_reply_block_reason(db, account)
             if current_block_reason is not None:
@@ -557,6 +569,22 @@ class GmailWatchedThreadMonitorService:
                 item.processed_at = utc_now()
                 result.autopilot_skipped_count += 1
                 continue
+            latest_local_payload = self.latest_local_uber_message(db, account, watched.gmail_thread_id)
+            if (
+                latest_local_payload is not None
+                and latest_local_payload.provider_message_id != message.provider_message_id
+            ):
+                self.mark_unsafe_reply_for_review(
+                    db,
+                    watched,
+                    item,
+                    reason="superseded_by_newer_uber_message",
+                )
+                result.autopilot_skipped_count += 1
+                continue
+            if remote_preflight_count >= max_items:
+                break
+            remote_preflight_count += 1
             latest_reply_block_reason = self.latest_reply_block_reason(db, account, watched, message)
             if latest_reply_block_reason is not None:
                 if latest_reply_block_reason in {
@@ -567,7 +595,14 @@ class GmailWatchedThreadMonitorService:
                     item.processed_at = utc_now()
                     item.updated_at = item.processed_at
                     result.autopilot_skipped_count += 1
-                    result.errors.append(f"{latest_reply_block_reason}:{watched.gmail_thread_id}")
+                    error = f"{latest_reply_block_reason}:{watched.gmail_thread_id}"
+                    if latest_reply_block_reason == "gmail_latest_reply_check_failed":
+                        detail = self._latest_external_message_errors.get((account.id, watched.gmail_thread_id))
+                        if detail:
+                            error = f"{error}:{detail}"
+                    result.errors.append(error)
+                    if latest_reply_block_reason == "gmail_latest_reply_check_failed":
+                        break
                     continue
                 self.mark_unsafe_reply_for_review(
                     db,
@@ -689,7 +724,7 @@ class GmailWatchedThreadMonitorService:
                         watched.gmail_thread_id,
                         exc,
                     )
-                    self._latest_external_message_errors.add(cache_key)
+                    self._latest_external_message_errors[cache_key] = str(exc)[:500]
                     return "gmail_latest_reply_check_failed"
             if latest_payload is None:
                 latest_payload = self.latest_local_uber_message(db, account, watched.gmail_thread_id)

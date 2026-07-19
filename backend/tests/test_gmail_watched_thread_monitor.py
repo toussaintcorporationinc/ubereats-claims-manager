@@ -470,7 +470,84 @@ def test_watched_cycle_caps_remote_reply_preflights(
         process_local_backlog=False,
     )
 
-    assert observed_limits == [3]
+    assert observed_limits == [1]
+
+
+def test_latest_reply_failure_stops_remaining_remote_preflights(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    for index in range(3):
+        add_refused_work_item(db_session, account, order, thread_id=f"thread-remote-failure-{index}")
+    provider = FakeFastWatchedGmailProvider()
+    service = GmailWatchedThreadMonitorService(provider)
+    latest_calls: list[str] = []
+
+    def fail_latest_lookup(db, email_account, thread_id):  # noqa: ANN001, ARG001
+        latest_calls.append(thread_id)
+        raise EmailProviderError(
+            "Gmail API error: RESOURCE_EXHAUSTED. Retry after 2099-01-01T00:00:00Z",
+            502,
+        )
+
+    monkeypatch.setattr(provider, "get_latest_external_thread_message_for_account", fail_latest_lookup)
+    result = GmailWatchedThreadMonitorResult()
+
+    service.send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=10,
+    )
+
+    assert len(latest_calls) == 1
+    assert result.autopilot_sent_count == 0
+    assert result.autopilot_skipped_count == 1
+    assert result.errors == [
+        "gmail_latest_reply_check_failed:"
+        f"{latest_calls[0]}:Gmail API error: RESOURCE_EXHAUSTED. Retry after 2099-01-01T00:00:00Z"
+    ]
+    assert provider.created_drafts == []
+    assert provider.sent_drafts == []
+
+
+def test_quota_failure_skips_starred_discovery_for_account_cycle(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    service = GmailWatchedThreadMonitorService(FakeWatchedGmailProvider())
+    quota_error = (
+        "gmail_latest_reply_check_failed:thread-quota:"
+        "Gmail API error: RESOURCE_EXHAUSTED. Retry after 2099-01-01T00:00:00Z"
+    )
+
+    def fail_processing(db, user, email_account, *, result, **kwargs):  # noqa: ANN001, ARG001
+        result.errors.append(quota_error)
+        return result
+
+    def fail_discovery(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("starred discovery must stop after a Gmail quota failure")
+
+    monkeypatch.setattr(service, "process_watched_threads", fail_processing)
+    monkeypatch.setattr(service, "discover_from_starred_messages", fail_discovery)
+
+    result = service.process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=True,
+        process_new_messages=True,
+    )
+
+    assert result.errors == [quota_error]
 
 
 def test_fast_unlinked_classification_bounds_long_gmail_threads() -> None:
