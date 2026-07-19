@@ -447,6 +447,32 @@ def install_fake_classifier(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(GmailInboundSyncService, "reprocess_existing_message", fake_reprocess)
 
 
+def test_watched_cycle_caps_remote_reply_preflights(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    service = GmailWatchedThreadMonitorService(FakeWatchedGmailProvider())
+    observed_limits = []
+
+    def capture_limit(db, user, email_account, *, result, max_items):  # noqa: ANN001, ARG001
+        observed_limits.append(max_items)
+        return 0
+
+    monkeypatch.setattr(service, "send_pending_actionable_replies", capture_limit)
+
+    service.process_watched_threads(
+        db_session,
+        owner,
+        account,
+        max_threads=100,
+        process_local_backlog=False,
+    )
+
+    assert observed_limits == [3]
+
+
 def test_fast_unlinked_classification_bounds_long_gmail_threads() -> None:
     body = (
         "ancienne conversation sans decision " * 5000
