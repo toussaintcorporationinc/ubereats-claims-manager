@@ -38,3 +38,12 @@ def test_starred_gmail_identity_reads_elided_french_customer_name() -> None:
     )
 
     assert customer_name == "Antoine N"
+
+
+def test_starred_gmail_identity_tolerates_punctuation_after_de() -> None:
+    customer_name = extract_customer_name_deep(
+        "Bonsoir je veux contester l'annulation de commande de. BIJADHUR K "
+        "numero de commande 41D7C."
+    )
+
+    assert customer_name == "BIJADHUR K"

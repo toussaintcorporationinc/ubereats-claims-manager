@@ -848,6 +848,12 @@ ORDER_NUMBER_DELIMITER_RE = rf"(?:{ORDER_NUMBER_LABEL_RE}\s+(?:de\s+)?commande|\
 
 def extract_customer_name_deep(text: str) -> str | None:
     normalized = normalize_search_text(text)
+    normalized = re.sub(
+        r"\bde\s*[.,:;-]+\s*(?=[A-Z])",
+        "de ",
+        normalized,
+        flags=re.IGNORECASE,
+    )
     patterns = [
         rf"(?:je\s+(?:veux\s+)?contest(?:e|er)\s+)?l[' ]annulation\s+de\s+(?:la\s+)?commande\s+(?:de\s+|d[' ])(.{{2,80}}?)(?:\s*,?\s*{ORDER_NUMBER_DELIMITER_RE}|\s+car\b|\s+pour\b)",
         rf"(?:je\s+veux\s+)?contester\s+la\s+demande\s+de\s+remboursement\s+de\s+(.{{2,80}}?)(?:\s*,?\s*{ORDER_NUMBER_DELIMITER_RE}|\s+car\b|\s+pour\b)",
