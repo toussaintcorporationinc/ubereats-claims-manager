@@ -2842,6 +2842,130 @@ def test_positive_amount_conflict_keeps_star_for_review(
     assert provider.removed_labels == []
 
 
+def test_positive_response_order_number_relinks_wrong_watched_order_before_accounting(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, wrong_order = gmail_case
+    target_order = ClaimOrder(
+        restaurant_id=wrong_order.restaurant_id,
+        uber_order_number="0A04C",
+        order_amount=Decimal("24.99"),
+        status="waiting_uber_response",
+    )
+    db_session.add(target_order)
+    db_session.flush()
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-wrong-positive-order",
+        first_starred_message_id="star-wrong-positive-order",
+        claim_order_id=wrong_order.id,
+        linked_case_type="claim_order",
+        linked_case_id=wrong_order.id,
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.commit()
+    provider = FakeFastWatchedGmailProvider()
+    provider.latest_payloads = {
+        watched.gmail_thread_id: payload(
+            "reply-correct-positive-order",
+            thread_id=watched.gmail_thread_id,
+            body=(
+                "Concernant la commande N° . 0A04C, "
+                "nous avons ajuste votre paiement de 24.99 EUR."
+            ),
+        )
+    }
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    message = db_session.scalar(
+        select(InboundEmailMessage).where(
+            InboundEmailMessage.provider_message_id == "reply-correct-positive-order"
+        )
+    )
+    item = db_session.scalar(
+        select(GmailStarredWorkItem).where(
+            GmailStarredWorkItem.provider_message_id == "reply-correct-positive-order"
+        )
+    )
+    assert message is not None
+    assert item is not None
+    assert message.order_id == target_order.id
+    assert watched.claim_order_id == target_order.id
+    assert watched.linked_case_id == target_order.id
+    assert item.status == "positive"
+    assert provider.removed_labels == [("star-wrong-positive-order", "STARRED")]
+    assert result.positive_responses == 1
+
+
+def test_positive_response_with_unresolved_order_mismatch_keeps_star(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, wrong_order = gmail_case
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-unresolved-positive-order",
+        first_starred_message_id="star-unresolved-positive-order",
+        claim_order_id=wrong_order.id,
+        linked_case_type="claim_order",
+        linked_case_id=wrong_order.id,
+        status="active",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.commit()
+    provider = FakeFastWatchedGmailProvider()
+    provider.latest_payloads = {
+        watched.gmail_thread_id: payload(
+            "reply-unresolved-positive-order",
+            thread_id=watched.gmail_thread_id,
+            body=(
+                "Concernant la commande N° ZZ999, "
+                "nous avons ajuste votre paiement de 24.99 EUR."
+            ),
+        )
+    }
+
+    def fail_reprocess(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("a mismatched positive response must not be applied to the linked order")
+
+    monkeypatch.setattr(GmailInboundSyncService, "reprocess_existing_message", fail_reprocess)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+        process_new_messages=True,
+    )
+
+    item = db_session.scalar(
+        select(GmailStarredWorkItem).where(
+            GmailStarredWorkItem.provider_message_id == "reply-unresolved-positive-order"
+        )
+    )
+    assert item is not None
+    assert item.status == "manual_review"
+    assert item.reason == "positive_payment_order_mismatch"
+    assert watched.claim_order_id == wrong_order.id
+    assert watched.star_active is True
+    assert provider.removed_labels == []
+    assert result.positive_responses == 0
+
+
 def test_pending_local_work_item_is_processed_before_fetching_gmail(
     db_session: Session,
     gmail_case,
