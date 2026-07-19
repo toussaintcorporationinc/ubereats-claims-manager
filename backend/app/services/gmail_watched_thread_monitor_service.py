@@ -63,6 +63,7 @@ logger = logging.getLogger(__name__)
 
 FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed", "manual_review", "skipped"}
 SKIPPABLE_FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed"}
+MAX_AUTOPILOT_REPLY_CANDIDATES_PER_CYCLE = 3
 POSITIVE_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confirmed"}
 POSITIVE_WATCHED_STATUSES = {"positive", "payment_confirmed"}
 REFUSAL_REVIEW_TYPES = {"refused"}
@@ -447,7 +448,14 @@ class GmailWatchedThreadMonitorService:
                 user,
                 account,
                 result=result,
-                max_items=max(1, min(max_per_cycle, self.settings.gmail_watched_threads_batch_per_cycle)),
+                max_items=max(
+                    1,
+                    min(
+                        max_per_cycle,
+                        self.settings.gmail_watched_threads_batch_per_cycle,
+                        MAX_AUTOPILOT_REPLY_CANDIDATES_PER_CYCLE,
+                    ),
+                ),
             )
         result.errors.extend(sync_result.errors)
         return result
