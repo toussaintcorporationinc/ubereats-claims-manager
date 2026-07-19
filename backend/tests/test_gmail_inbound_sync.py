@@ -36,7 +36,7 @@ from app.services.email_provider import (
     InboundEmailAttachment,
     InboundEmailPayload,
 )
-from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncService
+from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncScheduler, GmailInboundAutoSyncService
 from app.services.autopilot_service import create_emergency_stop
 from app.services.gmail_inbound_sync_service import (
     GMAIL_STARRED_URGENT_QUERY,
@@ -1136,9 +1136,11 @@ def test_auto_sync_continuous_mode_keeps_accounts_due(
     now = utc_now()
 
     recently_synced = GmailSyncState(status="success", last_sync_at=now - timedelta(seconds=1))
+    scheduler = GmailInboundAutoSyncScheduler(settings=service.settings)
 
     assert service.account_is_due(recently_synced, now) is True
-    assert service.effective_interval_seconds() == 1
+    assert service.effective_interval_seconds() == 15
+    assert scheduler.effective_sleep_seconds() == 15
     get_settings.cache_clear()
 
 

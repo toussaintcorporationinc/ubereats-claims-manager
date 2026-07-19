@@ -27,7 +27,7 @@ from app.services.gmail_watched_thread_monitor_service import (
 logger = logging.getLogger(__name__)
 
 MIN_AUTO_SYNC_INTERVAL_SECONDS = 15
-MIN_CONTINUOUS_IDLE_SLEEP_SECONDS = 1
+MIN_CONTINUOUS_IDLE_SLEEP_SECONDS = 15
 CONTINUOUS_RUNNING_STALE_AFTER_SECONDS = 60
 
 
