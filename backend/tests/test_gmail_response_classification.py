@@ -34,6 +34,25 @@ def test_next_payout_adjustment_is_payment_to_verify() -> None:
     assert classification.reason == "payment_confirmed_without_amount"
 
 
+def test_full_order_payment_retained_is_payment_to_verify() -> None:
+    message = InboundEmailMessage(
+        email_account_id=1,
+        provider_message_id="msg-full-payment-retained",
+        provider_thread_id="thread-full-payment-retained",
+        subject="Contestation de remboursement de commande",
+        body_text=(
+            "Apres verification, il n'y a pas eu d'ajustement. "
+            "Le remboursement client n'a engendre aucun frais pour vous. "
+            "Vous avez donc percu l'integralite du paiement de la commande."
+        ),
+    )
+
+    classification = GmailResponseIntelligenceService().classify_message(message)
+
+    assert classification.review_type == "payment_to_verify"
+    assert classification.reason == "payment_confirmed_without_amount"
+
+
 def test_submitted_status_is_followup_needed_not_payment() -> None:
     message = InboundEmailMessage(
         email_account_id=1,

@@ -208,6 +208,7 @@ class GmailWatchedThreadMonitorService:
             return result
 
         if discover_starred:
+            work_items_before_discovery = result.work_items_created
             self.discover_from_starred_messages(
                 db,
                 user,
@@ -216,7 +217,7 @@ class GmailWatchedThreadMonitorService:
                 use_full_history=discover_full_history,
                 max_messages=starred_discovery_max_messages,
             )
-            if process_new_messages and result.watched_threads_created:
+            if process_new_messages and result.work_items_created > work_items_before_discovery:
                 self.process_watched_threads(
                     db,
                     user,
@@ -245,7 +246,7 @@ class GmailWatchedThreadMonitorService:
 
         max_per_cycle = max_threads or self.settings.gmail_watched_threads_max_per_cycle
         sync_result = GmailInboundSyncResult(status="success")
-        local_processed = (
+        if process_local_backlog:
             self.process_pending_local_work_items(
                 db,
                 user,
@@ -254,11 +255,10 @@ class GmailWatchedThreadMonitorService:
                 sync_result=sync_result,
                 max_items=max_per_cycle,
             )
-            if process_local_backlog
-            else 0
-        )
-        remaining_thread_budget = max(max_per_cycle - local_processed, 0)
-        if remaining_thread_budget <= 0:
+        # Local classification does not call Gmail. Give remote thread polling
+        # its own budget so a large local backlog cannot hide fresh Uber replies.
+        remote_thread_budget = max(max_per_cycle, 0)
+        if remote_thread_budget <= 0:
             active_threads: list[GmailWatchedThread] = []
         else:
             can_modify_stars = gmail_scopes_allow_modify(account.scopes)
@@ -266,7 +266,7 @@ class GmailWatchedThreadMonitorService:
             active_threads = self.get_active_watched_threads(
                 db,
                 account,
-                max_per_cycle=remaining_thread_budget,
+                max_per_cycle=remote_thread_budget,
                 include_positive_star_cleanup=star_mutations_allowed,
             )
             if not can_modify_stars and self.count_pending_positive_star_cleanup(db, account):
@@ -1554,6 +1554,10 @@ class GmailWatchedThreadMonitorService:
                     GmailWatchedThread,
                     GmailWatchedThread.id == GmailStarredWorkItem.watched_thread_id,
                 )
+                .join(
+                    InboundEmailMessage,
+                    InboundEmailMessage.id == GmailStarredWorkItem.inbound_message_id,
+                )
                 .where(
                     GmailStarredWorkItem.email_account_id == account.id,
                     GmailStarredWorkItem.inbound_message_id.is_not(None),
@@ -1562,8 +1566,8 @@ class GmailWatchedThreadMonitorService:
                     GmailWatchedThread.star_active.is_(True),
                 )
                 .order_by(
-                    GmailStarredWorkItem.processed_at.asc().nullsfirst(),
-                    GmailStarredWorkItem.id.asc(),
+                    InboundEmailMessage.received_at.desc().nullslast(),
+                    GmailStarredWorkItem.id.desc(),
                 )
                 .limit(max_items)
             ).all()
@@ -1892,6 +1896,15 @@ class GmailWatchedThreadMonitorService:
         statuses = ["active", "manual_review"]
         if include_positive_star_cleanup:
             statuses.extend(sorted(POSITIVE_WATCHED_STATUSES))
+        pending_remote_ref = (
+            select(GmailStarredWorkItem.id)
+            .where(
+                GmailStarredWorkItem.watched_thread_id == GmailWatchedThread.id,
+                GmailStarredWorkItem.inbound_message_id.is_(None),
+                GmailStarredWorkItem.status.in_(["pending", "processing", "failed"]),
+            )
+            .exists()
+        )
         return list(
             db.scalars(
                 select(GmailWatchedThread)
@@ -1902,6 +1915,11 @@ class GmailWatchedThreadMonitorService:
                     GmailWatchedThread.star_active.is_(True),
                 )
                 .order_by(
+                    case(
+                        (GmailWatchedThread.status.in_(sorted(POSITIVE_WATCHED_STATUSES)), 0),
+                        else_=1,
+                    ),
+                    case((pending_remote_ref, 0), else_=1),
                     GmailWatchedThread.last_processed_at.asc().nullsfirst(),
                     GmailWatchedThread.last_message_at.desc().nullslast(),
                     GmailWatchedThread.id.asc(),

@@ -248,7 +248,10 @@ class GmailInboundAutoSyncService:
         return now >= last_sync_at + timedelta(seconds=interval_seconds)
 
     def watched_threads_batch_size(self) -> int:
-        configured_batch = max(1, self.settings.gmail_watched_threads_batch_per_cycle)
+        # Reading and classifying Gmail must not inherit the much smaller send
+        # candidate batch. Production deliberately sends at most one reply per
+        # pass, while fresh Uber decisions still need to be drained promptly.
+        configured_batch = max(1, self.settings.gmail_watched_threads_read_batch_per_cycle)
         configured_max = max(1, self.settings.gmail_watched_threads_max_per_cycle)
         return min(configured_batch, configured_max)
 

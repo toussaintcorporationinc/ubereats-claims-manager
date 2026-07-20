@@ -411,6 +411,19 @@ def sync_inbound(client: TestClient, token: str | None = None, payload: dict | N
     )
 
 
+def test_auto_sync_read_batch_is_independent_from_send_candidate_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GMAIL_WATCHED_THREADS_BATCH_PER_CYCLE", "1")
+    monkeypatch.delenv("GMAIL_WATCHED_THREADS_READ_BATCH_PER_CYCLE", raising=False)
+    get_settings.cache_clear()
+
+    service = GmailInboundAutoSyncService(FakeInboundGmailProvider())
+
+    assert service.watched_threads_batch_size() == 100
+    get_settings.cache_clear()
+
+
 def test_health_public_works(unauthenticated_client: TestClient) -> None:
     response = unauthenticated_client.get("/health")
 

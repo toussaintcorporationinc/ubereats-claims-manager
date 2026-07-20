@@ -38,6 +38,7 @@ TENNET can run Gmail sync periodically on the backend when these flags are enabl
 - `GMAIL_WATCHED_THREADS_FULL_RESCAN_MINUTES=15`
 - `GMAIL_WATCHED_THREADS_MAX_PER_CYCLE=5000`
 - `GMAIL_WATCHED_THREADS_BATCH_PER_CYCLE=100`
+- `GMAIL_WATCHED_THREADS_READ_BATCH_PER_CYCLE=100`
 - `GMAIL_WATCHED_THREADS_PROCESS_NEW_MESSAGES=true`
 
 Regle operationnelle : un fil Gmail etoile represente une relance urgente a traiter. TENNET analyse le message, detecte refus, paiement ou demande de preuve, puis laisse AutoPilot repondre uniquement si le dossier a une identite complete et une signature restaurant complete. Aucun email automatique ne doit contenir la marque interne TENNET.

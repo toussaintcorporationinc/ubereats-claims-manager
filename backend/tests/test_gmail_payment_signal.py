@@ -48,6 +48,16 @@ def test_explicit_payment_promise_without_amount_is_confirmed() -> None:
     assert text_has_explicit_payment_confirmation("Nous allons vous rembourser.") is True
 
 
+def test_uber_full_payment_retained_is_confirmed() -> None:
+    text = (
+        "Il n'y a pas eu d'ajustement pour cette commande. "
+        "Le remboursement client n'a engendre aucun frais pour vous. "
+        "Vous avez donc percu l'integralite du paiement de la commande."
+    )
+
+    assert text_has_explicit_payment_confirmation(text) is True
+
+
 def test_rejection_with_amount_is_not_confirmed() -> None:
     assert text_has_explicit_payment_confirmation("Aucun remboursement de 24,90 EUR ne sera accorde.") is False
 

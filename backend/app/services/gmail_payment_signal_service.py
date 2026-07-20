@@ -50,6 +50,12 @@ EXPLICIT_PAYMENT_PROMISE_MARKERS = (
     "vous recevrez ce montant",
     "vous recevrez un paiement",
     "nous allons vous verser",
+    "vous avez percu l'integralite du paiement",
+    "vous avez donc percu l'integralite du paiement",
+    "vous avez recu l'integralite du paiement",
+    "you received the full payment",
+    "you have received the full payment",
+    "you were paid in full",
 )
 PAYMENT_CONTEXT_MARKERS = (
     "paiement",

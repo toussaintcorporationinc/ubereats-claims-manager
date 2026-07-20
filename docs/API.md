@@ -1042,6 +1042,7 @@ Variables attendues :
 - `GMAIL_WATCHED_THREADS_FULL_RESCAN_MINUTES=15` ;
 - `GMAIL_WATCHED_THREADS_MAX_PER_CYCLE=5000` ;
 - `GMAIL_WATCHED_THREADS_BATCH_PER_CYCLE=100` ;
+- `GMAIL_WATCHED_THREADS_READ_BATCH_PER_CYCLE=100` ;
 - `GMAIL_WATCHED_THREADS_PROCESS_NEW_MESSAGES=true` ;
 - `GMAIL_SUPPORT_SENDER_FILTER=uber.com` ;
 - `GMAIL_SCOPES` doit inclure `https://www.googleapis.com/auth/gmail.readonly` en plus des scopes de brouillon/envoi.
@@ -1050,7 +1051,7 @@ Les comptes connectes avant l'ajout de `gmail.readonly` doivent se reconnecter p
 
 Quand `GMAIL_INBOUND_AUTO_SYNC_ENABLED=true`, le backend lance automatiquement la meme sync pour les comptes Gmail connectes `owner` et `manager`. Les comptes `staff` sont ignores. Les messages restent dedupliques par compte + id Gmail. En production, `GMAIL_INBOUND_AUTO_SYNC_CONTINUOUS_ENABLED=true` permet a TENNET d'enchainer les cycles en arriere-plan pour vider les mails Gmail etoiles sans attendre une action utilisateur.
 
-Le worker de threads surveilles utilise `GMAIL_WATCHED_THREADS_BATCH_PER_CYCLE` pour borner le travail de chaque passage, `GMAIL_WATCHED_THREADS_MAX_PER_CYCLE` comme limite haute, et `GMAIL_DAILY_PROCESSING_TARGET` pour afficher l'objectif 24h dans la War Room Gmail.
+Le worker utilise `GMAIL_WATCHED_THREADS_READ_BATCH_PER_CYCLE` pour la lecture et la classification, independamment du lot de candidats d'envoi `GMAIL_WATCHED_THREADS_BATCH_PER_CYCLE`. `GMAIL_WATCHED_THREADS_MAX_PER_CYCLE` reste la limite haute et `GMAIL_DAILY_PROCESSING_TARGET` alimente l'objectif 24h dans la War Room Gmail.
 
 Les relances automatiques Gmail restent bloquees si le fil Gmail n'est pas etoile, si le client, le numero de commande, la date, le restaurant ou la signature restaurant complete manquent. La signature complete attendue contient le nom, l'adresse, le telephone et l'email expediteur du restaurant.
 

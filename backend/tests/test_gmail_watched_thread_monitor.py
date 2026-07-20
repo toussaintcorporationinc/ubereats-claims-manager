@@ -2512,6 +2512,45 @@ def test_non_starred_positive_reply_in_watched_thread_is_processed_and_star_remo
     assert result.positive_responses >= 1
 
 
+def test_full_order_payment_retained_is_accounted_before_star_removal(
+    db_session: Session,
+    gmail_case,
+) -> None:
+    owner, account, order = gmail_case
+    provider = FakeWatchedGmailProvider()
+    provider.starred_payloads = [payload("star-full-payment", starred=True)]
+    provider.thread_payloads = {
+        "thread-f93ba": [
+            payload("star-full-payment", starred=True),
+            payload(
+                "reply-full-payment",
+                body=(
+                    "Apres verification de la commande F93BA, il n'y a pas eu d'ajustement. "
+                    "Le remboursement client n'a engendre aucun frais pour vous. "
+                    "Vous avez donc percu l'integralite du paiement de la commande."
+                ),
+            ),
+        ]
+    }
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(db_session, owner, account)
+
+    watched = db_session.scalar(select(GmailWatchedThread))
+    item = db_session.scalar(
+        select(GmailStarredWorkItem).where(GmailStarredWorkItem.provider_message_id == "reply-full-payment")
+    )
+    db_session.refresh(order)
+    assert watched is not None
+    assert item is not None
+    assert order.status == "payment_to_verify"
+    assert order.recovered_amount is None
+    assert watched.status == "payment_confirmed"
+    assert watched.star_active is False
+    assert item.status == "positive"
+    assert provider.removed_labels == [("star-full-payment", "STARRED")]
+    assert result.positive_responses == 1
+
+
 def test_emergency_stop_keeps_star_on_positive_watched_thread(
     db_session: Session,
     gmail_case,
@@ -3020,7 +3059,8 @@ def test_unlinked_positive_fetches_full_thread_but_keeps_star_without_identity(
     )
 
     assert provider.latest_calls == ["thread-unlinked"]
-    assert provider.thread_include_attachments_calls == [False]
+    assert provider.thread_include_attachments_calls
+    assert set(provider.thread_include_attachments_calls) == {False}
     assert result.processed_messages == 1
     positive_item = db_session.scalar(
         select(GmailStarredWorkItem).where(GmailStarredWorkItem.provider_message_id == "reply-positive-latest")
@@ -3299,7 +3339,7 @@ def test_positive_response_with_unresolved_order_mismatch_keeps_star(
     assert result.positive_responses == 0
 
 
-def test_pending_local_work_item_is_processed_before_fetching_gmail(
+def test_pending_local_work_item_is_processed_without_blocking_gmail_poll(
     db_session: Session,
     gmail_case,
     monkeypatch: pytest.MonkeyPatch,
@@ -3358,8 +3398,10 @@ def test_pending_local_work_item_is_processed_before_fetching_gmail(
         process_new_messages=True,
     )
 
-    assert provider.latest_calls == []
-    assert provider.thread_include_attachments_calls == []
+    assert provider.latest_calls
+    assert set(provider.latest_calls) == {"thread-local-backlog"}
+    assert provider.thread_include_attachments_calls
+    assert set(provider.thread_include_attachments_calls) == {False}
     assert result.processed_messages == 1
     assert result.refused_responses == 1
     db_session.refresh(item)
