@@ -814,7 +814,7 @@ def gmail_inbound_status(
 def _effective_gmail_daily_processing_target(settings, connected_accounts_count: int) -> int:
     configured_target = max(settings.gmail_daily_processing_target, 1)
     account_count = max(connected_accounts_count, 1)
-    hourly_worker_floor = account_count * max(settings.gmail_watched_threads_batch_per_cycle, 1) * 24
+    hourly_worker_floor = account_count * max(settings.gmail_watched_threads_read_batch_per_cycle, 1) * 24
     return max(configured_target, hourly_worker_floor)
 
 

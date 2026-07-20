@@ -101,7 +101,7 @@ Regles :
 - le mode recommande en production est `GMAIL_INBOUND_AUTO_SYNC_CONTINUOUS_ENABLED=true` pour enchainer les cycles sans attente humaine ;
 - si le mode continu est desactive, `GMAIL_INBOUND_AUTO_SYNC_INTERVAL_SECONDS=30` garde un traitement rapide ;
 - les backlogs Gmail etoiles importants doivent utiliser `GMAIL_STARRED_MAX_MESSAGES_PER_SYNC=50000`, `GMAIL_STARRED_MAX_PAGES_PER_SYNC=0` et `GMAIL_INBOUND_AUTO_SYNC_EXISTING_REPROCESS_LIMIT=1000` ;
-- la file des threads Gmail surveilles est bornee par `GMAIL_WATCHED_THREADS_BATCH_PER_CYCLE=100`, `GMAIL_WATCHED_THREADS_MAX_PER_CYCLE=5000` et affiche son objectif avec `GMAIL_DAILY_PROCESSING_TARGET=2000` ;
+- la lecture des threads Gmail surveilles est bornee par `GMAIL_WATCHED_THREADS_READ_BATCH_PER_CYCLE=100`, independamment des candidats d'envoi, puis par `GMAIL_WATCHED_THREADS_MAX_PER_CYCLE=5000` ; la War Room affiche son objectif avec `GMAIL_DAILY_PROCESSING_TARGET=2000` ;
 - en auto-sync, TENNET lit les nouveaux mails puis la file Gmail etoilee complete page par page quand `GMAIL_STARRED_FULL_HISTORY_ENABLED=true` ;
 - un fil Gmail etoile est traite comme une relance urgente et reste dans la file tant qu'Uber n'a pas donne de signal positif clair ;
 - aucune relance automatique n'est creee hors AutoPilot controle ;
