@@ -50,9 +50,9 @@ def test_explicit_payment_promise_without_amount_is_confirmed() -> None:
 
 def test_uber_full_payment_retained_is_confirmed() -> None:
     text = (
-        "Il n'y a pas eu d'ajustement pour cette commande. "
-        "Le remboursement client n'a engendre aucun frais pour vous. "
-        "Vous avez donc percu l'integralite du paiement de la commande."
+        "Apr\u00e8s v\u00e9rification de la commande \ufeff62A5B, il n\u2019y a pas eu d\u2019ajustement. "
+        "Le remboursement client n\u2019a engendr\u00e9 aucun frais pour vous. "
+        "Vous avez donc per\u00e7u l\u2019int\u00e9gralit\u00e9 du paiement de la commande."
     )
 
     assert text_has_explicit_payment_confirmation(text) is True

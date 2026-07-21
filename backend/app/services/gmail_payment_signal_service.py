@@ -111,6 +111,20 @@ PAYMENT_AMOUNT_PATTERN = re.compile(
 )
 PAYMENT_SIGNAL_TEXT_LIMIT = 12000
 IGNORED_HTML_TAGS = {"head", "script", "style", "svg", "title"}
+PAYMENT_TEXT_TRANSLATIONS = str.maketrans(
+    {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201b": "'",
+        "\u02bc": "'",
+        "\u2032": "'",
+        "\u200b": " ",
+        "\u200c": " ",
+        "\u200d": " ",
+        "\u2060": " ",
+        "\ufeff": " ",
+    }
+)
 
 
 class VisibleEmailTextParser(HTMLParser):
@@ -149,7 +163,8 @@ def visible_email_text(text: str) -> str:
 def normalize_payment_signal_text(text: str) -> str:
     normalized = unicodedata.normalize("NFKD", text.casefold())
     without_accents = "".join(char for char in normalized if not unicodedata.combining(char))
-    return " ".join(without_accents.replace("\xa0", " ").split())
+    normalized_punctuation = without_accents.translate(PAYMENT_TEXT_TRANSLATIONS)
+    return " ".join(normalized_punctuation.replace("\xa0", " ").split())
 
 
 def current_response_text(message: InboundEmailMessage) -> str:
