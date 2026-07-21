@@ -2874,8 +2874,8 @@ def test_stale_survey_skip_reprocesses_full_payment_confirmation(
     account.scopes = "https://www.googleapis.com/auth/gmail.modify"
     thread_id = "thread-stale-survey-positive"
     positive_body = (
-        "Apres verification de la commande F93BA, il n'y a pas eu d'ajustement. "
-        "Vous avez donc percu l'integralite du paiement de la commande."
+        "Apr\u00e8s v\u00e9rification de la commande \ufeffF93BA, il n\u2019y a pas eu d\u2019ajustement. "
+        "Vous avez donc per\u00e7u l\u2019int\u00e9gralit\u00e9 du paiement de la commande."
     )
     positive = payload(
         "reply-stale-positive-1",
