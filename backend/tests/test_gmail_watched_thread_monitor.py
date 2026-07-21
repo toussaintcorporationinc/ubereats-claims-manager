@@ -2868,7 +2868,6 @@ def test_latest_uber_survey_falls_back_to_previous_positive_reply(
 def test_stale_survey_skip_reprocesses_full_payment_confirmation(
     db_session: Session,
     gmail_case,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     owner, account, order = gmail_case
     account.scopes = "https://www.googleapis.com/auth/gmail.modify"
@@ -2947,7 +2946,6 @@ def test_stale_survey_skip_reprocesses_full_payment_confirmation(
     provider = FakeFastWatchedGmailProvider()
     provider.latest_payloads = {thread_id: survey}
     provider.thread_payloads = {thread_id: [positive, survey]}
-    install_fake_classifier(monkeypatch)
 
     result = GmailWatchedThreadMonitorService(provider).process_account(
         db_session,
@@ -2959,10 +2957,14 @@ def test_stale_survey_skip_reprocesses_full_payment_confirmation(
     db_session.refresh(item)
     db_session.refresh(watched)
     db_session.refresh(analysis)
+    db_session.refresh(order)
     assert item.status == "positive"
     assert watched.status == "payment_confirmed"
     assert watched.star_active is False
-    assert analysis.recommended_review_type == "payment_confirmed"
+    assert analysis.recommended_review_type == "payment_to_verify"
+    assert analysis.status == "applied"
+    assert order.status == "payment_to_verify"
+    assert order.recovered_amount is None
     assert result.positive_responses == 1
     assert (message.provider_message_id, "STARRED") in provider.removed_labels
 

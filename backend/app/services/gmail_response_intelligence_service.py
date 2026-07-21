@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
@@ -14,7 +13,11 @@ from app.models import ClaimOrder, GmailResponseAnalysis, InboundEmailMessage, U
 from app.models.domain import utc_now
 from app.schemas.domain import ClaimResponseReviewCreate
 from app.services.audit import add_audit_log
-from app.services.gmail_payment_signal_service import current_response_text, message_has_explicit_payment_confirmation
+from app.services.gmail_payment_signal_service import (
+    current_response_text,
+    message_has_explicit_payment_confirmation,
+    normalize_payment_signal_text,
+)
 from app.services.openai_structured_analysis_service import AIGmailClassification, OpenAIStructuredAnalysisService
 from app.services.response_review_service import (
     PROTECTED_ORDER_STATUSES,
@@ -702,9 +705,7 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
 
 
 def normalize_text(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value)
-    ascii_text = "".join(char for char in normalized if not unicodedata.combining(char))
-    return re.sub(r"\s+", " ", ascii_text.casefold()).strip()
+    return normalize_payment_signal_text(value)
 
 
 def matching_keywords(text: str, keywords: tuple[str, ...]) -> list[str]:

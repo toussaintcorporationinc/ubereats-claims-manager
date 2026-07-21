@@ -351,12 +351,20 @@ class GmailWatchedThreadMonitorService:
                 if created:
                     result.work_items_created += 1
                     result.new_messages_detected += 1
+                needs_positive_reclassification = self.final_item_needs_positive_reclassification(
+                    work_item,
+                    message,
+                )
                 if (
                     work_item.status in FINAL_WORK_ITEM_STATUSES
                     and not self.message_changed_after_processing(message, work_item)
                     and not self.should_reprocess_final_item(watched, work_item, message)
                 ):
                     continue
+                if needs_positive_reclassification:
+                    message.review_status = "unreviewed"
+                    message.reviewed_at = None
+                    message.reviewed_by_user_id = None
 
                 positive_link_block_reason: str | None = None
                 explicit_payment_confirmation = message_has_explicit_payment_confirmation(message)
