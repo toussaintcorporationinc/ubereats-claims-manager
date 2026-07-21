@@ -1626,6 +1626,13 @@ class GmailWatchedThreadMonitorService:
                 GmailStarredWorkItem.provider_message_id == provider_message_id,
             )
         )
+        message = (
+            db.get(InboundEmailMessage, item.inbound_message_id)
+            if item is not None and item.inbound_message_id is not None
+            else None
+        )
+        if message is not None and self.final_item_needs_positive_reclassification(item, message):
+            return False
         return bool(item and item.status in SKIPPABLE_FINAL_WORK_ITEM_STATUSES)
 
     def select_payloads_for_processing(
@@ -2150,6 +2157,8 @@ class GmailWatchedThreadMonitorService:
         item: GmailStarredWorkItem,
         message: InboundEmailMessage,
     ) -> bool:
+        if self.final_item_needs_positive_reclassification(item, message):
+            return True
         if item.status not in {"manual_review", "skipped"}:
             return False
         return bool(
@@ -2157,6 +2166,16 @@ class GmailWatchedThreadMonitorService:
             and message.match_status == "linked"
             and message.review_status == "unreviewed"
         )
+
+    @staticmethod
+    def final_item_needs_positive_reclassification(
+        item: GmailStarredWorkItem,
+        message: InboundEmailMessage,
+    ) -> bool:
+        if item.status == "positive" or not message_has_explicit_payment_confirmation(message):
+            return False
+        analysis = message.response_analysis
+        return analysis is None or analysis.recommended_review_type not in POSITIVE_REVIEW_TYPES
 
     def upsert_inbound_message(
         self,
