@@ -2865,6 +2865,108 @@ def test_latest_uber_survey_falls_back_to_previous_positive_reply(
     assert ("star-1", "STARRED") in provider.removed_labels
 
 
+def test_stale_survey_skip_reprocesses_full_payment_confirmation(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    account.scopes = "https://www.googleapis.com/auth/gmail.modify"
+    thread_id = "thread-stale-survey-positive"
+    positive_body = (
+        "Apres verification de la commande F93BA, il n'y a pas eu d'ajustement. "
+        "Vous avez donc percu l'integralite du paiement de la commande."
+    )
+    positive = payload(
+        "reply-stale-positive-1",
+        thread_id=thread_id,
+        body=positive_body,
+        starred=True,
+    )
+    survey = payload(
+        "survey-after-stale-positive-1",
+        thread_id=thread_id,
+        subject="Commercant - Assistance client",
+        body="Partagez votre experience avec le service d'assistance Uber.",
+    )
+    message = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=order.id,
+        provider="gmail",
+        provider_message_id=positive.provider_message_id,
+        provider_thread_id=thread_id,
+        gmail_history_id=positive.gmail_history_id,
+        from_email=positive.from_email,
+        to_email=positive.to_email,
+        subject=positive.subject,
+        snippet=positive.snippet,
+        body_text=positive.body_text,
+        received_at=positive.received_at,
+        raw_headers_json=positive.raw_headers,
+        provider_labels_json=positive.provider_labels,
+        match_status="linked",
+        match_reason="order_number_match",
+        review_status="reviewed",
+    )
+    db_session.add(message)
+    db_session.flush()
+    analysis = GmailResponseAnalysis(
+        inbound_message_id=message.id,
+        order_id=order.id,
+        recommended_review_type="evidence_requested",
+        status="applied",
+        confidence_score=Decimal("0.75"),
+        reason="stale_misclassification",
+    )
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id=thread_id,
+        first_starred_message_id=message.provider_message_id,
+        claim_order_id=order.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="manual_review",
+        star_active=True,
+        last_processed_at=utc_now(),
+    )
+    db_session.add_all([analysis, watched])
+    db_session.flush()
+    item = GmailStarredWorkItem(
+        watched_thread_id=watched.id,
+        email_account_id=account.id,
+        inbound_message_id=message.id,
+        gmail_thread_id=thread_id,
+        provider_message_id=message.provider_message_id,
+        status="skipped",
+        reason="latest_uber_reply_is_support_survey",
+        processed_at=utc_now(),
+    )
+    db_session.add(item)
+    db_session.commit()
+
+    provider = FakeFastWatchedGmailProvider()
+    provider.latest_payloads = {thread_id: survey}
+    provider.thread_payloads = {thread_id: [positive, survey]}
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+    )
+
+    db_session.refresh(item)
+    db_session.refresh(watched)
+    db_session.refresh(analysis)
+    assert item.status == "positive"
+    assert watched.status == "payment_confirmed"
+    assert watched.star_active is False
+    assert analysis.recommended_review_type == "payment_confirmed"
+    assert result.positive_responses == 1
+    assert (message.provider_message_id, "STARRED") in provider.removed_labels
+
+
 def test_latest_uber_survey_falls_back_to_previous_refusal_reply(
     db_session: Session,
     gmail_case,
