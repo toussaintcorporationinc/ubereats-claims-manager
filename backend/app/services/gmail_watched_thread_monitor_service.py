@@ -28,6 +28,7 @@ from app.models import (
 )
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
+from app.services.claim_validation_service import get_claim_validation_gaps
 from app.services.email_provider import EmailProvider, EmailProviderError, InboundEmailPayload
 from app.services.email_draft_service import EmailDraftBusinessError, create_email_draft
 from app.services.gmail_inbound_sync_service import (
@@ -599,6 +600,12 @@ class GmailWatchedThreadMonitorService:
                 item.processed_at = utc_now()
                 result.autopilot_skipped_count += 1
                 continue
+            local_block_reason = self.local_actionable_reply_block_reason(db, watched, item, message)
+            if local_block_reason is not None:
+                item.reason = f"proof_reply_blocked:{local_block_reason}"
+                self.mark_work_item_manual_review(db, item)
+                result.autopilot_skipped_count += 1
+                continue
             if remote_preflight_count >= max_items:
                 break
             remote_preflight_count += 1
@@ -641,6 +648,32 @@ class GmailWatchedThreadMonitorService:
                 sent_threads.add(watched.gmail_thread_id)
                 sent_count += 1
         return sent_count
+
+    @staticmethod
+    def local_actionable_reply_block_reason(
+        db: Session,
+        watched: GmailWatchedThread,
+        item: GmailStarredWorkItem,
+        message: InboundEmailMessage,
+    ) -> str | None:
+        """Skip proof replies that cannot pass local validation before using Gmail quota."""
+        if item.status != "evidence_needed":
+            return None
+        order = db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else message.order
+        if order is None:
+            return None
+        _missing_items, blocking_reasons = get_claim_validation_gaps(db, order)
+        for reason in blocking_reasons:
+            if reason in {
+                "missing_restaurant",
+                "missing_uber_order_number",
+                "missing_order_amount",
+                "missing_currency",
+            }:
+                return reason
+        if not order.evidence_files:
+            return "missing_evidence"
+        return None
 
     def automatic_reply_block_reason(self, db: Session, account: EmailAccount) -> str | None:
         if autopilot_is_emergency_stopped(db):

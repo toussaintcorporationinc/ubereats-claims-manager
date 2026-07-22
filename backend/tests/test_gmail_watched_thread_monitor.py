@@ -622,6 +622,93 @@ def test_local_stale_scan_continues_past_remote_preflight_budget(
     assert provider.created_drafts == []
 
 
+def test_local_proof_blocker_does_not_consume_remote_reply_preflight(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, valid_order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_COOLDOWN_HOURS", "48")
+    get_settings.cache_clear()
+
+    incomplete_order = ClaimOrder(
+        restaurant_id=valid_order.restaurant_id,
+        uber_order_number="NOAMT",
+        customer_name="Client sans montant",
+        order_date=date(2026, 6, 18),
+        order_amount=None,
+        currency="EUR",
+        status="waiting_uber_response",
+    )
+    db_session.add(incomplete_order)
+    db_session.flush()
+    _blocked_watched, blocked_item, blocked_message = add_refused_work_item(
+        db_session,
+        account,
+        incomplete_order,
+        thread_id="thread-proof-missing-amount",
+    )
+    blocked_item.status = "evidence_needed"
+    blocked_item.reason = "evidence_requested"
+    db_session.add(
+        GmailResponseAnalysis(
+            inbound_message_id=blocked_message.id,
+            order_id=incomplete_order.id,
+            recommended_review_type="evidence_requested",
+            status="analyzed",
+            confidence_score=Decimal("0.90"),
+            reason="evidence_requested",
+        )
+    )
+
+    followup_watched, followup_item, followup_message = add_refused_work_item(
+        db_session,
+        account,
+        valid_order,
+        thread_id="thread-valid-followup",
+    )
+    followup_message.received_at = utc_now() - timedelta(days=3)
+    followup_item.status = "manual_review"
+    followup_item.reason = "waiting_or_under_review_keywords"
+    db_session.add(
+        GmailResponseAnalysis(
+            inbound_message_id=followup_message.id,
+            order_id=valid_order.id,
+            recommended_review_type="followup_needed",
+            status="analyzed",
+            confidence_score=Decimal("0.80"),
+            reason="waiting_or_under_review_keywords",
+        )
+    )
+    db_session.commit()
+
+    provider = FakeFastWatchedGmailProvider()
+    provider.latest_payloads[followup_watched.gmail_thread_id] = payload(
+        followup_message.provider_message_id,
+        thread_id=followup_watched.gmail_thread_id,
+        body=followup_message.body_text or "Dossier en cours de traitement.",
+    )
+    result = GmailWatchedThreadMonitorResult()
+
+    GmailWatchedThreadMonitorService(provider).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=1,
+    )
+
+    db_session.refresh(blocked_item)
+    db_session.refresh(followup_item)
+    assert blocked_item.status == "manual_review"
+    assert blocked_item.reason == "proof_reply_blocked:missing_order_amount"
+    assert provider.latest_calls == [followup_watched.gmail_thread_id]
+    assert followup_item.reason == "gmail_followup_reply_sent"
+    assert result.autopilot_sent_count == 1
+
+
 def test_fast_unlinked_classification_bounds_long_gmail_threads() -> None:
     body = (
         "ancienne conversation sans decision " * 5000
