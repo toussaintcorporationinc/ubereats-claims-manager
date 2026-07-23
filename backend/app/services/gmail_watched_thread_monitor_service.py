@@ -174,6 +174,7 @@ class GmailWatchedThreadMonitorService:
         self.sync_service = sync_service or GmailInboundSyncService(provider)
         self._latest_external_message_cache: dict[tuple[int, str], InboundEmailPayload | None] = {}
         self._latest_external_message_errors: dict[tuple[int, str], str] = {}
+        self._remote_thread_has_draft_cache: dict[tuple[int, str], bool] = {}
 
     def process_account(
         self,
@@ -244,6 +245,9 @@ class GmailWatchedThreadMonitorService:
         process_local_backlog: bool = True,
     ) -> GmailWatchedThreadMonitorResult:
         result = result or GmailWatchedThreadMonitorResult()
+        self._latest_external_message_cache.clear()
+        self._latest_external_message_errors.clear()
+        self._remote_thread_has_draft_cache.clear()
 
         max_per_cycle = max_threads or self.settings.gmail_watched_threads_max_per_cycle
         sync_result = GmailInboundSyncResult(status="success")
@@ -292,7 +296,12 @@ class GmailWatchedThreadMonitorService:
                 db.flush()
                 continue
             try:
-                payloads = self.fetch_thread_payloads(db, account, watched)
+                payloads = self.fetch_thread_payloads(
+                    db,
+                    account,
+                    watched,
+                    prefer_full_thread=self.watched_thread_has_actionable_reply(db, watched.id),
+                )
             except Exception as exc:  # noqa: BLE001 - a broken thread must not stop the mailbox cycle.
                 retry_after = parse_gmail_retry_after(
                     str(exc),
@@ -311,6 +320,18 @@ class GmailWatchedThreadMonitorService:
                 continue
 
             allow_remote_star_lookup = len(payloads) > 1
+            cache_key = (account.id, watched.gmail_thread_id)
+            if payloads:
+                self._latest_external_message_cache[cache_key] = self.select_latest_external_payload(
+                    payloads,
+                    account,
+                    include_support_surveys=True,
+                )
+                self._remote_thread_has_draft_cache[cache_key] = any(
+                    self.payload_from_account(payload, account)
+                    and "DRAFT" in {str(label).strip().upper() for label in payload.provider_labels}
+                    for payload in payloads
+                )
             processing_payloads = self.select_payloads_for_processing(payloads, account)
             if self.should_skip_already_final_payloads(db, account, processing_payloads):
                 watched.last_processed_at = utc_now()
@@ -476,6 +497,7 @@ class GmailWatchedThreadMonitorService:
                         MAX_AUTOPILOT_REPLY_CANDIDATES_PER_CYCLE,
                     ),
                 ),
+                reset_remote_cache=False,
             )
         result.errors.extend(sync_result.errors)
         return result
@@ -488,6 +510,7 @@ class GmailWatchedThreadMonitorService:
         *,
         result: GmailWatchedThreadMonitorResult,
         max_items: int,
+        reset_remote_cache: bool = True,
     ) -> int:
         """Send same-thread Gmail relances for actionable watched work items.
 
@@ -497,8 +520,10 @@ class GmailWatchedThreadMonitorService:
         """
         if max_items <= 0:
             return 0
-        self._latest_external_message_cache.clear()
-        self._latest_external_message_errors.clear()
+        if reset_remote_cache:
+            self._latest_external_message_cache.clear()
+            self._latest_external_message_errors.clear()
+            self._remote_thread_has_draft_cache.clear()
         block_reason = self.automatic_reply_block_reason(db, account)
         if block_reason is not None:
             result.autopilot_skipped_count += 1
@@ -506,6 +531,20 @@ class GmailWatchedThreadMonitorService:
         if not self.settings.autopilot_enabled or not self.settings.autopilot_appeals_enabled:
             result.autopilot_skipped_count += 1
             return 0
+        cached_thread_ids = {
+            thread_id
+            for account_id, thread_id in self._latest_external_message_cache
+            if account_id == account.id
+        }
+        cached_thread_priority = case(
+            (GmailWatchedThread.gmail_thread_id.in_(cached_thread_ids or {"__none__"}), 0),
+            else_=1,
+        )
+        cached_thread_filter = (
+            GmailWatchedThread.gmail_thread_id.in_(cached_thread_ids)
+            if not reset_remote_cache and cached_thread_ids
+            else True
+        )
         items = list(
             db.scalars(
                 select(GmailStarredWorkItem)
@@ -535,8 +574,10 @@ class GmailWatchedThreadMonitorService:
                     ),
                     GmailWatchedThread.status.in_(["active", "manual_review"]),
                     GmailWatchedThread.star_active.is_(True),
+                    cached_thread_filter,
                 )
                 .order_by(
+                    cached_thread_priority,
                     case(
                         (GmailStarredWorkItem.status == "refused", 0),
                         (GmailStarredWorkItem.status == "evidence_needed", 1),
@@ -739,6 +780,9 @@ class GmailWatchedThreadMonitorService:
         account: EmailAccount,
         watched: GmailWatchedThread,
     ) -> bool:
+        cache_key = (account.id, watched.gmail_thread_id)
+        if cache_key in self._remote_thread_has_draft_cache:
+            return self._remote_thread_has_draft_cache[cache_key]
         get_thread_messages = getattr(self.provider, "get_thread_messages_for_account", None)
         if not callable(get_thread_messages):
             return False
@@ -757,6 +801,34 @@ class GmailWatchedThreadMonitorService:
             self.payload_from_account(payload, account)
             and "DRAFT" in {str(label).strip().upper() for label in payload.provider_labels}
             for payload in payloads
+        )
+
+    def watched_thread_has_actionable_reply(self, db: Session, watched_thread_id: int) -> bool:
+        return (
+            db.scalar(
+                select(GmailStarredWorkItem.id)
+                .join(
+                    InboundEmailMessage,
+                    InboundEmailMessage.id == GmailStarredWorkItem.inbound_message_id,
+                )
+                .outerjoin(
+                    GmailResponseAnalysis,
+                    GmailResponseAnalysis.inbound_message_id == InboundEmailMessage.id,
+                )
+                .where(
+                    GmailStarredWorkItem.watched_thread_id == watched_thread_id,
+                    GmailStarredWorkItem.inbound_message_id.is_not(None),
+                    or_(
+                        GmailStarredWorkItem.status.in_(["refused", "evidence_needed"]),
+                        and_(
+                            GmailStarredWorkItem.status == "manual_review",
+                            GmailResponseAnalysis.recommended_review_type == "followup_needed",
+                        ),
+                    ),
+                )
+                .limit(1)
+            )
+            is not None
         )
 
     def latest_reply_block_reason(
@@ -1688,6 +1760,20 @@ class GmailWatchedThreadMonitorService:
         backlog to crawl. For the automation decision, the newest external
         message is the useful one: positive, refusal, proof request, or unknown.
         """
+        latest = self.select_latest_external_payload(
+            payloads,
+            account,
+            include_support_surveys=False,
+        )
+        return [latest] if latest is not None else []
+
+    def select_latest_external_payload(
+        self,
+        payloads: list[InboundEmailPayload],
+        account: EmailAccount,
+        *,
+        include_support_surveys: bool,
+    ) -> InboundEmailPayload | None:
         deduped: dict[str, InboundEmailPayload] = {}
         for payload in payloads:
             if not payload.provider_message_id:
@@ -1698,15 +1784,15 @@ class GmailWatchedThreadMonitorService:
             for payload in deduped.values()
             if not self.payload_from_account(payload, account)
             and sender_matches_filter(payload.from_email, self.settings.gmail_support_sender_filter)
-            and not payload_is_uber_support_survey(payload)
+            and (include_support_surveys or not payload_is_uber_support_survey(payload))
         ]
         if not candidates:
-            return []
+            return None
         _index, latest = max(
             enumerate(candidates),
             key=lambda item: (item[1].received_at or datetime.min, item[0]),
         )
-        return [latest]
+        return latest
 
     def discover_from_starred_messages(
         self,
@@ -1944,6 +2030,29 @@ class GmailWatchedThreadMonitorService:
         statuses = ["active", "manual_review"]
         if include_positive_star_cleanup:
             statuses.extend(sorted(POSITIVE_WATCHED_STATUSES))
+        actionable_reply_ref = (
+            select(GmailStarredWorkItem.id)
+            .join(
+                InboundEmailMessage,
+                InboundEmailMessage.id == GmailStarredWorkItem.inbound_message_id,
+            )
+            .outerjoin(
+                GmailResponseAnalysis,
+                GmailResponseAnalysis.inbound_message_id == InboundEmailMessage.id,
+            )
+            .where(
+                GmailStarredWorkItem.watched_thread_id == GmailWatchedThread.id,
+                GmailStarredWorkItem.inbound_message_id.is_not(None),
+                or_(
+                    GmailStarredWorkItem.status.in_(["refused", "evidence_needed"]),
+                    and_(
+                        GmailStarredWorkItem.status == "manual_review",
+                        GmailResponseAnalysis.recommended_review_type == "followup_needed",
+                    ),
+                ),
+            )
+            .exists()
+        )
         pending_remote_ref = (
             select(GmailStarredWorkItem.id)
             .where(
@@ -1967,6 +2076,7 @@ class GmailWatchedThreadMonitorService:
                         (GmailWatchedThread.status.in_(sorted(POSITIVE_WATCHED_STATUSES)), 0),
                         else_=1,
                     ),
+                    case((actionable_reply_ref, 0), else_=1),
                     case((pending_remote_ref, 0), else_=1),
                     GmailWatchedThread.last_processed_at.asc().nullsfirst(),
                     GmailWatchedThread.last_message_at.desc().nullslast(),
@@ -2059,7 +2169,7 @@ class GmailWatchedThreadMonitorService:
             except TypeError:
                 return list(get_thread_messages(db, account, watched.gmail_thread_id))
 
-        if prefer_full_thread and watched.claim_order_id is None and callable(get_thread_messages):
+        if prefer_full_thread and callable(get_thread_messages):
             payloads = fetch_full_thread()
             if payloads:
                 return payloads

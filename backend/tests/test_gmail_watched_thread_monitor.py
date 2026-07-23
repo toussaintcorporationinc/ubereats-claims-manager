@@ -456,7 +456,15 @@ def test_watched_cycle_caps_remote_reply_preflights(
     service = GmailWatchedThreadMonitorService(FakeWatchedGmailProvider())
     observed_limits = []
 
-    def capture_limit(db, user, email_account, *, result, max_items):  # noqa: ANN001, ARG001
+    def capture_limit(  # noqa: ANN001, ARG001
+        db,
+        user,
+        email_account,
+        *,
+        result,
+        max_items,
+        reset_remote_cache,
+    ):
         observed_limits.append(max_items)
         return 0
 
@@ -471,6 +479,55 @@ def test_watched_cycle_caps_remote_reply_preflights(
     )
 
     assert observed_limits == [1]
+
+
+def test_watched_cycle_reuses_actionable_thread_read_for_reply_preflight(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    db_session.add(
+        GmailWatchedThread(
+            email_account_id=account.id,
+            gmail_thread_id="thread-idle",
+            first_starred_message_id="message-thread-idle",
+            status="active",
+            star_active=True,
+        )
+    )
+    watched, item, message = add_refused_work_item(
+        db_session,
+        account,
+        order,
+        thread_id="thread-actionable",
+    )
+    provider = FakeFastWatchedGmailProvider()
+    provider.thread_payloads[watched.gmail_thread_id] = [
+        payload(
+            message.provider_message_id,
+            thread_id=watched.gmail_thread_id,
+            body=message.body_text or "",
+        )
+    ]
+
+    result = GmailWatchedThreadMonitorService(provider).process_watched_threads(
+        db_session,
+        owner,
+        account,
+        max_threads=1,
+        process_local_backlog=False,
+    )
+
+    db_session.refresh(item)
+    assert provider.thread_include_attachments_calls == [False]
+    assert provider.latest_calls == []
+    assert provider.created_draft_thread_ids == [watched.gmail_thread_id]
+    assert item.reason == "gmail_reply_sent"
+    assert result.autopilot_sent_count == 1
 
 
 def test_latest_reply_failure_stops_remaining_remote_preflights(
@@ -1908,7 +1965,14 @@ def test_refused_watched_thread_repairs_missing_order_from_thread_text_before_re
                 subject="Re: Contestation de remboursement de commande F93BA",
                 body=thread_body,
                 starred=True,
-            )
+            ),
+            payload(
+                "latest-refusal-only",
+                thread_id="thread-unlinked-f93ba",
+                subject="Re: Contestation de remboursement de commande",
+                body="Bonjour, nous refusons la demande.",
+                starred=False,
+            ),
         ]
     }
 
