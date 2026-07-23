@@ -2030,29 +2030,6 @@ class GmailWatchedThreadMonitorService:
         statuses = ["active", "manual_review"]
         if include_positive_star_cleanup:
             statuses.extend(sorted(POSITIVE_WATCHED_STATUSES))
-        actionable_reply_ref = (
-            select(GmailStarredWorkItem.id)
-            .join(
-                InboundEmailMessage,
-                InboundEmailMessage.id == GmailStarredWorkItem.inbound_message_id,
-            )
-            .outerjoin(
-                GmailResponseAnalysis,
-                GmailResponseAnalysis.inbound_message_id == InboundEmailMessage.id,
-            )
-            .where(
-                GmailStarredWorkItem.watched_thread_id == GmailWatchedThread.id,
-                GmailStarredWorkItem.inbound_message_id.is_not(None),
-                or_(
-                    GmailStarredWorkItem.status.in_(["refused", "evidence_needed"]),
-                    and_(
-                        GmailStarredWorkItem.status == "manual_review",
-                        GmailResponseAnalysis.recommended_review_type == "followup_needed",
-                    ),
-                ),
-            )
-            .exists()
-        )
         pending_remote_ref = (
             select(GmailStarredWorkItem.id)
             .where(
@@ -2076,7 +2053,6 @@ class GmailWatchedThreadMonitorService:
                         (GmailWatchedThread.status.in_(sorted(POSITIVE_WATCHED_STATUSES)), 0),
                         else_=1,
                     ),
-                    case((actionable_reply_ref, 0), else_=1),
                     case((pending_remote_ref, 0), else_=1),
                     GmailWatchedThread.last_processed_at.asc().nullsfirst(),
                     GmailWatchedThread.last_message_at.desc().nullslast(),

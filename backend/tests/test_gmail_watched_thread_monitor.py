@@ -490,15 +490,6 @@ def test_watched_cycle_reuses_actionable_thread_read_for_reply_preflight(
     monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
     monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
     get_settings.cache_clear()
-    db_session.add(
-        GmailWatchedThread(
-            email_account_id=account.id,
-            gmail_thread_id="thread-idle",
-            first_starred_message_id="message-thread-idle",
-            status="active",
-            star_active=True,
-        )
-    )
     watched, item, message = add_refused_work_item(
         db_session,
         account,
@@ -528,6 +519,39 @@ def test_watched_cycle_reuses_actionable_thread_read_for_reply_preflight(
     assert provider.created_draft_thread_ids == [watched.gmail_thread_id]
     assert item.reason == "gmail_reply_sent"
     assert result.autopilot_sent_count == 1
+
+
+def test_active_watched_threads_keep_fair_polling_order_with_actionable_backlog(
+    db_session: Session,
+    gmail_case,
+) -> None:
+    _owner, account, order = gmail_case
+    oldest = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-oldest-unchecked",
+        first_starred_message_id="message-thread-oldest-unchecked",
+        status="active",
+        star_active=True,
+    )
+    db_session.add(oldest)
+    _actionable, _item, _message = add_refused_work_item(
+        db_session,
+        account,
+        order,
+        thread_id="thread-actionable-checked",
+    )
+    _actionable.last_processed_at = utc_now()
+    db_session.commit()
+
+    selected = GmailWatchedThreadMonitorService(
+        FakeWatchedGmailProvider()
+    ).get_active_watched_threads(
+        db_session,
+        account,
+        max_per_cycle=1,
+    )
+
+    assert [watched.gmail_thread_id for watched in selected] == [oldest.gmail_thread_id]
 
 
 def test_latest_reply_failure_stops_remaining_remote_preflights(
