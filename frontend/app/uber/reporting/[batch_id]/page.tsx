@@ -96,7 +96,9 @@ export default function UberReportingBatchPage({ params }: PageProps) {
           </div>
           {result ? (
             <p>
-              {result.created_snapshots_count} snapshot(s), {result.created_transactions_count} transaction(s), {result.skipped_rows} ignoree(s)
+              {result.created_snapshots_count} snapshot(s), {result.created_transactions_count} transaction(s),{" "}
+              {result.payments_applied_count} paiement(s) rapproche(s), {result.payments_unmatched_count} sans dossier,{" "}
+              {result.payment_conflicts_count} ambigu(s), {result.skipped_rows} ignoree(s)
             </p>
           ) : null}
           <Link className="secondary-button" href="/uber/unmapped-stores">Voir stores non mappes</Link>

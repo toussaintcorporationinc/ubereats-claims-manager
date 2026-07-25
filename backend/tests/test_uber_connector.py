@@ -8,8 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import (
+    AppealWorkflow,
     AuditLog,
     ClaimOrder,
+    FollowUpTask,
     UberFinancialTransaction,
     UberOrderSnapshot,
     UberReconciliationResult,
@@ -810,6 +812,200 @@ def test_confirm_reporting_batch_creates_transaction_without_duplicate(
         select(UberFinancialTransaction).where(UberFinancialTransaction.uber_order_id == "UBER-TX-1")
     ).all()
     assert len(transactions) == 1
+
+
+def test_positive_uber_reimbursement_confirms_claim_and_stops_followups(
+    unauthenticated_client: TestClient,
+    db_session: Session,
+) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Asian Passion")
+    create_store_mapping(unauthenticated_client, owner_token, restaurant["id"], "store-asian")
+    claim = ClaimOrder(
+        restaurant_id=restaurant["id"],
+        uber_order_number="A909F",
+        customer_name="Client Test",
+        order_amount=Decimal("20.80"),
+        currency="EUR",
+        status="waiting_uber_response",
+        next_action_at=datetime(2026, 7, 27, 9, 0),
+    )
+    db_session.add(claim)
+    db_session.flush()
+    followup = FollowUpTask(
+        order_id=claim.id,
+        task_type="followup_1",
+        status="pending",
+        due_at=datetime(2026, 7, 27, 9, 0),
+    )
+    workflow = AppealWorkflow(
+        case_type="claim_order",
+        case_id=claim.id,
+        restaurant_id=restaurant["id"],
+        claim_order_id=claim.id,
+        status="appeal_sent",
+        next_action_at=datetime(2026, 7, 27, 9, 0),
+        next_action_type="escalation",
+    )
+    db_session.add_all([followup, workflow])
+    db_session.commit()
+
+    preview = preview_report(
+        unauthenticated_client,
+        owner_token,
+        "\n".join(
+            [
+                "store_id,order_id,transaction_type,transaction_date,payout_reference,amount,currency",
+                "store-asian,A909F,reimbursement,2026-07-26,PAYOUT-ASIAN-1,20.80,EUR",
+            ]
+        ),
+        "payments_report",
+    )
+    result = unauthenticated_client.post(
+        f"/v1/uber/reporting/batches/{preview['batch_id']}/confirm",
+        headers=auth_headers(owner_token),
+    )
+
+    assert result.status_code == 200, result.text
+    assert result.json()["payments_applied_count"] == 1
+    assert result.json()["payment_claims_updated_count"] == 1
+    db_session.refresh(claim)
+    db_session.refresh(followup)
+    db_session.refresh(workflow)
+    assert claim.status == "payment_confirmed"
+    assert claim.result == "payment_confirmed_from_uber_reporting"
+    assert claim.recovered_amount == Decimal("20.80")
+    assert claim.next_action_at is None
+    assert followup.status == "cancelled"
+    assert workflow.status == "payment_confirmed"
+    assert workflow.next_action_at is None
+    assert db_session.scalar(
+        select(AuditLog).where(
+            AuditLog.entity_type == "claim_order",
+            AuditLog.entity_id == claim.id,
+            AuditLog.action == "claim_order.payment_confirmed_from_uber_reporting",
+        )
+    )
+
+
+def test_positive_uber_reimbursement_matches_snapshot_display_id_and_is_idempotent(
+    unauthenticated_client: TestClient,
+    db_session: Session,
+) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "Asian Passion")
+    create_store_mapping(unauthenticated_client, owner_token, restaurant["id"], "store-asian")
+    claim = ClaimOrder(
+        restaurant_id=restaurant["id"],
+        uber_order_number="62B25",
+        order_amount=Decimal("42.80"),
+        currency="EUR",
+        status="sent",
+    )
+    db_session.add(claim)
+    add_snapshot(
+        db_session,
+        restaurant["id"],
+        "store-asian",
+        "workflow-62b25",
+        "completed",
+        "77.70",
+        display_id="#62B25",
+    )
+    db_session.commit()
+    csv_text = "\n".join(
+        [
+            "store_id,order_id,transaction_type,transaction_date,payout_reference,amount,currency",
+            "store-asian,workflow-62b25,reimbursement,2026-07-26,PAYOUT-ASIAN-1,42.80,EUR",
+        ]
+    )
+
+    first_preview = preview_report(
+        unauthenticated_client,
+        owner_token,
+        csv_text,
+        "payments_report",
+    )
+    first = unauthenticated_client.post(
+        f"/v1/uber/reporting/batches/{first_preview['batch_id']}/confirm",
+        headers=auth_headers(owner_token),
+    )
+    second_preview = preview_report(
+        unauthenticated_client,
+        owner_token,
+        csv_text,
+        "payments_report",
+    )
+    second = unauthenticated_client.post(
+        f"/v1/uber/reporting/batches/{second_preview['batch_id']}/confirm",
+        headers=auth_headers(owner_token),
+    )
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()["payments_applied_count"] == 1
+    assert second.json()["payments_applied_count"] == 1
+    db_session.refresh(claim)
+    assert claim.status == "payment_confirmed"
+    assert claim.recovered_amount == Decimal("42.80")
+    transactions = db_session.scalars(
+        select(UberFinancialTransaction).where(
+            UberFinancialTransaction.uber_order_id == "workflow-62b25"
+        )
+    ).all()
+    assert len(transactions) == 1
+
+
+def test_positive_uber_reimbursement_does_not_apply_ambiguous_order_identity(
+    unauthenticated_client: TestClient,
+    db_session: Session,
+) -> None:
+    owner_token = bootstrap_owner(unauthenticated_client)
+    restaurant = create_restaurant(unauthenticated_client, owner_token, "King Krousty")
+    create_store_mapping(unauthenticated_client, owner_token, restaurant["id"], "store-king")
+    first_claim = ClaimOrder(
+        restaurant_id=restaurant["id"],
+        uber_order_number="99210",
+        order_amount=Decimal("24.90"),
+        currency="EUR",
+        status="sent",
+    )
+    second_claim = ClaimOrder(
+        restaurant_id=restaurant["id"],
+        uber_order_number="OTHER-99210",
+        internal_reference="99210",
+        order_amount=Decimal("24.90"),
+        currency="EUR",
+        status="sent",
+    )
+    db_session.add_all([first_claim, second_claim])
+    db_session.commit()
+
+    preview = preview_report(
+        unauthenticated_client,
+        owner_token,
+        "\n".join(
+            [
+                "store_id,order_id,transaction_type,transaction_date,payout_reference,amount,currency",
+                "store-king,99210,reimbursement,2026-07-26,PAYOUT-KING-1,24.90,EUR",
+            ]
+        ),
+        "payments_report",
+    )
+    result = unauthenticated_client.post(
+        f"/v1/uber/reporting/batches/{preview['batch_id']}/confirm",
+        headers=auth_headers(owner_token),
+    )
+
+    assert result.status_code == 200, result.text
+    assert result.json()["payments_applied_count"] == 0
+    assert result.json()["payment_conflicts_count"] == 1
+    db_session.refresh(first_claim)
+    db_session.refresh(second_claim)
+    assert first_claim.status == "sent"
+    assert second_claim.status == "sent"
+    assert first_claim.recovered_amount is None
+    assert second_claim.recovered_amount is None
 
 
 def test_manager_non_assigned_and_staff_are_refused_for_reporting_preview(unauthenticated_client: TestClient) -> None:

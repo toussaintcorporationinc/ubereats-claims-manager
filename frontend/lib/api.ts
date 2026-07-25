@@ -1648,6 +1648,9 @@ export type SmartImportRoutedFile = {
   processing_status: string | null;
   created_snapshots_count: number | null;
   created_transactions_count: number | null;
+  payments_applied_count: number | null;
+  payments_unmatched_count: number | null;
+  payment_conflicts_count: number | null;
   analyzed_files_count: number | null;
   auto_matched_count: number | null;
   needs_review_count: number | null;
@@ -1986,6 +1989,11 @@ export type UberReportingConfirmResponse = {
   created_transactions_count: number;
   skipped_rows: number;
   errors: string[];
+  payments_applied_count: number;
+  payment_claims_updated_count: number;
+  payment_disputes_updated_count: number;
+  payments_unmatched_count: number;
+  payment_conflicts_count: number;
 };
 
 export type UberUnmappedStore = {

@@ -484,8 +484,14 @@ function SmartImportFileCounters({ file }: { file: SmartImportConfirmResponse["r
           <strong>{file.created_transactions_count ?? 0}</strong>
         </div>
         <div className="detail-item">
+          <span>Paiements rapproches</span>
+          <strong>{file.payments_applied_count ?? 0}</strong>
+        </div>
+        <div className="detail-item">
           <span>A completer</span>
-          <strong>{file.skipped_rows ?? 0}</strong>
+          <strong>
+            {(file.payments_unmatched_count ?? 0) + (file.payment_conflicts_count ?? 0)}
+          </strong>
         </div>
       </div>
     );

@@ -1474,6 +1474,11 @@ class UberReportingConfirmResponse(BaseModel):
     created_transactions_count: int
     skipped_rows: int
     errors: list[str]
+    payments_applied_count: int = 0
+    payment_claims_updated_count: int = 0
+    payment_disputes_updated_count: int = 0
+    payments_unmatched_count: int = 0
+    payment_conflicts_count: int = 0
 
 
 class UberUnmappedStoreRead(BaseModel):
@@ -2364,6 +2369,9 @@ class SmartImportRoutedFile(BaseModel):
     processing_status: str | None = None
     created_snapshots_count: int | None = None
     created_transactions_count: int | None = None
+    payments_applied_count: int | None = None
+    payments_unmatched_count: int | None = None
+    payment_conflicts_count: int | None = None
     analyzed_files_count: int | None = None
     auto_matched_count: int | None = None
     needs_review_count: int | None = None

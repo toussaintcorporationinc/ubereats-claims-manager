@@ -485,6 +485,56 @@ def test_smart_confirm_forced_restaurant_applies_unmapped_uber_report(client: Te
     assert rows[0].status == "created"
 
 
+def test_smart_confirm_reports_official_uber_payments_applied_to_claims(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = Restaurant(name="Asian Passion", sender_email="asian@example.com")
+    db_session.add(restaurant)
+    db_session.flush()
+    claim = ClaimOrder(
+        restaurant_id=restaurant.id,
+        uber_order_number="A909F",
+        order_amount=Decimal("39.70"),
+        currency="EUR",
+        status="sent",
+    )
+    db_session.add(claim)
+    db_session.commit()
+    csv_content = (
+        "restaurant_name,order_id,transaction_type,transaction_date,payout_reference,amount,currency\n"
+        "Asian Passion,A909F,reimbursement,2026-07-26,PAYOUT-ASIAN-1,20.80,EUR\n"
+    )
+    preview = client.post(
+        "/v1/smart-import/preview",
+        files=[("files", ("asian-credits.csv", csv_content.encode("utf-8"), "text/csv"))],
+    ).json()
+
+    response = client.post(
+        "/v1/smart-import/confirm",
+        json={
+            "batch_preview_id": preview["batch_preview_id"],
+            "files": [
+                {
+                    "file_id": preview["files"][0]["id"],
+                    "action": "import_uber_reporting",
+                    "report_type": "payments_report",
+                    "restaurant_id": restaurant.id,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    routed = response.json()["routed_files"][0]
+    assert routed["payments_applied_count"] == 1
+    assert routed["payments_unmatched_count"] == 0
+    assert routed["payment_conflicts_count"] == 0
+    db_session.refresh(claim)
+    assert claim.status == "payment_confirmed"
+    assert claim.recovered_amount == Decimal("20.80")
+
+
 def test_smart_confirm_preserves_per_row_store_mapping_when_restaurant_override_supplied(
     client: TestClient,
     db_session: Session,

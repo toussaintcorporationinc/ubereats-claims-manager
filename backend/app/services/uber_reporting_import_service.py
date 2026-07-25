@@ -21,6 +21,7 @@ from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.restaurant_identity_service import canonical_restaurant_lookup_key
 from app.services.smart_import_classifier_service import normalize_for_match, read_tabular_rows, rows_to_dicts_with_detected_header
+from app.services.uber_payment_application_service import apply_official_uber_payments
 
 REPORT_TYPES = {"orders_report", "payments_report", "adjustments_report", "combined_report"}
 ROW_PREVIEW_LIMIT = 100
@@ -332,6 +333,7 @@ def confirm_uber_reporting_batch(
     skipped = 0
     created_snapshots = 0
     created_transactions = 0
+    imported_transactions: list[UberFinancialTransaction] = []
     for row in rows:
         if row.status not in {"valid", "warning"} or not row.normalized_data:
             skipped += 1
@@ -356,6 +358,8 @@ def confirm_uber_reporting_batch(
                 transaction, created = create_transaction_if_missing(db, row.normalized_data)
                 row.created_transaction_id = transaction.id if transaction else None
                 created_transactions += int(created)
+                if transaction is not None:
+                    imported_transactions.append(transaction)
                 if not created:
                     skipped += 1
             row.status = "created"
@@ -365,6 +369,8 @@ def confirm_uber_reporting_batch(
             errors.append(f"Row {row.row_number}: {exc}")
             skipped += 1
 
+    payment_result = apply_official_uber_payments(db, current_user, imported_transactions)
+    payment_counts = payment_result.as_dict()
     batch.created_snapshots_count = created_snapshots
     batch.created_transactions_count = created_transactions
     batch.confirmed_at = utc_now()
@@ -379,6 +385,7 @@ def confirm_uber_reporting_batch(
             "created_snapshots_count": created_snapshots,
             "created_transactions_count": created_transactions,
             "skipped_rows": skipped,
+            **payment_counts,
         },
     )
     db.commit()
@@ -389,6 +396,7 @@ def confirm_uber_reporting_batch(
         "created_transactions_count": created_transactions,
         "skipped_rows": skipped,
         "errors": errors,
+        **payment_counts,
     }
 
 

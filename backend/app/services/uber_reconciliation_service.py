@@ -22,19 +22,9 @@ from app.models import (
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.claim_validation_service import get_claim_validation_gaps
+from app.services.uber_payment_application_service import PAID_TRANSACTION_TYPES
 from app.services.uber_reporting_import_service import is_cancelled_order_status
 
-PAID_TRANSACTION_TYPES = {
-    "payment",
-    "payout",
-    "merchant_payment",
-    "compensation",
-    "adjustment_positive",
-    "adjustment_credit",
-    "reimbursement",
-    "paid",
-    "net_payout",
-}
 REFUND_TRANSACTION_TYPES = {
     "refund",
     "chargeback",
