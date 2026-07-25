@@ -644,14 +644,32 @@ def test_autopilot_does_not_send_when_gmail_detected_positive_payment_signal(
     assert db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent")) is None
 
 
+@pytest.mark.parametrize(
+    ("order_number", "payment_body"),
+    [
+        (
+            "D461E",
+            "Pour la commande D461E, nous avons decide de vous rembourser. "
+            "Un montant de 59.96 EUR sera visible sur votre prochain paiement hebdomadaire.",
+        ),
+        (
+            "E51E4",
+            "Pour la commande E51E4, cette commande ne vous a pas ete reglee, mais compte tenu "
+            "de la situation, je vais proceder a l'ajout du paiement pour cette commande, afin "
+            "que vous soyez paye lors de votre prochain cycle de paiement.",
+        ),
+    ],
+)
 def test_autopilot_preflight_blocks_appeal_when_older_thread_message_promised_payment(
     client: TestClient,
     db_session: Session,
     fake_gmail_provider: FakeAutopilotGmailProvider,
     autopilot_enabled: None,
+    order_number: str,
+    payment_body: str,
 ) -> None:
     restaurant = create_restaurant(client, "Asian Passion")
-    ready = create_ready_order(client, restaurant["id"], "D461E")
+    ready = create_ready_order(client, restaurant["id"], order_number)
     order = db_session.get(ClaimOrder, ready["order_id"])
     assert order is not None
     order.status = "refused"
@@ -669,31 +687,28 @@ def test_autopilot_preflight_blocks_appeal_when_older_thread_message_promised_pa
     db_session.commit()
     account = add_gmail_account(db_session)
     add_starred_inbound_message(db_session, order, account)
-    thread_id = "thread-D461E"
+    thread_id = f"thread-{order_number}"
     fake_gmail_provider.thread_payloads[thread_id] = [
         InboundEmailPayload(
-            provider_message_id="remote-payment-D461E",
+            provider_message_id=f"remote-payment-{order_number}",
             provider_thread_id=thread_id,
-            gmail_history_id="history-payment-D461E",
+            gmail_history_id=f"history-payment-{order_number}",
             from_email="restaurantsfrance@uber.com",
             to_email=account.email_address,
-            subject="Re: Contestation commande D461E",
-            snippet="Nous avons decide de vous rembourser.",
-            body_text=(
-                "Pour la commande D461E, nous avons decide de vous rembourser. "
-                "Un montant de 59.96 EUR sera visible sur votre prochain paiement hebdomadaire."
-            ),
+            subject=f"Re: Contestation commande {order_number}",
+            snippet=payment_body,
+            body_text=payment_body,
             received_at=utc_now() - timedelta(days=1),
             raw_headers={},
             provider_labels=["INBOX"],
         ),
         InboundEmailPayload(
-            provider_message_id="remote-admin-D461E",
+            provider_message_id=f"remote-admin-{order_number}",
             provider_thread_id=thread_id,
-            gmail_history_id="history-admin-D461E",
+            gmail_history_id=f"history-admin-{order_number}",
             from_email="restaurantsfrance@uber.com",
             to_email=account.email_address,
-            subject="Re: Contestation commande D461E",
+            subject=f"Re: Contestation commande {order_number}",
             snippet="Votre demande a ete transmise.",
             body_text="Votre demande a ete transmise a l'equipe competente.",
             received_at=utc_now(),

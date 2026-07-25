@@ -48,6 +48,28 @@ def test_explicit_payment_promise_without_amount_is_confirmed() -> None:
     assert text_has_explicit_payment_confirmation("Nous allons vous rembourser.") is True
 
 
+def test_uber_next_cycle_payment_addition_is_confirmed() -> None:
+    text = (
+        "Cette commande ne vous a pas ete reglee, mais compte tenu de la situation, "
+        "je vais proceder a l'ajout du paiement pour cette commande, afin que vous "
+        "soyez paye lors de votre prochain cycle de paiement."
+    )
+
+    assert text_has_explicit_payment_confirmation(text) is True
+
+
+def test_uber_already_reimbursed_message_is_confirmed() -> None:
+    assert text_has_explicit_payment_confirmation(
+        "Apres verification, il semble que vous ayez deja ete rembourse pour cette commande."
+    ) is True
+
+
+def test_negated_payment_addition_is_not_confirmed() -> None:
+    assert text_has_explicit_payment_confirmation(
+        "Apres verification, je ne vais pas proceder a l'ajout du paiement pour cette commande."
+    ) is False
+
+
 def test_uber_decided_to_refund_with_next_payment_amount_is_confirmed() -> None:
     text = (
         "Nous avons decide de vous rembourser. "

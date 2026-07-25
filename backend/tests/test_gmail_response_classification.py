@@ -34,6 +34,44 @@ def test_next_payout_adjustment_is_payment_to_verify() -> None:
     assert classification.reason == "payment_confirmed_without_amount"
 
 
+def test_uber_next_cycle_payment_addition_is_payment_to_verify() -> None:
+    message = InboundEmailMessage(
+        email_account_id=1,
+        provider_message_id="msg-next-cycle-addition",
+        provider_thread_id="thread-next-cycle-addition",
+        subject="Contestation d'annulation de commande",
+        body_text=(
+            "Cette commande ne vous a pas ete reglee, mais compte tenu de la situation, "
+            "je vais proceder a l'ajout du paiement pour cette commande, afin que vous "
+            "soyez paye lors de votre prochain cycle de paiement."
+        ),
+        provider_labels_json=["STARRED"],
+    )
+
+    classification = GmailResponseIntelligenceService().classify_message(message)
+    fast_review_type, fast_reason, _confidence = classify_unlinked_watched_message(message)
+
+    assert classification.review_type == "payment_to_verify"
+    assert classification.reason == "payment_to_verify_keywords"
+    assert fast_review_type == "payment_confirmed"
+    assert fast_reason == "fast_unlinked_payment_positive"
+
+
+def test_uber_already_reimbursed_message_is_payment_to_verify() -> None:
+    message = InboundEmailMessage(
+        email_account_id=1,
+        provider_message_id="msg-already-reimbursed",
+        provider_thread_id="thread-already-reimbursed",
+        subject="Contestation de remboursement de commande",
+        body_text="Apres verification, il semble que vous ayez deja ete rembourse pour cette commande.",
+    )
+
+    classification = GmailResponseIntelligenceService().classify_message(message)
+
+    assert classification.review_type == "payment_to_verify"
+    assert classification.reason == "payment_confirmed_without_amount"
+
+
 def test_full_order_payment_retained_is_payment_to_verify() -> None:
     message = InboundEmailMessage(
         email_account_id=1,
