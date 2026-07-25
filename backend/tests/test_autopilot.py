@@ -658,6 +658,11 @@ def test_autopilot_does_not_send_when_gmail_detected_positive_payment_signal(
             "de la situation, je vais proceder a l'ajout du paiement pour cette commande, afin "
             "que vous soyez paye lors de votre prochain cycle de paiement.",
         ),
+        (
+            "60982",
+            "Apres investigation, nous avons procede au remboursement du montant des plats "
+            "signales manquants ou incorrects. Celui-ci apparait sous frais et autres paiements.",
+        ),
     ],
 )
 def test_autopilot_preflight_blocks_appeal_when_older_thread_message_promised_payment(
@@ -687,6 +692,48 @@ def test_autopilot_preflight_blocks_appeal_when_older_thread_message_promised_pa
     db_session.commit()
     account = add_gmail_account(db_session)
     add_starred_inbound_message(db_session, order, account)
+    starred_message = db_session.scalar(
+        select(InboundEmailMessage).where(
+            InboundEmailMessage.order_id == order.id,
+            InboundEmailMessage.provider_message_id == f"starred-{order_number}",
+        )
+    )
+    assert starred_message is not None
+    existing_draft = EmailDraft(
+        order_id=order.id,
+        draft_type="appeal_generic_refusal",
+        subject=f"Re: Contestation commande {order_number}",
+        body="Relance deja preparee.",
+        status="created",
+    )
+    db_session.add(existing_draft)
+    db_session.flush()
+    existing_provider_draft = EmailProviderDraft(
+        email_draft_id=existing_draft.id,
+        email_account_id=account.id,
+        provider="gmail",
+        provider_draft_id=f"existing-provider-draft-{order_number}",
+        provider_thread_id=f"thread-{order_number}",
+        to_email="restaurantsfrance@uber.com",
+        subject=existing_draft.subject,
+        status="provider_draft_created",
+        created_by_user_id=1,
+    )
+    db_session.add(existing_provider_draft)
+    db_session.flush()
+    db_session.add(
+        AppealAttempt(
+            workflow_id=workflow.id,
+            attempt_number=1,
+            appeal_type="first_appeal",
+            status="gmail_draft_created",
+            based_on_refusal_message_id=starred_message.id,
+            email_draft_id=existing_draft.id,
+            provider_draft_id=existing_provider_draft.id,
+            created_by_user_id=1,
+        )
+    )
+    db_session.commit()
     thread_id = f"thread-{order_number}"
     fake_gmail_provider.thread_payloads[thread_id] = [
         InboundEmailPayload(
@@ -727,6 +774,8 @@ def test_autopilot_preflight_blocks_appeal_when_older_thread_message_promised_pa
     assert payload["run"]["sent_count"] == 0
     assert payload["actions"][0]["skipped_reason"] == "positive_gmail_thread_history_detected"
     assert fake_gmail_provider.sent_draft_ids == []
+    db_session.refresh(existing_provider_draft)
+    assert existing_provider_draft.status == "provider_draft_created"
     assert db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent")) is None
 
 

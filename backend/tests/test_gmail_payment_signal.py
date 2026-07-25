@@ -64,6 +64,21 @@ def test_uber_already_reimbursed_message_is_confirmed() -> None:
     ) is True
 
 
+def test_uber_processed_refund_message_is_confirmed() -> None:
+    text = (
+        "Apres investigation, nous avons procede au remboursement du montant des plats "
+        "signales manquants ou incorrects. Celui-ci apparait sous frais et autres paiements."
+    )
+
+    assert text_has_explicit_payment_confirmation(text) is True
+
+
+def test_negated_processed_refund_message_is_not_confirmed() -> None:
+    assert text_has_explicit_payment_confirmation(
+        "Apres investigation, nous n'avons pas procede au remboursement de cette commande."
+    ) is False
+
+
 def test_negated_payment_addition_is_not_confirmed() -> None:
     assert text_has_explicit_payment_confirmation(
         "Apres verification, je ne vais pas proceder a l'ajout du paiement pour cette commande."

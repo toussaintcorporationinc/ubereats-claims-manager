@@ -72,6 +72,28 @@ def test_uber_already_reimbursed_message_is_payment_to_verify() -> None:
     assert classification.reason == "payment_confirmed_without_amount"
 
 
+def test_uber_processed_refund_message_is_payment_to_verify() -> None:
+    message = InboundEmailMessage(
+        email_account_id=1,
+        provider_message_id="msg-processed-refund",
+        provider_thread_id="thread-processed-refund",
+        subject="Contestation de remboursement de commande",
+        body_text=(
+            "Apres investigation, nous avons procede au remboursement du montant des plats "
+            "signales manquants ou incorrects. Celui-ci apparait sous frais et autres paiements."
+        ),
+        provider_labels_json=["STARRED"],
+    )
+
+    classification = GmailResponseIntelligenceService().classify_message(message)
+    fast_review_type, fast_reason, _confidence = classify_unlinked_watched_message(message)
+
+    assert classification.review_type == "payment_to_verify"
+    assert classification.reason == "payment_confirmed_without_amount"
+    assert fast_review_type == "payment_confirmed"
+    assert fast_reason == "fast_unlinked_payment_positive"
+
+
 def test_full_order_payment_retained_is_payment_to_verify() -> None:
     message = InboundEmailMessage(
         email_account_id=1,
