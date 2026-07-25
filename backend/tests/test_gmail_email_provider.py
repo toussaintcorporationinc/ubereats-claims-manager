@@ -906,6 +906,68 @@ def test_real_gmail_provider_replies_in_existing_uber_thread(
     assert "<uber-reply-123@mail.gmail.com>" in parsed["References"]
 
 
+def test_real_gmail_provider_starts_new_message_when_reply_thread_is_missing(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    account = connect_gmail_account(db_session, owner.id, "claims-fallback@example.com")
+    restaurant = create_restaurant(client)
+    draft_payload = create_ready_order_and_draft(client, restaurant["id"], "UBER-GMAIL-FALLBACK")
+    email_draft = db_session.get(EmailDraft, draft_payload["id"])
+    assert email_draft is not None
+    db_session.add(
+        InboundEmailMessage(
+            email_account_id=account.id,
+            order_id=email_draft.order_id,
+            provider="gmail",
+            provider_message_id="gmail-msg-stale",
+            provider_thread_id="gmail-thread-stale",
+            from_email="restaurantsfrance@uber.com",
+            to_email=account.email_address,
+            subject="Re: contestation remboursement de commande",
+            body_text="Nous ne pouvons pas rembourser cette commande.",
+            raw_headers_json={"message-id": "<stale-reply@mail.gmail.com>"},
+            provider_labels_json=["STARRED"],
+            match_status="linked",
+            match_reason="thread_id_match",
+            received_at=utc_now(),
+        )
+    )
+    db_session.commit()
+    provider = GmailEmailProvider()
+    calls: list[tuple[str | None, str]] = []
+
+    monkeypatch.setattr(provider, "ensure_access_token", lambda db, account: "access-token")
+
+    def fake_create_gmail_draft(access_token: str, raw_message: str, *, thread_id: str | None = None) -> dict:
+        calls.append((thread_id, raw_message))
+        if thread_id == "gmail-thread-stale":
+            raise EmailProviderError("Gmail API error: NOT_FOUND - Requested entity was not found.", 502)
+        return {"id": "draft-fallback", "message": {"threadId": "gmail-thread-new"}}
+
+    monkeypatch.setattr(provider, "create_gmail_draft", fake_create_gmail_draft)
+
+    provider_draft = provider.create_draft(
+        db_session,
+        owner,
+        email_draft,
+        to_email="restaurantsfrance@uber.com",
+        include_evidence=False,
+    )
+
+    assert [thread_id for thread_id, _ in calls] == ["gmail-thread-stale", None]
+    assert provider_draft.provider_draft_id == "draft-fallback"
+    assert provider_draft.provider_thread_id == "gmail-thread-new"
+    assert provider_draft.status == "provider_draft_created"
+    fallback_message = BytesParser(policy=policy.default).parsebytes(base64.urlsafe_b64decode(calls[1][1]))
+    assert fallback_message["Subject"] == email_draft.subject
+    assert fallback_message["In-Reply-To"] is None
+    assert fallback_message["References"] is None
+
+
 def test_real_gmail_provider_prefers_starred_thread_over_newer_unstarred_message(
     client: TestClient,
     db_session: Session,

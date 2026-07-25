@@ -259,11 +259,19 @@ class GmailEmailProvider:
         raw_message = self.build_raw_message(account, email_draft, to_email, attachments, reply_context)
         try:
             access_token = self.access_token_for_external_call(db, account)
-            response_payload = self.create_gmail_draft(
-                access_token,
-                raw_message,
-                thread_id=reply_context.thread_id if reply_context else None,
-            )
+            try:
+                response_payload = self.create_gmail_draft(
+                    access_token,
+                    raw_message,
+                    thread_id=reply_context.thread_id if reply_context else None,
+                )
+            except EmailProviderError as exc:
+                if reply_context is None or not gmail_resource_not_found(exc):
+                    raise
+                reply_context = None
+                gmail_subject = build_reply_subject(email_draft.subject, reply_context)
+                raw_message = self.build_raw_message(account, email_draft, to_email, attachments, reply_context)
+                response_payload = self.create_gmail_draft(access_token, raw_message, thread_id=None)
             provider_draft = EmailProviderDraft(
                 email_draft_id=email_draft.id,
                 email_account_id=account.id,
@@ -1146,6 +1154,21 @@ def format_gmail_http_error(status_code: int, body: str) -> str:
     if message:
         return f"Gmail API error: {code} - {message[:240]}"
     return f"Gmail API error: {code}"
+
+
+def gmail_resource_not_found(exc: Exception) -> bool:
+    if isinstance(exc, EmailProviderError) and exc.status_code == 404:
+        return True
+    message = str(exc).casefold()
+    return any(
+        marker in message
+        for marker in (
+            "not_found",
+            "requested entity was not found",
+            "http 404",
+            "status 404",
+        )
+    )
 
 
 def gmail_authorization_needs_reconnect(message: str) -> bool:
