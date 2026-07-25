@@ -48,6 +48,15 @@ def test_explicit_payment_promise_without_amount_is_confirmed() -> None:
     assert text_has_explicit_payment_confirmation("Nous allons vous rembourser.") is True
 
 
+def test_uber_decided_to_refund_with_next_payment_amount_is_confirmed() -> None:
+    text = (
+        "Nous avons decide de vous rembourser. "
+        "Un montant de 59.96 EUR sera visible sur votre prochain paiement hebdomadaire."
+    )
+
+    assert text_has_explicit_payment_confirmation(text) is True
+
+
 def test_uber_full_payment_retained_is_confirmed() -> None:
     text = (
         "Apr\u00e8s v\u00e9rification de la commande \ufeff62A5B, il n\u2019y a pas eu d\u2019ajustement. "

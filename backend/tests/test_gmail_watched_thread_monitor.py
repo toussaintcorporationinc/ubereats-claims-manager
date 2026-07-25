@@ -2687,6 +2687,56 @@ def test_non_starred_positive_reply_in_watched_thread_is_processed_and_star_remo
     assert result.positive_responses >= 1
 
 
+def test_historical_payment_promise_wins_over_later_administrative_reply(
+    db_session: Session,
+    gmail_case,
+) -> None:
+    owner, account, order = gmail_case
+    provider = FakeWatchedGmailProvider()
+    positive = payload(
+        "reply-historical-payment",
+        body=(
+            "Pour la commande F93BA, nous avons decide de vous rembourser. "
+            "Un montant de 59.96 EUR sera visible sur votre prochain paiement hebdomadaire."
+        ),
+    )
+    later_administrative = payload(
+        "star-later-administrative",
+        body=(
+            "Votre demande a ete transmise a l'equipe competente. "
+            "Nous vous remercions de patienter pendant son examen."
+        ),
+        starred=True,
+    )
+    provider.starred_payloads = [later_administrative]
+    provider.thread_payloads = {
+        "thread-f93ba": [
+            positive,
+            later_administrative,
+        ]
+    }
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(db_session, owner, account)
+
+    watched = db_session.scalar(select(GmailWatchedThread))
+    positive_item = db_session.scalar(
+        select(GmailStarredWorkItem).where(
+            GmailStarredWorkItem.provider_message_id == "reply-historical-payment"
+        )
+    )
+    db_session.refresh(order)
+    assert watched is not None
+    assert positive_item is not None
+    assert order.status == "payment_confirmed"
+    assert order.recovered_amount == Decimal("59.96")
+    assert watched.status == "payment_confirmed"
+    assert watched.star_active is False
+    assert positive_item.status == "positive"
+    assert ("star-later-administrative", "STARRED") in provider.removed_labels
+    assert provider.sent_drafts == []
+    assert result.payment_confirmed == 1
+
+
 def test_full_order_payment_retained_is_accounted_before_star_removal(
     db_session: Session,
     gmail_case,

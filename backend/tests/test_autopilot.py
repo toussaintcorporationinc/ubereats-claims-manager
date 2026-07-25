@@ -38,11 +38,15 @@ from app.services.autopilot_service import (
     iter_candidates,
 )
 from app.services.autopilot_identity_repair_service import find_or_create_order_from_starred_text
-from app.services.email_provider import EmailConnectionStatus, EmailSendResult
+from app.services.email_provider import EmailConnectionStatus, EmailSendResult, InboundEmailPayload
 
 
 class FakeAutopilotGmailProvider:
     provider = "gmail"
+
+    def __init__(self) -> None:
+        self.thread_payloads: dict[str, list[InboundEmailPayload]] = {}
+        self.sent_draft_ids: list[int] = []
 
     def get_connection_status(self, db: Session, user: User) -> EmailConnectionStatus:
         if not get_settings().email_provider_enabled:
@@ -94,11 +98,22 @@ class FakeAutopilotGmailProvider:
         return provider_draft
 
     def send_draft(self, db: Session, user: User, provider_draft: EmailProviderDraft) -> EmailSendResult:
+        self.sent_draft_ids.append(provider_draft.id)
         return EmailSendResult(
             provider_message_id=f"fake-message-{provider_draft.id}",
             provider_thread_id=provider_draft.provider_thread_id or f"fake-thread-{provider_draft.id}",
             sent_at=utc_now(),
         )
+
+    def get_thread_messages_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        thread_id: str,
+        *,
+        include_attachments: bool = False,
+    ) -> list[InboundEmailPayload]:
+        return self.thread_payloads.get(thread_id, [])
 
 
 @pytest.fixture()
@@ -626,6 +641,77 @@ def test_autopilot_does_not_send_when_gmail_detected_positive_payment_signal(
     payload = response.json()
     assert payload["run"]["sent_count"] == 0
     assert payload["actions"][0]["skipped_reason"] == "positive_gmail_payment_signal_detected"
+    assert db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent")) is None
+
+
+def test_autopilot_preflight_blocks_appeal_when_older_thread_message_promised_payment(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client, "Asian Passion")
+    ready = create_ready_order(client, restaurant["id"], "D461E")
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    assert order is not None
+    order.status = "refused"
+    workflow = AppealWorkflow(
+        case_type="claim_order",
+        case_id=order.id,
+        restaurant_id=order.restaurant_id,
+        claim_order_id=order.id,
+        status="appeal_needed",
+        refusal_count=1,
+        next_action_type="create_appeal_draft",
+        next_action_at=utc_now() - timedelta(hours=1),
+    )
+    db_session.add(workflow)
+    db_session.commit()
+    account = add_gmail_account(db_session)
+    add_starred_inbound_message(db_session, order, account)
+    thread_id = "thread-D461E"
+    fake_gmail_provider.thread_payloads[thread_id] = [
+        InboundEmailPayload(
+            provider_message_id="remote-payment-D461E",
+            provider_thread_id=thread_id,
+            gmail_history_id="history-payment-D461E",
+            from_email="restaurantsfrance@uber.com",
+            to_email=account.email_address,
+            subject="Re: Contestation commande D461E",
+            snippet="Nous avons decide de vous rembourser.",
+            body_text=(
+                "Pour la commande D461E, nous avons decide de vous rembourser. "
+                "Un montant de 59.96 EUR sera visible sur votre prochain paiement hebdomadaire."
+            ),
+            received_at=utc_now() - timedelta(days=1),
+            raw_headers={},
+            provider_labels=["INBOX"],
+        ),
+        InboundEmailPayload(
+            provider_message_id="remote-admin-D461E",
+            provider_thread_id=thread_id,
+            gmail_history_id="history-admin-D461E",
+            from_email="restaurantsfrance@uber.com",
+            to_email=account.email_address,
+            subject="Re: Contestation commande D461E",
+            snippet="Votre demande a ete transmise.",
+            body_text="Votre demande a ete transmise a l'equipe competente.",
+            received_at=utc_now(),
+            raw_headers={},
+            provider_labels=["INBOX", "STARRED"],
+        ),
+    ]
+
+    response = client.post(
+        "/v1/autopilot/run",
+        json={"mode": "appeals", "restaurant_id": restaurant["id"], "dry_run": False},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["run"]["sent_count"] == 0
+    assert payload["actions"][0]["skipped_reason"] == "positive_gmail_thread_history_detected"
+    assert fake_gmail_provider.sent_draft_ids == []
     assert db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent")) is None
 
 

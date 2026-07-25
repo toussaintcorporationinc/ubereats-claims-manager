@@ -42,6 +42,7 @@ from app.services.gmail_payment_signal_service import (
     EXPLICIT_PAYMENT_PROMISE_MARKERS,
     current_response_order_number,
     message_has_explicit_payment_confirmation,
+    payload_has_explicit_payment_confirmation,
     text_has_explicit_payment_confirmation,
     visible_email_text,
 )
@@ -1757,9 +1758,26 @@ class GmailWatchedThreadMonitorService:
 
         The whole thread is fetched so identity repair can read past context.
         Processing every old sent/received message is expensive and causes the
-        backlog to crawl. For the automation decision, the newest external
-        message is the useful one: positive, refusal, proof request, or unknown.
+        backlog to crawl. An explicit payment promise remains terminal even when
+        Uber later adds a survey or administrative message, so prefer the newest
+        such promise from the thread before falling back to the latest answer.
         """
+        positive_candidates = [
+            payload
+            for payload in payloads
+            if payload.provider_message_id
+            and not self.payload_from_account(payload, account)
+            and sender_matches_filter(payload.from_email, self.settings.gmail_support_sender_filter)
+            and not payload_is_uber_support_survey(payload)
+            and payload_has_explicit_payment_confirmation(payload)
+        ]
+        if positive_candidates:
+            _index, latest_positive = max(
+                enumerate(positive_candidates),
+                key=lambda item: (item[1].received_at or datetime.min, item[0]),
+            )
+            return [latest_positive]
+
         latest = self.select_latest_external_payload(
             payloads,
             account,

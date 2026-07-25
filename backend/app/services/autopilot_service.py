@@ -16,6 +16,7 @@ from app.models import (
     AutopilotRun,
     ClaimOrder,
     ClaimResponseReview,
+    EmailAccount,
     EmailDraft,
     EmailProviderDraft,
     EmailThread,
@@ -53,6 +54,12 @@ from app.services.restaurant_identity_service import canonicalize_restaurant_nam
 from app.services.email_provider import EmailConnectionStatus, EmailProvider, EmailProviderError
 from app.services.followup_policy_service import complete_task_for_sent_provider_draft
 from app.services.gmail_quota import parse_gmail_retry_after
+from app.services.gmail_payment_signal_service import (
+    current_payload_response_order_number,
+    current_response_order_number,
+    message_has_explicit_payment_confirmation,
+    payload_has_explicit_payment_confirmation,
+)
 
 AUTOPILOT_FINAL_ORDER_STATUSES = FINAL_CLAIM_STATUSES | {"accepted", "payment_to_verify", "payment_confirmed"}
 POSITIVE_PAYMENT_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confirmed"}
@@ -263,6 +270,8 @@ def run_autopilot(
                 current_global_sent=global_sent,
                 current_restaurant_sent=per_restaurant_sent.get(candidate.restaurant_id, 0),
             )
+        if skip_reason is None and not dry_run:
+            skip_reason = remote_thread_positive_payment_skip_reason(db, candidate, provider)
 
         if skip_reason is not None:
             mark_skipped(action, skip_reason, dry_run=dry_run)
@@ -807,7 +816,145 @@ def positive_payment_signal_skip_reason(db: Session, order_id: int) -> str | Non
     ):
         return "positive_gmail_payment_signal_detected"
 
+    order = db.get(ClaimOrder, order_id)
+    if order is None:
+        return None
+    thread_keys = {
+        (email_account_id, provider_thread_id)
+        for email_account_id, provider_thread_id in db.execute(
+            select(
+                InboundEmailMessage.email_account_id,
+                InboundEmailMessage.provider_thread_id,
+            ).where(
+                InboundEmailMessage.order_id == order_id,
+                InboundEmailMessage.provider == "gmail",
+                InboundEmailMessage.provider_thread_id.is_not(None),
+            )
+        ).all()
+        if provider_thread_id
+    }
+    if not thread_keys:
+        return None
+    account_ids = {email_account_id for email_account_id, _thread_id in thread_keys}
+    thread_ids = {thread_id for _email_account_id, thread_id in thread_keys}
+    sender_filter = get_settings().gmail_support_sender_filter.strip().casefold()
+    thread_messages = db.scalars(
+        select(InboundEmailMessage)
+        .where(
+            InboundEmailMessage.email_account_id.in_(account_ids),
+            InboundEmailMessage.provider == "gmail",
+            InboundEmailMessage.provider_thread_id.in_(thread_ids),
+        )
+        .order_by(
+            InboundEmailMessage.received_at.desc().nullslast(),
+            InboundEmailMessage.id.desc(),
+        )
+        .limit(250)
+    ).all()
+    for message in thread_messages:
+        if (message.email_account_id, message.provider_thread_id) not in thread_keys:
+            continue
+        if sender_filter and sender_filter not in str(message.from_email or "").casefold():
+            continue
+        response_order_number = current_response_order_number(message)
+        if response_order_number and not order_identifiers_equivalent(
+            response_order_number,
+            order.uber_order_number,
+            order.internal_reference,
+        ):
+            continue
+        if message_has_explicit_payment_confirmation(message):
+            return "positive_gmail_thread_history_detected"
+
     return None
+
+
+def remote_thread_positive_payment_skip_reason(
+    db: Session,
+    candidate: Candidate,
+    provider: EmailProvider,
+) -> str | None:
+    order = candidate_order(candidate)
+    if order is None or candidate.action_type == "send_initial_claim":
+        return None
+    starred_message = latest_starred_linked_inbound_message(db, order.id)
+    if starred_message is None or not starred_message.provider_thread_id:
+        return None
+    account = db.get(EmailAccount, starred_message.email_account_id)
+    if account is None:
+        return "gmail_thread_history_preflight_failed"
+    get_thread_messages = getattr(provider, "get_thread_messages_for_account", None)
+    if not callable(get_thread_messages):
+        return None
+    try:
+        try:
+            payloads = list(
+                get_thread_messages(
+                    db,
+                    account,
+                    starred_message.provider_thread_id,
+                    include_attachments=False,
+                )
+            )
+        except TypeError:
+            payloads = list(get_thread_messages(db, account, starred_message.provider_thread_id))
+    except Exception as exc:  # noqa: BLE001 - an unreadable thread must never be sent to blindly.
+        if gmail_thread_history_not_found(exc):
+            return None
+        return "gmail_thread_history_preflight_failed"
+
+    sender_filter = get_settings().gmail_support_sender_filter.strip().casefold()
+    account_address = str(account.email_address or "").strip().casefold()
+    for payload in payloads:
+        if payload.provider_thread_id != starred_message.provider_thread_id:
+            continue
+        from_email = str(payload.from_email or "").strip().casefold()
+        if not from_email or from_email == account_address:
+            continue
+        if sender_filter and sender_filter not in from_email:
+            continue
+        if not payload_has_explicit_payment_confirmation(payload):
+            continue
+        response_order_number = current_payload_response_order_number(payload)
+        if response_order_number and not order_identifiers_equivalent(
+            response_order_number,
+            order.uber_order_number,
+            order.internal_reference,
+        ):
+            continue
+        return "positive_gmail_thread_history_detected"
+    return None
+
+
+def gmail_thread_history_not_found(exc: Exception) -> bool:
+    if getattr(exc, "status_code", None) == 404:
+        return True
+    text = str(getattr(exc, "message", exc)).strip().casefold()
+    return "not_found" in text or "not found" in text or "status 404" in text
+
+
+def candidate_order(candidate: Candidate) -> ClaimOrder | None:
+    if isinstance(candidate.object, ClaimOrder):
+        return candidate.object
+    if isinstance(candidate.object, FollowUpTask):
+        return candidate.object.order
+    if isinstance(candidate.object, AppealWorkflow):
+        return candidate.object.claim_order
+    return None
+
+
+def order_identifiers_equivalent(response_identifier: str, *order_identifiers: str | None) -> bool:
+    response = "".join(character for character in response_identifier.upper() if character.isalnum())
+    if not response:
+        return False
+    response_confusion_key = response.replace("O", "0")
+    for value in order_identifiers:
+        candidate = "".join(character for character in str(value or "").upper() if character.isalnum())
+        if candidate and (
+            candidate == response or candidate.replace("O", "0") == response_confusion_key
+        ):
+            return True
+    return False
 
 
 def has_sent_provider_draft(db: Session, order_id: int) -> bool:

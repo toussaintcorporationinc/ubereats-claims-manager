@@ -584,6 +584,7 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
         "votre paiement a ete ajuste",
         "nous avons procede au paiement",
         "nous avons procede a un paiement",
+        "nous avons decide de vous rembourser",
         "nous avons credite",
         "nous vous avons credite",
         "credite sur votre compte",

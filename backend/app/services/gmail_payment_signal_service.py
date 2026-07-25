@@ -6,6 +6,7 @@ import re
 import unicodedata
 
 from app.models import InboundEmailMessage
+from app.services.email_provider import InboundEmailPayload
 
 EXPLICIT_PAYMENT_PROMISE_MARKERS = (
     "paiement accorde",
@@ -15,6 +16,7 @@ EXPLICIT_PAYMENT_PROMISE_MARKERS = (
     "remboursement accepte",
     "remboursement approuve",
     "nous allons vous rembourser",
+    "nous avons decide de vous rembourser",
     "vous serez rembourse",
     "sera verse",
     "sera credite",
@@ -167,10 +169,14 @@ def normalize_payment_signal_text(text: str) -> str:
     return " ".join(normalized_punctuation.replace("\xa0", " ").split())
 
 
-def current_response_text(message: InboundEmailMessage) -> str:
+def current_response_text_parts(
+    subject: str | None,
+    snippet: str | None,
+    body_text: str | None,
+) -> str:
     text = "\n".join(
         visible_email_text(part)
-        for part in (message.subject or "", message.snippet or "", message.body_text or "")
+        for part in (subject or "", snippet or "", body_text or "")
         if part
     )
     normalized_newlines = text.replace("\r\n", "\n").replace("\r", "\n")
@@ -185,6 +191,14 @@ def current_response_text(message: InboundEmailMessage) -> str:
         if marker_index >= 0:
             normalized_newlines = normalized_newlines[:marker_index]
     return normalized_newlines[:PAYMENT_SIGNAL_TEXT_LIMIT]
+
+
+def current_response_text(message: InboundEmailMessage) -> str:
+    return current_response_text_parts(message.subject, message.snippet, message.body_text)
+
+
+def current_payload_response_text(payload: InboundEmailPayload) -> str:
+    return current_response_text_parts(payload.subject, payload.snippet, payload.body_text)
 
 
 def text_has_explicit_payment_confirmation(text: str) -> bool:
@@ -216,14 +230,26 @@ def message_has_explicit_payment_confirmation(message: InboundEmailMessage) -> b
     return text_has_explicit_payment_confirmation(current_response_text(message))
 
 
-def current_response_order_number(message: InboundEmailMessage) -> str | None:
-    text = normalize_payment_signal_text(current_response_text(message))
+def payload_has_explicit_payment_confirmation(payload: InboundEmailPayload) -> bool:
+    return text_has_explicit_payment_confirmation(current_payload_response_text(payload))
+
+
+def response_text_order_number(text: str) -> str | None:
+    normalized_text = normalize_payment_signal_text(text)
     patterns = (
         r"\bcommande\s+n(?:o|°|º)\s*[\s.:#-]*([a-z0-9][a-z0-9-]{3,11})\b",
         r"\bcommande\s+(?:numero|number|id)\s*[\s.:#-]*([a-z0-9][a-z0-9-]{3,11})\b",
     )
     for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE)
+        match = re.search(pattern, normalized_text, flags=re.IGNORECASE)
         if match:
             return match.group(1).upper()
     return None
+
+
+def current_response_order_number(message: InboundEmailMessage) -> str | None:
+    return response_text_order_number(current_response_text(message))
+
+
+def current_payload_response_order_number(payload: InboundEmailPayload) -> str | None:
+    return response_text_order_number(current_payload_response_text(payload))
