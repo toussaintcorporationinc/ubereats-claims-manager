@@ -211,6 +211,27 @@ def test_starred_gmail_legacy_name_creates_order_for_asian_passion(
     assert order.customer_name == "Antoine N"
 
 
+def test_starred_gmail_instruction_text_does_not_create_fake_order(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    create_restaurant(client, name="King Krousty")
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+
+    order = find_or_create_order_from_starred_text(
+        db_session,
+        owner,
+        (
+            "Bonjour, commande de 1. *Respectez scrupuleusement vos horaires* "
+            "numero de commande PRENDRE pour le restaurant King Krousty."
+        ),
+    )
+
+    assert order is None
+    assert db_session.scalar(select(ClaimOrder).where(ClaimOrder.uber_order_number == "PRENDRE")) is None
+
+
 def add_gmail_account(db_session: Session) -> EmailAccount:
     owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
     assert owner is not None
@@ -1090,6 +1111,81 @@ def test_autopilot_appeal_requires_starred_gmail_thread(
     payload = response.json()
     assert payload["run"]["sent_count"] == 0
     assert payload["actions"][0]["skipped_reason"] == "starred_gmail_thread_required"
+
+
+def test_autopilot_blocks_appeal_linked_to_another_order_thread(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client, "King Krousty")
+    ready = create_ready_order(client, restaurant["id"], "ABCDE")
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    assert order is not None
+    order.status = "refused"
+    workflow = AppealWorkflow(
+        case_type="claim_order",
+        case_id=order.id,
+        restaurant_id=order.restaurant_id,
+        claim_order_id=order.id,
+        status="appeal_needed",
+        refusal_count=1,
+        next_action_type="create_appeal_draft",
+        next_action_at=utc_now() - timedelta(hours=1),
+    )
+    db_session.add(workflow)
+    db_session.commit()
+    account = add_gmail_account(db_session)
+    thread_id = "thread-original-order-5cadf"
+    db_session.add_all(
+        [
+            InboundEmailMessage(
+                email_account_id=account.id,
+                order_id=order.id,
+                provider="gmail",
+                provider_message_id="sent-original-5cadf",
+                provider_thread_id=thread_id,
+                from_email=account.email_address,
+                to_email="restaurantsfrance@uber.com",
+                subject="Contestation commande Uber Eats 5CADF",
+                body_text="Je conteste la commande numero 5CADF pour Tacos Master.",
+                provider_labels_json=["SENT"],
+                match_status="linked",
+                match_reason="thread_id_match",
+                review_status="reviewed",
+                received_at=utc_now() - timedelta(days=2),
+            ),
+            InboundEmailMessage(
+                email_account_id=account.id,
+                order_id=order.id,
+                provider="gmail",
+                provider_message_id="starred-refusal-wrong-order",
+                provider_thread_id=thread_id,
+                from_email="restaurantsfrance@uber.com",
+                to_email=account.email_address,
+                subject="Re: Contestation commande Uber Eats 5CADF",
+                body_text="Votre demande est refusee.",
+                provider_labels_json=["INBOX", "STARRED"],
+                match_status="linked",
+                match_reason="thread_id_match",
+                review_status="reviewed",
+                received_at=utc_now() - timedelta(days=1),
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = client.post(
+        "/v1/autopilot/dry-run",
+        json={"mode": "appeals", "restaurant_id": restaurant["id"]},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["run"]["sent_count"] == 0
+    assert payload["actions"][0]["skipped_reason"] == "gmail_thread_order_identity_mismatch"
+    assert fake_gmail_provider.sent_draft_ids == []
 
 
 def test_autopilot_repairs_missing_identity_from_starred_gmail_thread(

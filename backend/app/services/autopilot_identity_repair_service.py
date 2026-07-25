@@ -39,15 +39,33 @@ MAX_INBOUND_ATTACHMENT_AI_ANALYSES = 2
 REQUIRED_ATTACHMENT_IDENTITY_FIELDS = ("restaurant", "customer_name", "order_number", "order_date", "order_amount")
 INVALID_ORDER_IDENTIFIERS = {
     "BODY",
+    "CLIENT",
+    "COMMANDE",
     "CORPS",
+    "DETAILS",
+    "ENVOYER",
     "EXTRAIT",
     "FROM",
+    "HORAIRES",
+    "INFORMATIONS",
     "MESSAGE",
+    "PAIEMENT",
+    "PRENDRE",
+    "REPONDRE",
+    "REPONSE",
+    "RESPECTEZ",
     "SNIPPET",
     "SUBJECT",
     "SUJET",
     "THREAD",
 }
+INVALID_CUSTOMER_NAME_MARKERS = (
+    "entrez des horaires",
+    "respectez scrupuleusement",
+    "prendre en compte",
+    "cliquez ici",
+    "consultez",
+)
 IDENTITY_REPAIR_PROTECTED_STATUSES = {
     "accepted",
     "payment_to_verify",
@@ -466,7 +484,7 @@ def identity_from_ai_result(result: AIProofExtraction) -> ResolvedOrderIdentity:
     return ResolvedOrderIdentity(
         order_number=result.order_number,
         display_id=result.display_id,
-        customer_name=clean_customer_name(result.customer_name),
+        customer_name=clean_customer_identity(result.customer_name),
         order_date=result.order_date,
         order_amount=result.order_amount,
         currency=result.currency,
@@ -567,7 +585,7 @@ def case_type_from_text(text: str, ai_case_type: str | None = None) -> str | Non
 def text_identity_has_required_fields(identity: ResolvedOrderIdentity) -> bool:
     return bool(
         clean_order_identifier(identity.order_number or identity.display_id)
-        and clean_customer_name(identity.customer_name)
+        and clean_customer_identity(identity.customer_name)
     )
 
 
@@ -592,7 +610,7 @@ def create_or_update_order_from_identity(
                     restaurant_id=restaurant.id,
                     uber_order_number=order_number,
                     internal_reference=clean_order_identifier(identity.display_id),
-                    customer_name=clean_customer_name(identity.customer_name),
+                    customer_name=clean_customer_identity(identity.customer_name),
                     order_date=identity.order_date,
                     order_amount=identity.order_amount,
                     currency=(identity.currency or "EUR")[:3].upper(),
@@ -646,7 +664,7 @@ def mark_existing_order_refused_for_appeal(order: ClaimOrder) -> None:
 
 def apply_identity_to_order(order: ClaimOrder, identity: ResolvedOrderIdentity) -> bool:
     changed = False
-    customer_name = clean_customer_name(identity.customer_name)
+    customer_name = clean_customer_identity(identity.customer_name)
     if customer_name and not order.customer_name:
         order.customer_name = customer_name
         changed = True
@@ -929,7 +947,23 @@ def cleanup_name_candidate(value: str) -> str | None:
     cleaned = re.sub(r"\b(num[eé]ro|numero|commande|order|uber|eats)\b.*$", "", cleaned, flags=re.IGNORECASE).strip(" .,:;-")
     if len(cleaned) > 80:
         cleaned = cleaned[:80]
-    return clean_customer_name(cleaned)
+    return clean_customer_identity(cleaned)
+
+
+def clean_customer_identity(value: str | None) -> str | None:
+    cleaned = clean_customer_name(value)
+    if not cleaned:
+        return None
+    normalized = normalize_search_text(cleaned).casefold()
+    if re.match(r"^\s*\d", cleaned):
+        return None
+    if any(character in cleaned for character in ("*", "•", "<", ">")):
+        return None
+    if len(cleaned) > 60 or len(cleaned.split()) > 6:
+        return None
+    if any(marker in normalized for marker in INVALID_CUSTOMER_NAME_MARKERS):
+        return None
+    return cleaned
 
 
 def clean_order_identifier(value: str | None) -> str | None:

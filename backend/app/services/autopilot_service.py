@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
@@ -36,6 +38,8 @@ from app.services.appeal_workflow_service import (
     mark_appeal_sent,
 )
 from app.services.autopilot_identity_repair_service import (
+    clean_customer_identity,
+    clean_order_identifier,
     repair_appeal_workflow_for_autopilot,
     repair_order_identity_for_autopilot,
 )
@@ -51,7 +55,12 @@ from app.services.email_draft_service import (
     restaurant_display_name,
 )
 from app.services.restaurant_identity_service import canonicalize_restaurant_names_in_text
-from app.services.email_provider import EmailConnectionStatus, EmailProvider, EmailProviderError
+from app.services.email_provider import (
+    EmailConnectionStatus,
+    EmailProvider,
+    EmailProviderError,
+    InboundEmailPayload,
+)
 from app.services.followup_policy_service import complete_task_for_sent_provider_draft
 from app.services.gmail_quota import parse_gmail_retry_after
 from app.services.gmail_payment_signal_service import (
@@ -271,7 +280,7 @@ def run_autopilot(
                 current_restaurant_sent=per_restaurant_sent.get(candidate.restaurant_id, 0),
             )
         if skip_reason is None and not dry_run:
-            skip_reason = remote_thread_positive_payment_skip_reason(db, candidate, provider)
+            skip_reason = remote_thread_safety_skip_reason(db, candidate, provider)
 
         if skip_reason is not None:
             mark_skipped(action, skip_reason, dry_run=dry_run)
@@ -621,6 +630,9 @@ def followup_skip_reason(db: Session, task: FollowUpTask) -> str | None:
         return "already_sent"
     if latest_starred_linked_inbound_message(db, order.id) is None:
         return "starred_gmail_thread_required"
+    thread_identity_reason = local_thread_identity_skip_reason(db, order)
+    if thread_identity_reason is not None:
+        return thread_identity_reason
     return None
 
 
@@ -633,6 +645,9 @@ def appeal_skip_reason(db: Session, workflow: AppealWorkflow) -> str | None:
     if workflow.claim_order is not None:
         starred_message = latest_starred_linked_inbound_message(db, workflow.claim_order.id)
         if starred_message is not None:
+            thread_identity_reason = local_thread_identity_skip_reason(db, workflow.claim_order)
+            if thread_identity_reason is not None:
+                return thread_identity_reason
             starred_reason = starred_thread_reply_skip_reason(db, workflow)
             if starred_reason is not None:
                 return starred_reason
@@ -680,8 +695,10 @@ def starred_thread_reply_skip_reason(db: Session, workflow: AppealWorkflow) -> s
     order = workflow.claim_order
     if order is None:
         return "missing_claim_order"
-    if not str(order.uber_order_number or "").strip() and not str(order.internal_reference or "").strip():
+    if not clean_order_identifier(order.uber_order_number or order.internal_reference):
         return "missing_uber_order_number"
+    if order.customer_name and not clean_customer_identity(order.customer_name):
+        return "invalid_customer_name"
     signature_reason = restaurant_signature_skip_reason(order.restaurant)
     if signature_reason is not None:
         return signature_reason
@@ -734,9 +751,9 @@ def has_unreviewed_inbound(db: Session, order_id: int) -> bool:
 
 
 def order_identity_skip_reason(order: ClaimOrder) -> str | None:
-    if not str(order.uber_order_number or "").strip():
+    if not clean_order_identifier(order.uber_order_number):
         return "missing_uber_order_number"
-    if not str(order.customer_name or "").strip():
+    if not clean_customer_identity(order.customer_name):
         return "missing_customer_name"
     if order.order_date is None:
         return "missing_order_date"
@@ -869,7 +886,41 @@ def positive_payment_signal_skip_reason(db: Session, order_id: int) -> str | Non
     return None
 
 
-def remote_thread_positive_payment_skip_reason(
+def local_thread_identity_skip_reason(db: Session, order: ClaimOrder) -> str | None:
+    starred_message = latest_starred_linked_inbound_message(db, order.id)
+    if starred_message is None or not starred_message.provider_thread_id:
+        return None
+    account = db.get(EmailAccount, starred_message.email_account_id)
+    if account is None:
+        return "gmail_thread_identity_preflight_failed"
+    thread_messages = db.scalars(
+        select(InboundEmailMessage)
+        .where(
+            InboundEmailMessage.email_account_id == account.id,
+            InboundEmailMessage.provider == "gmail",
+            InboundEmailMessage.provider_thread_id == starred_message.provider_thread_id,
+        )
+        .order_by(
+            InboundEmailMessage.received_at.asc().nulls_last(),
+            InboundEmailMessage.id.asc(),
+        )
+        .limit(100)
+    ).all()
+    original_identifier = first_account_sent_order_identifier(
+        thread_messages,
+        account.email_address,
+        current_response_order_number,
+    )
+    if original_identifier and not order_identifiers_equivalent(
+        original_identifier,
+        order.uber_order_number,
+        order.internal_reference,
+    ):
+        return "gmail_thread_order_identity_mismatch"
+    return None
+
+
+def remote_thread_safety_skip_reason(
     db: Session,
     candidate: Candidate,
     provider: EmailProvider,
@@ -905,6 +956,17 @@ def remote_thread_positive_payment_skip_reason(
 
     sender_filter = get_settings().gmail_support_sender_filter.strip().casefold()
     account_address = str(account.email_address or "").strip().casefold()
+    original_identifier = first_account_sent_order_identifier(
+        payloads,
+        account.email_address,
+        current_payload_response_order_number,
+    )
+    if original_identifier and not order_identifiers_equivalent(
+        original_identifier,
+        order.uber_order_number,
+        order.internal_reference,
+    ):
+        return "gmail_thread_order_identity_mismatch"
     for payload in payloads:
         if payload.provider_thread_id != starred_message.provider_thread_id:
             continue
@@ -923,6 +985,23 @@ def remote_thread_positive_payment_skip_reason(
         ):
             continue
         return "positive_gmail_thread_history_detected"
+    return None
+
+
+def first_account_sent_order_identifier(
+    messages: list[InboundEmailMessage] | list[InboundEmailPayload],
+    account_email: str | None,
+    extractor: Callable[[Any], str | None],
+) -> str | None:
+    normalized_account = str(account_email or "").strip().casefold()
+    if not normalized_account:
+        return None
+    for message in messages:
+        if str(message.from_email or "").strip().casefold() != normalized_account:
+            continue
+        identifier = extractor(message)
+        if identifier:
+            return identifier
     return None
 
 
