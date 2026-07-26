@@ -2833,6 +2833,45 @@ def test_positive_watched_thread_removes_every_starred_message_in_thread(
     assert result.positive_responses >= 1
 
 
+def test_positive_star_cleanup_uses_remote_state_when_first_starred_message_is_stale(
+    db_session: Session,
+    gmail_case,
+) -> None:
+    owner, account, order = gmail_case
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-stale-first-star",
+        first_starred_message_id="stale-deleted-message",
+        claim_order_id=order.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="payment_confirmed",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.commit()
+    provider = FakeWatchedGmailProvider()
+    provider.thread_payloads[watched.gmail_thread_id] = [
+        payload(
+            "current-starred-message",
+            thread_id=watched.gmail_thread_id,
+            starred=True,
+        )
+    ]
+
+    removed = GmailWatchedThreadMonitorService(provider).remove_thread_star(
+        db_session,
+        owner,
+        watched,
+        allow_remote_lookup=True,
+    )
+
+    db_session.refresh(watched)
+    assert removed is True
+    assert watched.star_active is False
+    assert provider.removed_labels == [("current-starred-message", "STARRED")]
+
+
 def test_positive_star_removal_failure_stays_pending_and_retries_after_scope_grant(
     db_session: Session,
     gmail_case,

@@ -2870,7 +2870,11 @@ class GmailWatchedThreadMonitorService:
     ) -> bool:
         if autopilot_is_emergency_stopped(db):
             return False
-        starred_message_ids = self.starred_message_ids_for_thread(db, watched, allow_remote_lookup=allow_remote_lookup)
+        starred_message_ids, remote_lookup_complete = self.starred_message_ids_for_thread(
+            db,
+            watched,
+            allow_remote_lookup=allow_remote_lookup,
+        )
         remover = getattr(self.provider, "remove_message_label_for_account", None)
         account = db.get(EmailAccount, watched.email_account_id)
         failure_reason: str | None = None
@@ -2878,9 +2882,9 @@ class GmailWatchedThreadMonitorService:
             failure_reason = "provider_unsupported"
         elif account is None:
             failure_reason = "email_account_missing"
-        elif not starred_message_ids:
+        elif not starred_message_ids and not remote_lookup_complete:
             failure_reason = "starred_message_id_missing"
-        else:
+        elif starred_message_ids:
             try:
                 for message_id in sorted(starred_message_ids):
                     remover(db, account, message_id, "STARRED")
@@ -2937,7 +2941,7 @@ class GmailWatchedThreadMonitorService:
         watched: GmailWatchedThread,
         *,
         allow_remote_lookup: bool = False,
-    ) -> set[str]:
+    ) -> tuple[set[str], bool]:
         message_ids = {watched.first_starred_message_id} if watched.first_starred_message_id else set()
         labels_text = cast(InboundEmailMessage.provider_labels_json, String)
         message_ids.update(
@@ -2953,23 +2957,36 @@ class GmailWatchedThreadMonitorService:
             if message.provider_message_id
         )
 
+        remote_lookup_complete = False
         if allow_remote_lookup:
             get_thread_messages = getattr(self.provider, "get_thread_messages_for_account", None)
             if callable(get_thread_messages):
                 account = db.get(EmailAccount, watched.email_account_id)
                 if account is not None:
                     try:
-                        payloads = list(get_thread_messages(db, account, watched.gmail_thread_id, include_attachments=False))
-                    except TypeError:
-                        payloads = list(get_thread_messages(db, account, watched.gmail_thread_id))
+                        try:
+                            payloads = list(
+                                get_thread_messages(
+                                    db,
+                                    account,
+                                    watched.gmail_thread_id,
+                                    include_attachments=False,
+                                )
+                            )
+                        except TypeError:
+                            payloads = list(get_thread_messages(db, account, watched.gmail_thread_id))
                     except Exception as exc:  # noqa: BLE001 - local payment accounting must still succeed.
                         logger.warning("Unable to fetch Gmail thread stars for watched thread %s: %s", watched.id, exc)
                         payloads = []
+                    else:
+                        remote_lookup_complete = True
+                    if remote_lookup_complete:
+                        message_ids = set()
                     for payload in payloads:
                         labels = {str(label).strip().upper() for label in payload.provider_labels}
                         if "STARRED" in labels and payload.provider_message_id:
                             message_ids.add(payload.provider_message_id)
-        return {message_id for message_id in message_ids if message_id}
+        return {message_id for message_id in message_ids if message_id}, remote_lookup_complete
 
     def ensure_evidence_request_task(self, db: Session, user: User, message: InboundEmailMessage) -> None:
         if message.order_id is None:
