@@ -103,6 +103,16 @@ class AutopilotExecutionResult:
     actions: list[AutopilotAction]
 
 
+@dataclass(frozen=True)
+class PreparedDraftResumeResult:
+    status: str
+    sent_count: int = 0
+    skipped_count: int = 0
+    failed_count: int = 0
+    provider_draft_id: int | None = None
+    reason: str | None = None
+
+
 def today_utc_start() -> datetime:
     now = utc_now()
     return datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
@@ -343,6 +353,284 @@ class Candidate:
     action_type: str
     reason: str
     object: object
+
+
+def resume_next_prepared_provider_draft(
+    db: Session,
+    user: User,
+    account: EmailAccount,
+    provider: EmailProvider,
+) -> PreparedDraftResumeResult:
+    """Resume one safe Gmail draft for an account after the pacing window opens."""
+
+    settings = get_settings()
+    if user.role == "staff" or account.user_id != user.id or account.disconnected_at is not None:
+        return PreparedDraftResumeResult(status="skipped", skipped_count=1, reason="gmail_account_not_connected")
+    if not settings.autopilot_enabled or autopilot_is_emergency_stopped(db):
+        return PreparedDraftResumeResult(status="skipped", skipped_count=1, reason="autopilot_disabled")
+
+    pending_drafts = list(
+        db.scalars(
+            select(EmailProviderDraft)
+            .join(EmailDraft)
+            .join(ClaimOrder)
+            .where(
+                EmailProviderDraft.provider == "gmail",
+                EmailProviderDraft.email_account_id == account.id,
+                EmailProviderDraft.status == "provider_draft_created",
+            )
+            .order_by(EmailProviderDraft.created_at, EmailProviderDraft.id)
+            .limit(max(500, settings.autopilot_max_candidates_per_run))
+        )
+    )
+    if not pending_drafts:
+        return PreparedDraftResumeResult(status="empty")
+
+    account_limit_reason = provider_draft_limit_skip_reason(db, pending_drafts[0])
+    if account_limit_reason is not None:
+        return PreparedDraftResumeResult(
+            status="skipped",
+            skipped_count=1,
+            provider_draft_id=pending_drafts[0].id,
+            reason=account_limit_reason,
+        )
+
+    connection = provider.get_connection_status(db, user)
+    first_skip_reason: str | None = None
+    for provider_draft in pending_drafts:
+        candidate, resolution_reason = candidate_for_prepared_provider_draft(db, provider_draft)
+        if candidate is None:
+            first_skip_reason = first_skip_reason or resolution_reason
+            continue
+        if not can_access_restaurant(db, user, candidate.restaurant_id):
+            first_skip_reason = first_skip_reason or "restaurant_access_denied"
+            continue
+
+        skip_reason = candidate_skip_reason(db, candidate, connection)
+        if skip_reason is None:
+            skip_reason = limit_skip_reason(
+                db,
+                candidate.restaurant_id,
+                current_global_sent=sent_today_count(db),
+                current_restaurant_sent=0,
+            )
+        if skip_reason is None:
+            skip_reason = prepared_reply_thread_skip_reason(db, candidate, provider_draft)
+        if skip_reason is None:
+            skip_reason = remote_thread_safety_skip_reason(db, candidate, provider)
+        if skip_reason is not None:
+            first_skip_reason = first_skip_reason or skip_reason
+            continue
+
+        return send_prepared_provider_draft(
+            db,
+            user,
+            candidate,
+            provider_draft,
+            provider,
+        )
+
+    return PreparedDraftResumeResult(
+        status="skipped",
+        skipped_count=1,
+        reason=first_skip_reason or "no_safe_prepared_gmail_draft",
+    )
+
+
+def candidate_for_prepared_provider_draft(
+    db: Session,
+    provider_draft: EmailProviderDraft,
+) -> tuple[Candidate | None, str | None]:
+    attempt = db.scalar(
+        select(AppealAttempt)
+        .where(AppealAttempt.provider_draft_id == provider_draft.id)
+        .order_by(AppealAttempt.id.desc())
+        .limit(1)
+    )
+    if attempt is not None:
+        workflow = attempt.workflow
+        latest_attempt = latest_attempt_with_draft(db, workflow)
+        if latest_attempt is None or latest_attempt.id != attempt.id:
+            return None, "superseded_appeal_draft"
+        return (
+            Candidate(
+                case_type="appeal_workflow",
+                case_id=workflow.id,
+                restaurant_id=workflow.restaurant_id,
+                action_type="send_appeal",
+                reason="prepared_gmail_draft_ready",
+                object=workflow,
+            ),
+            None,
+        )
+
+    task = db.scalar(
+        select(FollowUpTask)
+        .where(FollowUpTask.generated_provider_draft_id == provider_draft.id)
+        .limit(1)
+    )
+    if task is not None and task.task_type in FOLLOWUP_ACTION_BY_TASK:
+        return (
+            Candidate(
+                case_type="followup_task",
+                case_id=task.id,
+                restaurant_id=task.order.restaurant_id,
+                action_type=FOLLOWUP_ACTION_BY_TASK[task.task_type],
+                reason="prepared_gmail_draft_ready",
+                object=task,
+            ),
+            None,
+        )
+
+    draft = provider_draft.email_draft
+    if draft.draft_type == "initial_claim":
+        order = draft.order
+        return (
+            Candidate(
+                case_type="claim_order",
+                case_id=order.id,
+                restaurant_id=order.restaurant_id,
+                action_type="send_initial_claim",
+                reason="prepared_gmail_draft_ready",
+                object=order,
+            ),
+            None,
+        )
+    return None, "unsupported_prepared_gmail_draft"
+
+
+def prepared_reply_thread_skip_reason(
+    db: Session,
+    candidate: Candidate,
+    provider_draft: EmailProviderDraft,
+) -> str | None:
+    if candidate.action_type == "send_initial_claim":
+        return None
+    order = candidate_order(candidate)
+    if order is None:
+        return "missing_claim_order"
+    starred_message = latest_starred_linked_inbound_message(db, order.id)
+    if starred_message is None or not starred_message.provider_thread_id:
+        return "starred_gmail_thread_required"
+    if not provider_draft.provider_thread_id:
+        return "gmail_reply_thread_required"
+    if provider_draft.provider_thread_id != starred_message.provider_thread_id:
+        return "gmail_reply_thread_changed"
+    return None
+
+
+def send_prepared_provider_draft(
+    db: Session,
+    user: User,
+    candidate: Candidate,
+    provider_draft: EmailProviderDraft,
+    provider: EmailProvider,
+) -> PreparedDraftResumeResult:
+    run_mode = (
+        "initial_claims"
+        if candidate.action_type == "send_initial_claim"
+        else "followups"
+        if candidate.action_type.startswith("send_followup") or candidate.action_type == "send_escalation"
+        else "appeals"
+    )
+    run = AutopilotRun(
+        started_by_user_id=user.id,
+        mode=run_mode,
+        status="running",
+        total_candidates=1,
+        sent_count=0,
+        skipped_count=0,
+        failed_count=0,
+    )
+    db.add(run)
+    db.flush()
+    action = create_candidate_action(db, run, candidate)
+    action.email_draft_id = provider_draft.email_draft_id
+    action.provider_draft_id = provider_draft.id
+    action.status = "provider_draft_created"
+    db.flush()
+
+    try:
+        if candidate.action_type == "send_initial_claim":
+            send_provider_draft(
+                db,
+                user,
+                provider_draft,
+                provider,
+                order_status_after_send="sent",
+                require_reply_thread=False,
+            )
+            action.reason = "initial_claim_sent"
+        elif isinstance(candidate.object, FollowUpTask):
+            send_provider_draft(
+                db,
+                user,
+                provider_draft,
+                provider,
+                order_status_after_send=candidate.object.order.status,
+            )
+            complete_task_for_sent_provider_draft(db, user, provider_draft)
+            action.reason = f"{candidate.object.task_type}_sent"
+        elif isinstance(candidate.object, AppealWorkflow):
+            send_provider_draft(
+                db,
+                user,
+                provider_draft,
+                provider,
+                order_status_after_send=None,
+            )
+            mark_appeal_sent(db, workflow=candidate.object, user=user)
+            action.reason = "appeal_sent"
+        else:
+            raise AutopilotError("unsupported_prepared_gmail_draft", 409)
+        action.status = "sent"
+        action.sent_at = provider_draft.sent_at
+        run.sent_count = 1
+        result = PreparedDraftResumeResult(
+            status="sent",
+            sent_count=1,
+            provider_draft_id=provider_draft.id,
+        )
+    except AutopilotError as exc:
+        mark_skipped(action, exc.message, dry_run=False)
+        run.skipped_count = 1
+        result = PreparedDraftResumeResult(
+            status="skipped",
+            skipped_count=1,
+            provider_draft_id=provider_draft.id,
+            reason=exc.message,
+        )
+    except Exception as exc:  # noqa: BLE001 - one queued Gmail draft must not stop the scheduler.
+        action.status = "failed"
+        action.skipped_reason = str(exc)[:2000]
+        action.updated_at = utc_now()
+        run.failed_count = 1
+        run.error_message = str(exc)[:2000]
+        result = PreparedDraftResumeResult(
+            status="failed",
+            failed_count=1,
+            provider_draft_id=provider_draft.id,
+            reason=str(exc)[:2000],
+        )
+
+    run.status = "failed" if run.failed_count else "completed"
+    run.completed_at = utc_now()
+    add_audit_log(
+        db,
+        entity_type="autopilot_run",
+        entity_id=run.id,
+        action="autopilot.prepared_gmail_draft_resumed",
+        user_id=user.id,
+        new_value={
+            "email_account_id": provider_draft.email_account_id,
+            "provider_draft_id": provider_draft.id,
+            "restaurant_id": candidate.restaurant_id,
+            "status": result.status,
+            "reason": result.reason,
+        },
+    )
+    db.flush()
+    return result
 
 
 def iter_candidates(

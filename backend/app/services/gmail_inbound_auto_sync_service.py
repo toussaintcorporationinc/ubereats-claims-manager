@@ -15,6 +15,7 @@ from app.core.database import SessionLocal
 from app.models import EmailAccount, GmailSyncState, User
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
+from app.services.autopilot_service import PreparedDraftResumeResult, resume_next_prepared_provider_draft
 from app.services.email_provider import EmailProvider, EmailProviderError
 from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_sync_service import GmailInboundSyncResult, GmailInboundSyncService
@@ -120,6 +121,16 @@ class GmailInboundAutoSyncService:
                         safety_seconds=self.settings.gmail_quota_retry_safety_seconds,
                         now=now,
                     )
+                    if retry_after is None and self.settings.gmail_inbound_auto_sync_run_autopilot:
+                        self.add_prepared_draft_result(
+                            result,
+                            resume_next_prepared_provider_draft(
+                                db,
+                                user,
+                                account,
+                                self.provider,
+                            ),
+                        )
                     if retry_after is not None:
                         self.mark_sync_failure(
                             db,
@@ -151,6 +162,16 @@ class GmailInboundAutoSyncService:
                 ):
                     sync_service.run_autopilot_for_negative_responses(db, user, account_result)
                 self.add_account_result(result, account_result)
+                if self.settings.gmail_inbound_auto_sync_run_autopilot:
+                    self.add_prepared_draft_result(
+                        result,
+                        resume_next_prepared_provider_draft(
+                            db,
+                            user,
+                            account,
+                            self.provider,
+                        ),
+                    )
                 result.accounts_synced += 1
                 users_needing_workspace_machine[user.id] = user
                 db.commit()
@@ -273,6 +294,17 @@ class GmailInboundAutoSyncService:
         result.autopilot_skipped_count += account_result.autopilot_skipped_count
         result.autopilot_failed_count += account_result.autopilot_failed_count
         result.errors.extend(account_result.errors)
+
+    def add_prepared_draft_result(
+        self,
+        result: GmailInboundAutoSyncResult,
+        resume_result: PreparedDraftResumeResult,
+    ) -> None:
+        result.autopilot_sent_count += resume_result.sent_count
+        result.autopilot_skipped_count += resume_result.skipped_count
+        result.autopilot_failed_count += resume_result.failed_count
+        if resume_result.failed_count and resume_result.reason:
+            result.errors.append(f"prepared_gmail_draft:{resume_result.reason[:200]}")
 
     def add_watched_thread_result(
         self,

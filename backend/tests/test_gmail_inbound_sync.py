@@ -37,7 +37,7 @@ from app.services.email_provider import (
     InboundEmailPayload,
 )
 from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncScheduler, GmailInboundAutoSyncService
-from app.services.autopilot_service import create_emergency_stop
+from app.services.autopilot_service import PreparedDraftResumeResult, create_emergency_stop
 from app.services.gmail_inbound_sync_service import (
     GMAIL_STARRED_URGENT_QUERY,
     GMAIL_STARRED_WITH_ATTACHMENT_QUERY,
@@ -1507,6 +1507,44 @@ def test_auto_sync_runs_autopilot_when_watched_thread_reports_refusal(
     assert result.watched_thread_refused_responses == 1
     assert result.autopilot_sent_count == 1
     assert autopilot_runs == []
+    get_settings.cache_clear()
+
+
+def test_auto_sync_resumes_prepared_gmail_queue_for_each_due_account(
+    client: TestClient,
+    db_session: Session,
+    gmail_autopilot_enabled: None,
+    fake_gmail_provider: FakeInboundGmailProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_ENABLED", "true")
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    monkeypatch.setenv("GMAIL_WATCHED_THREADS_ENABLED", "true")
+    get_settings.cache_clear()
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    account = get_active_account(db_session, owner.id)
+    assert account is not None
+    resumed_accounts: list[int] = []
+
+    def fake_process_account(self, db, user, current_account, **kwargs):  # noqa: ARG001
+        return GmailWatchedThreadMonitorResult()
+
+    def fake_resume(db, user, current_account, provider):  # noqa: ARG001
+        resumed_accounts.append(current_account.id)
+        return PreparedDraftResumeResult(status="sent", sent_count=1, provider_draft_id=123)
+
+    monkeypatch.setattr(GmailWatchedThreadMonitorService, "process_account", fake_process_account)
+    monkeypatch.setattr(
+        "app.services.gmail_inbound_auto_sync_service.resume_next_prepared_provider_draft",
+        fake_resume,
+    )
+
+    result = GmailInboundAutoSyncService(fake_gmail_provider).sync_due_accounts(db_session)
+
+    assert result.status == "success"
+    assert result.autopilot_sent_count == 1
+    assert resumed_accounts == [account.id]
     get_settings.cache_clear()
 
 

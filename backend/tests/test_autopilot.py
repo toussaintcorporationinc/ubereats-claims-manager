@@ -16,6 +16,7 @@ from app.models import (
     AppealAttempt,
     AppealWorkflow,
     AuditLog,
+    AutopilotAction,
     ClaimOrder,
     ClaimResponseReview,
     EmailAccount,
@@ -36,6 +37,7 @@ from app.services.autopilot_service import (
     gmail_account_send_pacing_active,
     gmail_account_sent_last_24_hours_count,
     iter_candidates,
+    resume_next_prepared_provider_draft,
 )
 from app.services.autopilot_identity_repair_service import find_or_create_order_from_starred_text
 from app.services.email_provider import EmailConnectionStatus, EmailSendResult, InboundEmailPayload
@@ -595,6 +597,187 @@ def test_gmail_account_limit_uses_a_rolling_24_hour_window(
     db_session.commit()
 
     assert gmail_account_send_pacing_active(db_session, account.id, 500) is True
+
+
+def test_prepared_gmail_draft_is_resumed_once_then_respects_account_pacing(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client, "King Krousty")
+    account = add_gmail_account(db_session)
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+    provider_drafts: list[EmailProviderDraft] = []
+
+    for index in range(2):
+        ready = create_ready_order(client, restaurant["id"], f"QUEUE-{index + 1}")
+        order = db_session.get(ClaimOrder, ready["order_id"])
+        assert order is not None
+        order.status = "refused"
+        workflow = AppealWorkflow(
+            case_type="claim_order",
+            case_id=order.id,
+            restaurant_id=order.restaurant_id,
+            claim_order_id=order.id,
+            status="appeal_needed",
+            refusal_count=1,
+            next_action_type="create_gmail_draft",
+            next_action_at=utc_now() - timedelta(minutes=1),
+            opened_by_user_id=owner.id,
+        )
+        db_session.add(workflow)
+        db_session.flush()
+        add_starred_inbound_message(db_session, order, account)
+        draft = EmailDraft(
+            order_id=order.id,
+            draft_type="appeal_generic_refusal",
+            subject=f"Re: commande {order.uber_order_number}",
+            body=f"Relance commande {order.uber_order_number}.",
+            status="created",
+        )
+        db_session.add(draft)
+        db_session.flush()
+        provider_draft = EmailProviderDraft(
+            email_draft_id=draft.id,
+            email_account_id=account.id,
+            provider="gmail",
+            provider_draft_id=f"queued-{order.uber_order_number}",
+            provider_thread_id=f"thread-{order.uber_order_number}",
+            to_email="restaurantsfrance@uber.com",
+            subject=draft.subject,
+            status="provider_draft_created",
+            created_by_user_id=owner.id,
+        )
+        db_session.add(provider_draft)
+        db_session.flush()
+        db_session.add(
+            AppealAttempt(
+                workflow_id=workflow.id,
+                attempt_number=1,
+                appeal_type="first_appeal",
+                status="gmail_draft_created",
+                email_draft_id=draft.id,
+                provider_draft_id=provider_draft.id,
+                created_by_user_id=owner.id,
+            )
+        )
+        provider_drafts.append(provider_draft)
+        db_session.commit()
+
+    first_result = resume_next_prepared_provider_draft(
+        db_session,
+        owner,
+        account,
+        fake_gmail_provider,
+    )
+    db_session.commit()
+    second_result = resume_next_prepared_provider_draft(
+        db_session,
+        owner,
+        account,
+        fake_gmail_provider,
+    )
+
+    assert first_result.status == "sent"
+    assert first_result.sent_count == 1
+    assert second_result.status == "skipped"
+    assert second_result.reason == "gmail_account_send_pacing_active"
+    db_session.refresh(provider_drafts[0])
+    db_session.refresh(provider_drafts[1])
+    assert provider_drafts[0].status == "sent"
+    assert provider_drafts[1].status == "provider_draft_created"
+    assert fake_gmail_provider.sent_draft_ids == [provider_drafts[0].id]
+    action = db_session.scalar(
+        select(AutopilotAction).where(AutopilotAction.provider_draft_id == provider_drafts[0].id)
+    )
+    assert action is not None
+    assert action.status == "sent"
+
+
+def test_prepared_gmail_queue_skips_changed_thread_and_sends_next_safe_draft(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client, "King Krousty")
+    account = add_gmail_account(db_session)
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+    queued: list[EmailProviderDraft] = []
+
+    for index in range(2):
+        ready = create_ready_order(client, restaurant["id"], f"THREAD-{index + 1}")
+        order = db_session.get(ClaimOrder, ready["order_id"])
+        assert order is not None
+        order.status = "refused"
+        workflow = AppealWorkflow(
+            case_type="claim_order",
+            case_id=order.id,
+            restaurant_id=order.restaurant_id,
+            claim_order_id=order.id,
+            status="appeal_needed",
+            refusal_count=1,
+            next_action_type="create_gmail_draft",
+            next_action_at=utc_now() - timedelta(minutes=1),
+            opened_by_user_id=owner.id,
+        )
+        db_session.add(workflow)
+        db_session.flush()
+        add_starred_inbound_message(db_session, order, account)
+        draft = EmailDraft(
+            order_id=order.id,
+            draft_type="appeal_generic_refusal",
+            subject=f"Re: commande {order.uber_order_number}",
+            body=f"Relance commande {order.uber_order_number}.",
+            status="created",
+        )
+        db_session.add(draft)
+        db_session.flush()
+        thread_id = "thread-changed-after-draft" if index == 0 else f"thread-{order.uber_order_number}"
+        provider_draft = EmailProviderDraft(
+            email_draft_id=draft.id,
+            email_account_id=account.id,
+            provider="gmail",
+            provider_draft_id=f"queued-thread-{order.uber_order_number}",
+            provider_thread_id=thread_id,
+            to_email="restaurantsfrance@uber.com",
+            subject=draft.subject,
+            status="provider_draft_created",
+            created_by_user_id=owner.id,
+        )
+        db_session.add(provider_draft)
+        db_session.flush()
+        db_session.add(
+            AppealAttempt(
+                workflow_id=workflow.id,
+                attempt_number=1,
+                appeal_type="first_appeal",
+                status="gmail_draft_created",
+                email_draft_id=draft.id,
+                provider_draft_id=provider_draft.id,
+                created_by_user_id=owner.id,
+            )
+        )
+        queued.append(provider_draft)
+        db_session.commit()
+
+    result = resume_next_prepared_provider_draft(
+        db_session,
+        owner,
+        account,
+        fake_gmail_provider,
+    )
+
+    assert result.status == "sent"
+    assert result.provider_draft_id == queued[1].id
+    db_session.refresh(queued[0])
+    db_session.refresh(queued[1])
+    assert queued[0].status == "provider_draft_created"
+    assert queued[1].status == "sent"
+    assert fake_gmail_provider.sent_draft_ids == [queued[1].id]
 
 
 def test_autopilot_does_not_send_final_status(
