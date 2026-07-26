@@ -32,11 +32,6 @@ from app.schemas.domain import (
     ReportOrderRow,
     ReportResponseRow,
 )
-from app.services.verified_payment_service import (
-    verified_claim_recovered_amount,
-    verified_customer_refund_ids,
-    verified_customer_refund_recovered_amount,
-)
 
 FINAL_ORDER_STATUSES = {"accepted", "payment_confirmed", "refused", "closed"}
 SUCCESS_STATUSES = {"accepted", "payment_confirmed"}
@@ -77,7 +72,6 @@ class ReportingService:
         followups = self.followup_rows(limit=None, offset=0)
         responses = self.response_rows(limit=None, offset=0)
         customer_refunds = self.customer_refund_rows()
-        verified_refund_ids = verified_customer_refund_ids(self.db, customer_refunds)
 
         total_claimed = sum_decimal(row.order_amount for row in orders)
         total_recovered = sum_decimal(row.recovered_amount for row in orders)
@@ -121,10 +115,7 @@ class ReportingService:
             ),
             customer_refunds=CommercialCustomerRefundSummary(
                 total_deducted_amount=sum_decimal(row.customer_refund_amount for row in customer_refunds),
-                total_recovered_amount=sum_decimal(
-                    verified_customer_refund_recovered_amount(row, verified_refund_ids)
-                    for row in customer_refunds
-                ),
+                total_recovered_amount=sum_decimal(recovered_amount_for_customer_refund(row) for row in customer_refunds),
                 total_refused_amount=sum_decimal(
                     row.customer_refund_amount for row in customer_refunds if row.status == "refused"
                 ),
@@ -204,7 +195,7 @@ class ReportingService:
                 currency=order.currency,
                 status=order.status,
                 result=order.result,
-                recovered_amount=verified_claim_recovered_amount(order),
+                recovered_amount=order.recovered_amount,
                 retry_count=order.retry_count,
                 last_followup_sent_at=order.last_followup_sent_at,
                 next_action_at=order.next_action_at,
@@ -337,6 +328,14 @@ def sum_decimal(values: list[Decimal | None] | Any) -> Decimal:
 
 def quantize_decimal(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def recovered_amount_for_customer_refund(row: UberCustomerRefundDispute) -> Decimal | None:
+    if row.recovered_amount is not None:
+        return row.recovered_amount
+    if row.status == "payment_confirmed":
+        return row.customer_refund_amount
+    return None
 
 
 def dedupe_customer_refund_rows(rows: list[UberCustomerRefundDispute]) -> list[UberCustomerRefundDispute]:

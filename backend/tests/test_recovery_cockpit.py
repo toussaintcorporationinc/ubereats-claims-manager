@@ -6,7 +6,6 @@ from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
 from app.models import (
-    AuditLog,
     EvidenceRequestTask,
     FollowUpTask,
     UberCustomerRefundDispute,
@@ -59,7 +58,6 @@ def create_order(
     *,
     status: str = "missing_evidence",
     recovered_amount: str | None = None,
-    result: str | None = None,
     customer_name: str | None = "Client Recovery",
 ) -> dict:
     response = client.post(
@@ -74,7 +72,6 @@ def create_order(
             "prepared_before_cancellation": True,
             "status": status,
             "recovered_amount": recovered_amount,
-            "result": result,
         },
     )
     assert response.status_code == 201
@@ -119,7 +116,6 @@ def add_customer_refund(
     recovered_amount: str | None = None,
     claim_order_id: int | None = None,
     order_id: str | None = None,
-    payment_verified: bool = False,
 ) -> UberCustomerRefundDispute:
     uber_order_id = order_id or f"UBER-RECOVERY-{status}"
     dispute = UberCustomerRefundDispute(
@@ -144,15 +140,6 @@ def add_customer_refund(
     db_session.add(dispute)
     db_session.commit()
     db_session.refresh(dispute)
-    if payment_verified:
-        db_session.add(
-            AuditLog(
-                entity_type="uber_customer_refund_dispute",
-                entity_id=dispute.id,
-                action="customer_refund.payment_confirmed_from_uber_reporting",
-            )
-        )
-        db_session.commit()
     return dispute
 
 
@@ -200,18 +187,10 @@ def seed_recovery_data(client: TestClient, db_session: Session) -> dict:
         "10.00",
         status="payment_confirmed",
         recovered_amount="10.00",
-        result="payment_confirmed_from_uber_reporting",
     )
     add_reconciliation_result(db_session, restaurant["id"], "UBER-RECOVERY-RECON", amount="18.00")
     add_customer_refund(db_session, restaurant["id"], status="needs_evidence", amount="12.00")
-    add_customer_refund(
-        db_session,
-        restaurant["id"],
-        status="payment_confirmed",
-        amount="8.00",
-        recovered_amount="8.00",
-        payment_verified=True,
-    )
+    add_customer_refund(db_session, restaurant["id"], status="payment_confirmed", amount="8.00", recovered_amount="8.00")
     add_customer_refund(db_session, restaurant["id"], status="refused", amount="5.00")
     add_evidence_task(db_session, missing_order["id"], restaurant["id"])
     add_followup(db_session, sent_order["id"])

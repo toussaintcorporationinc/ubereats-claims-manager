@@ -26,12 +26,6 @@ from app.schemas.domain import (
     RecoverySummary,
     RecoveryTotals,
 )
-from app.services.verified_payment_service import (
-    claim_payment_is_verified,
-    verified_claim_recovered_amount,
-    verified_customer_refund_ids,
-    verified_customer_refund_recovered_amount,
-)
 
 FINAL_CASE_STAGES = {"payment_confirmed", "refused", "ignored"}
 RECOVERED_STAGES = {"payment_confirmed"}
@@ -147,15 +141,13 @@ class RecoveryCockpitService:
                 continue
             amount = money(order.order_amount)
             stage = claim_order_stage(order.status)
-            if stage == "payment_confirmed" and not claim_payment_is_verified(order):
-                stage = "payment_to_verify"
             appeal = active_appeal_for_case(self.db, "claim_order", order.id)
             closed_appeal = closed_appeal_for_case(self.db, "claim_order", order.id) if appeal is None else None
             if appeal is not None and stage == "refused":
                 stage = "under_appeal"
             elif closed_appeal is not None and stage == "refused":
                 stage = "manual_review"
-            recovered = money(verified_claim_recovered_amount(order))
+            recovered = recovered_amount(order.recovered_amount, stage, amount)
             refused = amount if stage in REFUSED_STAGES else Decimal("0")
             claimable = claimable_amount(amount, stage, recovered, refused)
             case_status = appeal.status if appeal is not None and stage == "under_appeal" else order.status
@@ -252,22 +244,17 @@ class RecoveryCockpitService:
         statement = self.apply_restaurant_filter(statement, UberCustomerRefundDispute)
         statement = self.apply_source_limit(statement)
         disputes = self.db.scalars(statement).all()
-        verified_payment_ids = verified_customer_refund_ids(self.db, disputes)
         cases = []
         for dispute in disputes:
             amount = money(dispute.customer_refund_amount)
             stage = customer_refund_stage(dispute.status)
-            if stage == "payment_confirmed" and dispute.id not in verified_payment_ids:
-                stage = "payment_to_verify"
             appeal = active_appeal_for_case(self.db, "customer_refund_dispute", dispute.id)
             closed_appeal = closed_appeal_for_case(self.db, "customer_refund_dispute", dispute.id) if appeal is None else None
             if appeal is not None and stage == "refused":
                 stage = "under_appeal"
             elif closed_appeal is not None and stage == "refused":
                 stage = "manual_review"
-            recovered = money(
-                verified_customer_refund_recovered_amount(dispute, verified_payment_ids)
-            )
+            recovered = recovered_amount(dispute.recovered_amount, stage, amount)
             refused = amount if stage in REFUSED_STAGES else Decimal("0")
             case_status = appeal.status if appeal is not None and stage == "under_appeal" else dispute.status
             case_url = (
@@ -321,17 +308,12 @@ class RecoveryCockpitService:
         ]
 
     def customer_refund_actions(self) -> list[RecoveryAction]:
-        statement = select(UberCustomerRefundDispute).where(
-            UberCustomerRefundDispute.status.not_in(("ignored", "refused"))
-        )
+        statement = select(UberCustomerRefundDispute).where(UberCustomerRefundDispute.status.not_in(("ignored", "refused", "payment_confirmed")))
         statement = self.apply_restaurant_filter(statement, UberCustomerRefundDispute)
         statement = self.apply_source_limit(statement)
         disputes = self.db.scalars(statement).all()
-        verified_payment_ids = verified_customer_refund_ids(self.db, disputes)
         actions: list[RecoveryAction] = []
         for dispute in disputes:
-            if dispute.id in verified_payment_ids:
-                continue
             action_type, label, priority = customer_refund_action(dispute)
             actions.append(
                 RecoveryAction(
