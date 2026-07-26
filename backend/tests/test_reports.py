@@ -231,8 +231,8 @@ def seed_reporting_data(client: TestClient, db_session: Session) -> dict[str, di
         first_restaurant["id"],
         "UBER-REPORT-ACCEPTED",
         "20.00",
-        status="accepted",
-        result="accepted",
+        status="payment_confirmed",
+        result="payment_confirmed_from_uber_reporting",
         recovered_amount="20.00",
     )
     refused_order = create_order(
@@ -359,8 +359,16 @@ def test_summary_calculates_commercial_totals_and_breakdowns(client: TestClient,
     assert summary["totals"]["total_pending_amount"] == "30.00"
     assert summary["totals"]["total_refused_amount"] == "10.00"
     assert summary["totals"]["success_rate"] == "0.50"
-    assert {row["key"] for row in summary["by_status"]} >= {"accepted", "refused", "waiting_uber_response"}
-    assert {row["key"] for row in summary["by_result"]} >= {"accepted", "refused", "none"}
+    assert {row["key"] for row in summary["by_status"]} >= {
+        "payment_confirmed",
+        "refused",
+        "waiting_uber_response",
+    }
+    assert {row["key"] for row in summary["by_result"]} >= {
+        "payment_confirmed_from_uber_reporting",
+        "refused",
+        "none",
+    }
     assert len(summary["by_restaurant"]) == 2
 
 

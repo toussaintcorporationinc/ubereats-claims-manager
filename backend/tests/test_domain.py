@@ -184,24 +184,41 @@ def test_dashboard_summary_returns_expected_totals(client: TestClient) -> None:
     recovered_order = create_order(client, second_restaurant["id"], "UBER-1", "30.00")
     client.patch(
         f"/v1/orders/{recovered_order['id']}",
-        json={"status": "payment_confirmed", "recovered_amount": "25.00"},
+        json={
+            "status": "payment_confirmed",
+            "result": "payment_confirmed_from_uber_reporting",
+            "recovered_amount": "25.00",
+        },
+    )
+    promised_order = create_order(client, second_restaurant["id"], "UBER-3", "40.00")
+    client.patch(
+        f"/v1/orders/{promised_order['id']}",
+        json={
+            "status": "payment_confirmed",
+            "result": "payment_confirmed",
+            "recovered_amount": "40.00",
+        },
     )
 
     response = client.get("/v1/dashboard/summary")
 
     assert response.status_code == 200
     data = response.json()
-    assert data["total_orders"] == 3
-    assert as_decimal(data["total_claimed_amount"]) == Decimal("60.00")
+    assert data["total_orders"] == 4
+    assert as_decimal(data["total_claimed_amount"]) == Decimal("100.00")
     assert as_decimal(data["total_recovered_amount"]) == Decimal("25.00")
     assert as_decimal(data["total_refused_amount"]) == Decimal("20.00")
     assert as_decimal(data["total_pending_amount"]) == Decimal("10.00")
     assert data["orders_by_status"] == {
         "draft": 1,
-        "payment_confirmed": 1,
+        "payment_confirmed": 2,
         "refused": 1,
     }
     assert len(data["orders_by_restaurant"]) == 2
+    second_summary = next(
+        row for row in data["orders_by_restaurant"] if row["restaurant_id"] == second_restaurant["id"]
+    )
+    assert as_decimal(second_summary["total_recovered_amount"]) == Decimal("25.00")
 
 
 def test_initial_alembic_migration_creates_domain_tables() -> None:

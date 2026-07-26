@@ -10,6 +10,7 @@ from app.models import ClaimOrder, FollowUpTask, Restaurant, User
 from app.models.domain import utc_now
 from app.schemas.domain import DashboardRestaurantSummary, DashboardSummary, DashboardTopRestaurantSummary
 from app.services.reporting_service import ReportingFilters, ReportingService
+from app.services.verified_payment_service import verified_claim_recovered_amount_expression
 
 router = APIRouter(prefix="/v1/dashboard", tags=["dashboard"])
 
@@ -49,7 +50,8 @@ def dashboard_summary(
 
     total_orders_statement = select(func.count(ClaimOrder.id))
     total_claimed_statement = select(func.sum(ClaimOrder.order_amount))
-    total_recovered_statement = select(func.sum(ClaimOrder.recovered_amount))
+    received_amount_expression = verified_claim_recovered_amount_expression()
+    total_recovered_statement = select(func.sum(received_amount_expression))
     total_refused_statement = select(func.sum(ClaimOrder.order_amount)).where(ClaimOrder.status == "refused")
     total_pending_statement = select(func.sum(ClaimOrder.order_amount)).where(
         ClaimOrder.status.notin_(TERMINAL_OR_RECOVERED_STATUSES)
@@ -86,7 +88,7 @@ def dashboard_summary(
             Restaurant.name,
             func.count(ClaimOrder.id),
             func.coalesce(func.sum(ClaimOrder.order_amount), 0),
-            func.coalesce(func.sum(ClaimOrder.recovered_amount), 0),
+            func.coalesce(func.sum(received_amount_expression), 0),
         )
         .join(ClaimOrder, ClaimOrder.restaurant_id == Restaurant.id)
         .group_by(Restaurant.id, Restaurant.name)
@@ -174,4 +176,3 @@ def get_followup_counts(db: Session, accessible_ids: set[int] | None) -> dict[st
         "escalations_due_count": db.scalar(escalation_statement) or 0,
         "manual_review_due_count": db.scalar(manual_review_statement) or 0,
     }
-

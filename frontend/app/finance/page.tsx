@@ -58,7 +58,7 @@ export default function FinancePage() {
           <p className="eyebrow">Finance</p>
           <h1>Argent suivi par TENNET</h1>
           <p>
-            Une vue simple pour verifier les paiements confirmes, les montants encore a suivre,
+            Une vue simple pour verifier les versements rapproches avec Uber, les montants encore a suivre,
             les refus a relancer et les signaux positifs detectes dans Gmail.
           </p>
         </div>
@@ -67,7 +67,7 @@ export default function FinancePage() {
       {error ? <ApiError error={error} /> : null}
 
       <div className="stats-grid">
-        <StatCard label="Recupere" value={formatCurrency(summary?.total_recovered_amount ?? 0)} detail="paiements confirmes" />
+        <StatCard label="Recu" value={formatCurrency(summary?.total_recovered_amount ?? 0)} detail="versements Uber confirmes" />
         <StatCard label="A suivre" value={formatCurrency(summary?.total_pending_amount ?? 0)} detail="encore ouvert" />
         <StatCard label="Refuse" value={formatCurrency(summary?.total_refused_amount ?? 0)} detail="a relancer si etoile active" />
         <StatCard label="Signaux positifs 24h" value={warRoom?.summary.positive_responses_last_24h ?? 0} detail="Gmail" />
@@ -86,7 +86,7 @@ export default function FinancePage() {
                     <th>Restaurant</th>
                     <th>Dossiers</th>
                     <th>Reclame</th>
-                    <th>Recupere</th>
+                    <th>Recu</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -102,7 +102,7 @@ export default function FinancePage() {
               </table>
             </div>
           ) : (
-            <EmptyState title="Aucune ligne finance" description="Les paiements positifs Gmail apparaitront ici quand ils seront rattaches." />
+            <EmptyState title="Aucune ligne finance" description="Les versements apparaitront ici apres rapprochement avec le reporting Uber." />
           )}
         </section>
 

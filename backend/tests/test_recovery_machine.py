@@ -49,6 +49,7 @@ def test_recovery_machine_splits_refunds_and_cancellations(
             recovered_amount=Decimal("18.50"),
             currency="EUR",
             status="payment_confirmed",
+            result="payment_confirmed_from_uber_reporting",
             loss_type="cancellation_not_compensated",
         )
     )
