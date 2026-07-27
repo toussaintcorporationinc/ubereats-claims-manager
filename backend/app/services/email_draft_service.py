@@ -67,7 +67,7 @@ def create_email_draft(db: Session, order_id: int, draft_type: str, user_id: int
         ensure_initial_draft_exists(db, order)
         new_order_status = order.status
     elif draft_type == "proof_reply":
-        ensure_base_order_data(db, order)
+        ensure_proof_reply_data(db, order)
         ensure_order_has_evidence(order)
         new_order_status = order.status
     else:
@@ -173,6 +173,20 @@ def ensure_base_order_data(db: Session, order: ClaimOrder) -> None:
         raise EmailDraftBusinessError("Email draft requires core claim data", base_blocking_reasons)
 
 
+def ensure_proof_reply_data(db: Session, order: ClaimOrder) -> None:
+    _missing_items, blocking_reasons = get_claim_validation_gaps(db, order)
+    identity_blocking_reasons = [
+        reason
+        for reason in blocking_reasons
+        if reason in {"missing_restaurant", "missing_uber_order_number"}
+    ]
+    if identity_blocking_reasons:
+        raise EmailDraftBusinessError(
+            "Proof reply requires a linked restaurant and Uber order number",
+            identity_blocking_reasons,
+        )
+
+
 def ensure_order_has_evidence(order: ClaimOrder) -> None:
     if not order.evidence_files:
         raise EmailDraftBusinessError("Proof reply draft requires at least one evidence file", ["missing_evidence"])
@@ -190,8 +204,9 @@ def build_template_context(order: ClaimOrder) -> dict[str, Any]:
         "restaurant_name": restaurant_display_name(restaurant),
         "customer_name_line": optional_line("Client", order.customer_name),
         "order_date_line": optional_line("Date de commande", format_display_date(order.order_date)),
-        "order_amount": format_amount(order.order_amount),
-        "currency": order.currency,
+        "order_amount": format_amount(order.order_amount) if order.order_amount is not None else "",
+        "currency": order.currency or "",
+        "order_amount_line": format_order_amount_line(order),
         "accepted_line": optional_bool_line("Commande acceptee par le restaurant", order.accepted_by_restaurant),
         "prepared_line": optional_bool_line("Commande preparee avant annulation", order.prepared_before_cancellation),
         "loss_type_line": optional_line("Type de perte", order.loss_type),
@@ -254,6 +269,13 @@ def optional_bool_line(label: str, value: bool | None) -> str:
     if value is None:
         return ""
     return f"{label} : {'oui' if value else 'non'}\n"
+
+
+def format_order_amount_line(order: ClaimOrder) -> str:
+    if order.order_amount is None:
+        return ""
+    amount_with_currency = f"{format_amount(order.order_amount)} {order.currency or ''}".strip()
+    return optional_line("Montant concerne", amount_with_currency)
 
 
 def format_amount(amount: object) -> str:

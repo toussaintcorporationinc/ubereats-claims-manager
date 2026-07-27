@@ -4,9 +4,10 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
+from hashlib import sha256
 import unicodedata
 
-from sqlalchemy import String, and_, case, cast, func, or_, select
+from sqlalchemy import String, and_, case, cast, false, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -19,6 +20,7 @@ from app.models import (
     EmailDraft,
     EmailProviderDraft,
     EmailThread,
+    EvidenceFile,
     EvidenceRequestTask,
     GmailResponseAnalysis,
     GmailStarredWorkItem,
@@ -29,8 +31,9 @@ from app.models import (
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.claim_validation_service import get_claim_validation_gaps
-from app.services.email_provider import EmailProvider, EmailProviderError, InboundEmailPayload
+from app.services.email_provider import EmailProvider, EmailProviderError, InboundEmailAttachment, InboundEmailPayload
 from app.services.email_draft_service import EmailDraftBusinessError, create_email_draft
+from app.services.file_storage_service import FileStorageError, store_evidence_bytes
 from app.services.gmail_inbound_sync_service import (
     GMAIL_STARRED_URGENT_QUERIES,
     GmailInboundSyncResult,
@@ -48,7 +51,10 @@ from app.services.gmail_payment_signal_service import (
 )
 from app.services.gmail_quota import parse_gmail_retry_after
 from app.services.gmail_scope_service import gmail_scopes_allow_modify
-from app.services.autopilot_identity_repair_service import find_or_create_order_from_starred_text
+from app.services.autopilot_identity_repair_service import (
+    find_or_create_order_from_starred_text,
+    repair_order_identity_from_inbound_attachments,
+)
 from app.services.appeal_workflow_service import AppealWorkflowError, ensure_workflow_for_claim_order, mark_appeal_sent
 from app.services.autopilot_service import (
     AutopilotError,
@@ -67,6 +73,10 @@ FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed
 SKIPPABLE_FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed"}
 MAX_AUTOPILOT_REPLY_CANDIDATES_PER_CYCLE = 1
 MAX_LOCAL_REPLY_CANDIDATES_PER_CYCLE = 250
+RECOVERABLE_PROOF_REPLY_REASONS = {
+    "proof_reply_blocked:missing_order_amount",
+    "proof_reply_blocked:missing_currency",
+}
 POSITIVE_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confirmed"}
 POSITIVE_WATCHED_STATUSES = {"positive", "payment_confirmed"}
 REFUSAL_REVIEW_TYPES = {"refused"}
@@ -176,6 +186,8 @@ class GmailWatchedThreadMonitorService:
         self._latest_external_message_cache: dict[tuple[int, str], InboundEmailPayload | None] = {}
         self._latest_external_message_errors: dict[tuple[int, str], str] = {}
         self._remote_thread_has_draft_cache: dict[tuple[int, str], bool] = {}
+        self._thread_payload_cache: dict[tuple[int, str], list[InboundEmailPayload]] = {}
+        self._thread_payloads_with_attachments: set[tuple[int, str]] = set()
 
     def process_account(
         self,
@@ -249,6 +261,8 @@ class GmailWatchedThreadMonitorService:
         self._latest_external_message_cache.clear()
         self._latest_external_message_errors.clear()
         self._remote_thread_has_draft_cache.clear()
+        self._thread_payload_cache.clear()
+        self._thread_payloads_with_attachments.clear()
 
         max_per_cycle = max_threads or self.settings.gmail_watched_threads_max_per_cycle
         sync_result = GmailInboundSyncResult(status="success")
@@ -323,6 +337,7 @@ class GmailWatchedThreadMonitorService:
             allow_remote_star_lookup = len(payloads) > 1
             cache_key = (account.id, watched.gmail_thread_id)
             if payloads:
+                self._thread_payload_cache[cache_key] = payloads
                 self._latest_external_message_cache[cache_key] = self.select_latest_external_payload(
                     payloads,
                     account,
@@ -333,6 +348,14 @@ class GmailWatchedThreadMonitorService:
                     and "DRAFT" in {str(label).strip().upper() for label in payload.provider_labels}
                     for payload in payloads
                 )
+            else:
+                # The thread was part of this cycle's bounded Gmail polling
+                # budget, but Gmail returned no usable message. Cache the
+                # absence so AutoPilot fails closed without issuing a second
+                # remote read for an unrelated backlog item.
+                self._thread_payload_cache[cache_key] = []
+                self._latest_external_message_cache[cache_key] = None
+                self._remote_thread_has_draft_cache[cache_key] = False
             processing_payloads = self.select_payloads_for_processing(payloads, account)
             if self.should_skip_already_final_payloads(db, account, processing_payloads):
                 watched.last_processed_at = utc_now()
@@ -525,6 +548,8 @@ class GmailWatchedThreadMonitorService:
             self._latest_external_message_cache.clear()
             self._latest_external_message_errors.clear()
             self._remote_thread_has_draft_cache.clear()
+            self._thread_payload_cache.clear()
+            self._thread_payloads_with_attachments.clear()
         block_reason = self.automatic_reply_block_reason(db, account)
         if block_reason is not None:
             result.autopilot_skipped_count += 1
@@ -544,6 +569,8 @@ class GmailWatchedThreadMonitorService:
         cached_thread_filter = (
             GmailWatchedThread.gmail_thread_id.in_(cached_thread_ids)
             if not reset_remote_cache and cached_thread_ids
+            else false()
+            if not reset_remote_cache
             else True
         )
         items = list(
@@ -570,7 +597,15 @@ class GmailWatchedThreadMonitorService:
                         GmailStarredWorkItem.status.in_(["refused", "evidence_needed"]),
                         and_(
                             GmailStarredWorkItem.status == "manual_review",
-                            GmailResponseAnalysis.recommended_review_type == "followup_needed",
+                            or_(
+                                GmailResponseAnalysis.recommended_review_type == "followup_needed",
+                                and_(
+                                    GmailResponseAnalysis.recommended_review_type.in_(
+                                        sorted(EVIDENCE_REVIEW_TYPES)
+                                    ),
+                                    GmailStarredWorkItem.reason.in_(sorted(RECOVERABLE_PROOF_REPLY_REASONS)),
+                                ),
+                            ),
                         ),
                     ),
                     GmailWatchedThread.status.in_(["active", "manual_review"]),
@@ -600,6 +635,8 @@ class GmailWatchedThreadMonitorService:
             if watched is None or message is None:
                 result.autopilot_skipped_count += 1
                 continue
+            if item.status == "manual_review" and item.reason in RECOVERABLE_PROOF_REPLY_REASONS:
+                item.status = "evidence_needed"
             if item.gmail_thread_id != watched.gmail_thread_id or message.provider_thread_id != watched.gmail_thread_id:
                 self.mark_unsafe_reply_for_review(
                     db,
@@ -698,7 +735,7 @@ class GmailWatchedThreadMonitorService:
         item: GmailStarredWorkItem,
         message: InboundEmailMessage,
     ) -> str | None:
-        """Skip proof replies that cannot pass local validation before using Gmail quota."""
+        """Skip proof replies with unsafe identity before using Gmail quota."""
         if item.status != "evidence_needed":
             return None
         order = db.get(ClaimOrder, watched.claim_order_id) if watched.claim_order_id else message.order
@@ -709,12 +746,8 @@ class GmailWatchedThreadMonitorService:
             if reason in {
                 "missing_restaurant",
                 "missing_uber_order_number",
-                "missing_order_amount",
-                "missing_currency",
             }:
                 return reason
-        if not order.evidence_files:
-            return "missing_evidence"
         return None
 
     def automatic_reply_block_reason(self, db: Session, account: EmailAccount) -> str | None:
@@ -1429,6 +1462,46 @@ class GmailWatchedThreadMonitorService:
             self.mark_work_item_skipped(db, item)
             result.autopilot_skipped_count += 1
             return False
+        if not any(evidence.deleted_at is None for evidence in order.evidence_files):
+            try:
+                recovery_reason = self.recover_proof_evidence_from_thread(
+                    db,
+                    user,
+                    account,
+                    watched,
+                    message,
+                    order,
+                    result,
+                )
+            except Exception as exc:  # noqa: BLE001 - one attachment failure must not stop the mailbox.
+                logger.exception(
+                    "Unable to recover Gmail evidence for watched thread %s",
+                    watched.gmail_thread_id,
+                )
+                item.reason = f"proof_reply_evidence_recovery_failed:{str(exc)[:120]}"
+                self.mark_work_item_manual_review(db, item)
+                result.autopilot_failed_count += 1
+                result.errors.append(f"proof_reply_evidence_recovery:{str(exc)[:160]}")
+                return False
+            if recovery_reason is not None:
+                if recovery_reason in {
+                    "latest_uber_reply_is_support_survey",
+                    "superseded_by_newer_uber_message",
+                }:
+                    self.mark_unsafe_reply_for_review(db, watched, item, reason=recovery_reason)
+                    if recovery_reason == "superseded_by_newer_uber_message":
+                        self.queue_latest_external_message_for_processing(
+                            db,
+                            user,
+                            account,
+                            watched,
+                            result,
+                        )
+                else:
+                    item.reason = f"proof_reply_blocked:{recovery_reason}"
+                    self.mark_work_item_manual_review(db, item)
+                result.autopilot_skipped_count += 1
+                return False
 
         try:
             if provider_draft is None or provider_draft.status != "provider_draft_created":
@@ -1502,6 +1575,131 @@ class GmailWatchedThreadMonitorService:
         )
         db.flush()
         return True
+
+    def recover_proof_evidence_from_thread(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        watched: GmailWatchedThread,
+        message: InboundEmailMessage,
+        order: ClaimOrder,
+        result: GmailWatchedThreadMonitorResult,
+    ) -> str | None:
+        """Persist proof files previously sent in the same verified Gmail thread."""
+        cache_key = (account.id, watched.gmail_thread_id)
+        payloads = self._thread_payload_cache.get(cache_key, [])
+        if cache_key not in self._thread_payloads_with_attachments:
+            get_thread_messages = getattr(self.provider, "get_thread_messages_for_account", None)
+            if not callable(get_thread_messages):
+                return "missing_evidence"
+            try:
+                payloads = list(
+                    get_thread_messages(
+                        db,
+                        account,
+                        watched.gmail_thread_id,
+                        include_attachments=True,
+                    )
+                )
+            except TypeError:
+                payloads = list(get_thread_messages(db, account, watched.gmail_thread_id))
+            self._thread_payload_cache[cache_key] = payloads
+            self._thread_payloads_with_attachments.add(cache_key)
+
+        latest_payload = self.select_latest_external_payload(
+            payloads,
+            account,
+            include_support_surveys=True,
+        )
+        if latest_payload is None:
+            latest_payload = self._latest_external_message_cache.get(cache_key)
+        if latest_payload is None:
+            return "gmail_latest_reply_not_found"
+        self._latest_external_message_cache[cache_key] = latest_payload
+        if payload_is_uber_support_survey(latest_payload):
+            return "latest_uber_reply_is_support_survey"
+        if latest_payload.provider_message_id != message.provider_message_id:
+            return "superseded_by_newer_uber_message"
+
+        attachments = [
+            attachment
+            for payload in payloads
+            if payload.provider_thread_id == watched.gmail_thread_id
+            and self.payload_from_account(payload, account)
+            for attachment in payload.attachments
+        ]
+        if not attachments:
+            return "missing_evidence"
+
+        try:
+            repair_order_identity_from_inbound_attachments(db, user, order, attachments)
+        except Exception as exc:  # noqa: BLE001 - extraction is useful but must not block a real attachment.
+            logger.warning(
+                "Unable to extract order identity from Gmail evidence for thread %s: %s",
+                watched.gmail_thread_id,
+                exc,
+            )
+
+        existing_checksums = {
+            evidence.checksum_sha256
+            for evidence in order.evidence_files
+            if evidence.deleted_at is None and evidence.checksum_sha256
+        }
+        stored_count = 0
+        seen_checksums: set[str] = set()
+        storage_errors: list[str] = []
+        for attachment in attachments:
+            checksum = sha256(attachment.content).hexdigest()
+            if checksum in existing_checksums or checksum in seen_checksums:
+                continue
+            seen_checksums.add(checksum)
+            try:
+                stored = store_evidence_bytes(
+                    order,
+                    original_filename=attachment.filename,
+                    mime_type=attachment.mime_type or None,
+                    content=attachment.content,
+                )
+            except FileStorageError as exc:
+                storage_errors.append(exc.message)
+                continue
+            evidence = EvidenceFile(
+                order=order,
+                evidence_type="other",
+                original_filename=stored.original_filename,
+                storage_path=stored.storage_path,
+                storage_backend=stored.storage_backend,
+                mime_type=stored.mime_type,
+                file_size=stored.file_size,
+                checksum_sha256=stored.checksum_sha256,
+                uploaded_by_user_id=user.id,
+            )
+            db.add(evidence)
+            existing_checksums.add(stored.checksum_sha256)
+            stored_count += 1
+
+        if stored_count == 0 and not any(
+            evidence.deleted_at is None for evidence in order.evidence_files
+        ):
+            if storage_errors:
+                result.errors.append(f"proof_reply_evidence_store:{storage_errors[0][:160]}")
+            return "missing_evidence"
+
+        db.flush()
+        add_audit_log(
+            db,
+            entity_type="gmail_watched_thread",
+            entity_id=watched.id,
+            action="gmail_watched_thread.evidence_recovered_from_sent_message",
+            user_id=user.id,
+            new_value={
+                "gmail_thread_id": watched.gmail_thread_id,
+                "order_id": order.id,
+                "stored_evidence_count": stored_count,
+            },
+        )
+        return None
 
     def create_draft_for_watched_account(
         self,
@@ -2154,14 +2352,28 @@ class GmailWatchedThreadMonitorService:
         prefer_full_thread: bool = False,
     ) -> list[InboundEmailPayload]:
         get_thread_messages = getattr(self.provider, "get_thread_messages_for_account", None)
+        include_attachments = prefer_full_thread and self.watched_thread_needs_evidence_recovery(
+            db,
+            watched,
+        )
 
         def fetch_full_thread() -> list[InboundEmailPayload]:
             if not callable(get_thread_messages):
                 return []
             try:
-                return list(get_thread_messages(db, account, watched.gmail_thread_id, include_attachments=False))
+                payloads = list(
+                    get_thread_messages(
+                        db,
+                        account,
+                        watched.gmail_thread_id,
+                        include_attachments=include_attachments,
+                    )
+                )
             except TypeError:
-                return list(get_thread_messages(db, account, watched.gmail_thread_id))
+                payloads = list(get_thread_messages(db, account, watched.gmail_thread_id))
+            if include_attachments:
+                self._thread_payloads_with_attachments.add((account.id, watched.gmail_thread_id))
+            return payloads
 
         if prefer_full_thread and callable(get_thread_messages):
             payloads = fetch_full_thread()
@@ -2203,6 +2415,42 @@ class GmailWatchedThreadMonitorService:
                 )
             ).all()
         ]
+
+    @staticmethod
+    def watched_thread_needs_evidence_recovery(
+        db: Session,
+        watched: GmailWatchedThread,
+    ) -> bool:
+        if watched.claim_order_id is not None:
+            has_evidence = db.scalar(
+                select(EvidenceFile.id)
+                .where(
+                    EvidenceFile.order_id == watched.claim_order_id,
+                    EvidenceFile.deleted_at.is_(None),
+                )
+                .limit(1)
+            )
+            if has_evidence is not None:
+                return False
+        return (
+            db.scalar(
+                select(GmailStarredWorkItem.id)
+                .where(
+                    GmailStarredWorkItem.watched_thread_id == watched.id,
+                    or_(
+                        GmailStarredWorkItem.status == "evidence_needed",
+                        and_(
+                            GmailStarredWorkItem.status == "manual_review",
+                            GmailStarredWorkItem.reason.in_(
+                                sorted(RECOVERABLE_PROOF_REPLY_REASONS)
+                            ),
+                        ),
+                    ),
+                )
+                .limit(1)
+            )
+            is not None
+        )
 
     def repair_watched_thread_from_payloads(
         self,

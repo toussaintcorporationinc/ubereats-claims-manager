@@ -2,8 +2,7 @@ Bonjour,
 
 Veuillez trouver les pieces complementaires concernant {order_identity_phrase} pour le restaurant {restaurant_name}.
 
-Montant concerne : {order_amount} {currency}
-
+{order_amount_line}
 Pieces jointes :
 {evidence_list}
 

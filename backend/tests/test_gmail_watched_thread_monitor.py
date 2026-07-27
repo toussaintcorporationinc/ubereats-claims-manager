@@ -28,7 +28,12 @@ from app.models import (
 from app.models.domain import utc_now
 from app.services.appeal_workflow_service import AppealWorkflowError
 from app.services.autopilot_service import create_emergency_stop
-from app.services.email_provider import EmailProviderError, EmailSendResult, InboundEmailPayload
+from app.services.email_provider import (
+    EmailProviderError,
+    EmailSendResult,
+    InboundEmailAttachment,
+    InboundEmailPayload,
+)
 from app.services import autopilot_identity_repair_service as identity_repair_service
 from app.services.gmail_inbound_sync_service import (
     GMAIL_STARRED_URGENT_QUERIES,
@@ -321,6 +326,7 @@ def payload(
     to_email: str = "tiramisumaisonfrance@gmail.com",
     starred: bool = False,
     labels: list[str] | None = None,
+    attachments: list[InboundEmailAttachment] | None = None,
 ) -> InboundEmailPayload:
     provider_labels = list(labels) if labels is not None else ["INBOX"]
     if starred and "STARRED" not in provider_labels:
@@ -341,6 +347,7 @@ def payload(
             "subject": subject,
         },
         provider_labels=provider_labels,
+        attachments=attachments or [],
     )
 
 
@@ -519,6 +526,40 @@ def test_watched_cycle_reuses_actionable_thread_read_for_reply_preflight(
     assert provider.created_draft_thread_ids == [watched.gmail_thread_id]
     assert item.reason == "gmail_reply_sent"
     assert result.autopilot_sent_count == 1
+
+
+def test_watched_cycle_without_cached_threads_does_not_add_a_remote_preflight(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    _watched, item, _message = add_refused_work_item(
+        db_session,
+        account,
+        order,
+        thread_id="thread-not-polled-this-cycle",
+    )
+    provider = FakeFastWatchedGmailProvider()
+    result = GmailWatchedThreadMonitorResult()
+
+    GmailWatchedThreadMonitorService(provider).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=1,
+        reset_remote_cache=False,
+    )
+
+    db_session.refresh(item)
+    assert provider.latest_calls == []
+    assert provider.created_drafts == []
+    assert item.status == "refused"
+    assert result.autopilot_sent_count == 0
 
 
 def test_active_watched_threads_keep_fair_polling_order_with_actionable_backlog(
@@ -703,7 +744,7 @@ def test_local_stale_scan_continues_past_remote_preflight_budget(
     assert provider.created_drafts == []
 
 
-def test_local_proof_blocker_does_not_consume_remote_reply_preflight(
+def test_missing_proof_is_checked_before_the_next_followup(
     db_session: Session,
     gmail_case,
     monkeypatch: pytest.MonkeyPatch,
@@ -766,6 +807,11 @@ def test_local_proof_blocker_does_not_consume_remote_reply_preflight(
     db_session.commit()
 
     provider = FakeFastWatchedGmailProvider()
+    provider.latest_payloads[_blocked_watched.gmail_thread_id] = payload(
+        blocked_message.provider_message_id,
+        thread_id=_blocked_watched.gmail_thread_id,
+        body=blocked_message.body_text or "Merci de fournir une preuve.",
+    )
     provider.latest_payloads[followup_watched.gmail_thread_id] = payload(
         followup_message.provider_message_id,
         thread_id=followup_watched.gmail_thread_id,
@@ -784,10 +830,10 @@ def test_local_proof_blocker_does_not_consume_remote_reply_preflight(
     db_session.refresh(blocked_item)
     db_session.refresh(followup_item)
     assert blocked_item.status == "manual_review"
-    assert blocked_item.reason == "proof_reply_blocked:missing_order_amount"
-    assert provider.latest_calls == [followup_watched.gmail_thread_id]
-    assert followup_item.reason == "gmail_followup_reply_sent"
-    assert result.autopilot_sent_count == 1
+    assert blocked_item.reason == "proof_reply_blocked:missing_evidence"
+    assert provider.latest_calls == [_blocked_watched.gmail_thread_id]
+    assert followup_item.reason == "waiting_or_under_review_keywords"
+    assert result.autopilot_sent_count == 0
 
 
 def test_fast_unlinked_classification_bounds_long_gmail_threads() -> None:
@@ -1146,6 +1192,13 @@ def test_existing_refused_watched_thread_sends_same_thread_reply_without_global_
     db_session.commit()
     provider = FakeWatchedGmailProvider()
     provider.provider_thread_id_for_drafts = "wrong-thread-for-same-order"
+    provider.thread_payloads[watched.gmail_thread_id] = [
+        payload(
+            inbound.provider_message_id,
+            thread_id=watched.gmail_thread_id,
+            body=inbound.body_text or "",
+        )
+    ]
 
     def fail_global_autopilot(self, db, user, result):  # noqa: ANN001, ARG001
         raise AssertionError("watched Gmail worker must not run the global autopilot scan")
@@ -1676,6 +1729,13 @@ def test_refused_reply_already_sent_workflow_after_provider_send_counts_as_succe
     )
 
     provider = FakeWatchedGmailProvider()
+    provider.thread_payloads[watched.gmail_thread_id] = [
+        payload(
+            inbound.provider_message_id,
+            thread_id=watched.gmail_thread_id,
+            body=inbound.body_text or "",
+        )
+    ]
     result = GmailWatchedThreadMonitorService(provider).process_account(
         db_session,
         owner,
@@ -2155,7 +2215,15 @@ def test_already_replied_refusal_leaves_actionable_queue(
     db_session.add(item)
     db_session.commit()
 
-    result = GmailWatchedThreadMonitorService(FakeWatchedGmailProvider()).process_account(
+    provider = FakeWatchedGmailProvider()
+    provider.thread_payloads[watched.gmail_thread_id] = [
+        payload(
+            inbound.provider_message_id,
+            thread_id=watched.gmail_thread_id,
+            body=inbound.body_text or "",
+        )
+    ]
+    result = GmailWatchedThreadMonitorService(provider).process_account(
         db_session,
         owner,
         account,
@@ -2272,6 +2340,13 @@ def test_failed_refusal_provider_draft_is_recreated_before_autopilot_send(
 
     provider = FakeWatchedGmailProvider()
     provider.provider_thread_id_for_drafts = "thread-failed-draft"
+    provider.thread_payloads[watched.gmail_thread_id] = [
+        payload(
+            inbound.provider_message_id,
+            thread_id=watched.gmail_thread_id,
+            body=inbound.body_text or "",
+        )
+    ]
     result = GmailWatchedThreadMonitorService(provider).process_account(
         db_session,
         owner,
@@ -2414,6 +2489,13 @@ def test_crousty_best_refusal_reply_is_reissued_once_with_asian_passion(
 
     provider = FakeWatchedGmailProvider()
     provider.provider_thread_id_for_drafts = watched.gmail_thread_id
+    provider.thread_payloads[watched.gmail_thread_id] = [
+        payload(
+            inbound.provider_message_id,
+            thread_id=watched.gmail_thread_id,
+            body=inbound.body_text or "",
+        )
+    ]
     result = GmailWatchedThreadMonitorService(provider).process_account(
         db_session,
         owner,
@@ -4022,6 +4104,149 @@ def test_evidence_request_with_existing_proof_sends_gmail_reply(
     task = db_session.scalar(select(EvidenceRequestTask).where(EvidenceRequestTask.order_id == order.id))
     assert task is not None
     assert task.status == "completed"
+
+
+def test_missing_amount_proof_block_is_reopened_and_sent(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    order.order_amount = None
+    db_session.add(
+        EvidenceFile(
+            order_id=order.id,
+            evidence_type="receipt",
+            original_filename="ticket.jpg",
+            storage_path="restaurant_1/order_1/ticket.jpg",
+            storage_backend="local",
+            mime_type="image/jpeg",
+            file_size=123,
+        )
+    )
+    watched, item, message = add_refused_work_item(
+        db_session,
+        account,
+        order,
+        thread_id="thread-proof-retry-missing-amount",
+    )
+    item.status = "manual_review"
+    item.reason = "proof_reply_blocked:missing_order_amount"
+    db_session.add(
+        GmailResponseAnalysis(
+            inbound_message_id=message.id,
+            order_id=order.id,
+            recommended_review_type="evidence_requested",
+            status="analyzed",
+            confidence_score=Decimal("0.90"),
+            reason="evidence_requested",
+        )
+    )
+    db_session.commit()
+    provider = FakeFastWatchedGmailProvider()
+    provider.latest_payloads[watched.gmail_thread_id] = payload(
+        message.provider_message_id,
+        thread_id=watched.gmail_thread_id,
+        body=message.body_text or "Merci de fournir une preuve.",
+    )
+    result = GmailWatchedThreadMonitorResult()
+
+    GmailWatchedThreadMonitorService(provider).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=1,
+    )
+
+    db_session.refresh(item)
+    draft = db_session.scalar(
+        select(EmailDraft)
+        .where(EmailDraft.order_id == order.id, EmailDraft.draft_type == "proof_reply")
+        .order_by(EmailDraft.id.desc())
+    )
+    assert result.autopilot_sent_count == 1
+    assert item.status == "processed"
+    assert item.reason == "gmail_proof_reply_sent"
+    assert draft is not None
+    assert "Montant concerne" not in draft.body
+
+
+def test_evidence_request_recovers_sent_gmail_attachment_before_reply(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("GMAIL_INBOUND_AUTO_SYNC_RUN_AUTOPILOT", "true")
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    monkeypatch.setenv("EVIDENCE_STORAGE_DIR", str(tmp_path / "evidence"))
+    get_settings.cache_clear()
+    order.order_amount = None
+    db_session.commit()
+    sent_claim = payload(
+        "sent-claim-with-ticket",
+        body="Contestation de la commande F93BA.",
+        from_email=account.email_address,
+        to_email="restaurantsfrance@uber.com",
+        attachments=[
+            InboundEmailAttachment(
+                filename="ticket.jpg",
+                mime_type="image/jpeg",
+                content=b"test-jpeg-content",
+            )
+        ],
+    )
+    proof_request = payload(
+        "reply-proof-with-ticket",
+        starred=True,
+        body="Merci de fournir une preuve pour la commande F93BA.",
+    )
+    provider = FakeWatchedGmailProvider()
+    provider.starred_payloads = [proof_request]
+    provider.thread_payloads = {
+        "thread-f93ba": [
+            sent_claim,
+            proof_request,
+        ]
+    }
+    install_fake_classifier(monkeypatch)
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(
+        db_session,
+        owner,
+        account,
+    )
+
+    evidence = db_session.scalar(
+        select(EvidenceFile)
+        .where(EvidenceFile.order_id == order.id)
+        .order_by(EvidenceFile.id.desc())
+    )
+    proof_item = db_session.scalar(
+        select(GmailStarredWorkItem).where(
+            GmailStarredWorkItem.provider_message_id == "reply-proof-with-ticket"
+        )
+    )
+    draft = db_session.scalar(
+        select(EmailDraft)
+        .where(EmailDraft.order_id == order.id, EmailDraft.draft_type == "proof_reply")
+        .order_by(EmailDraft.id.desc())
+    )
+    assert result.autopilot_sent_count == 1, proof_item.reason if proof_item else None
+    assert evidence is not None
+    assert evidence.original_filename == "ticket.jpg"
+    assert (tmp_path / "evidence" / evidence.storage_path).read_bytes() == b"test-jpeg-content"
+    assert proof_item is not None
+    assert proof_item.status == "processed"
+    assert proof_item.reason == "gmail_proof_reply_sent"
+    assert draft is not None
+    assert "Montant concerne" not in draft.body
 
 
 def test_watched_thread_monitor_does_not_duplicate_work_items(

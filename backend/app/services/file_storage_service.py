@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
+from typing import BinaryIO
 from uuid import uuid4
 
 from fastapi import UploadFile, status
@@ -58,16 +60,45 @@ def ensure_evidence_storage() -> Path:
 
 
 def store_evidence_upload(order: ClaimOrder, upload_file: UploadFile) -> StoredEvidenceFile:
+    return _store_evidence_stream(
+        order,
+        original_filename=upload_file.filename,
+        mime_type=upload_file.content_type or None,
+        source=upload_file.file,
+    )
+
+
+def store_evidence_bytes(
+    order: ClaimOrder,
+    *,
+    original_filename: str,
+    mime_type: str | None,
+    content: bytes,
+) -> StoredEvidenceFile:
+    return _store_evidence_stream(
+        order,
+        original_filename=original_filename,
+        mime_type=mime_type,
+        source=BytesIO(content),
+    )
+
+
+def _store_evidence_stream(
+    order: ClaimOrder,
+    *,
+    original_filename: str | None,
+    mime_type: str | None,
+    source: BinaryIO,
+) -> StoredEvidenceFile:
     settings = get_settings()
     if settings.evidence_storage_backend != "local":
         raise FileStorageError("Only local evidence storage is available in V1")
 
-    original_filename = _safe_original_filename(upload_file.filename)
+    original_filename = _safe_original_filename(original_filename)
     extension = Path(original_filename).suffix.lower()
     if extension not in ALLOWED_EVIDENCE_EXTENSIONS:
         raise FileStorageError("Evidence file extension is not allowed")
 
-    mime_type = upload_file.content_type or None
     if mime_type and mime_type not in ALLOWED_EVIDENCE_MIME_TYPES:
         raise FileStorageError("Evidence file MIME type is not allowed")
 
@@ -87,7 +118,7 @@ def store_evidence_upload(order: ClaimOrder, upload_file: UploadFile) -> StoredE
 
     try:
         with temporary_path.open("wb") as output_file:
-            while chunk := upload_file.file.read(CHUNK_SIZE):
+            while chunk := source.read(CHUNK_SIZE):
                 file_size += len(chunk)
                 if file_size > max_size:
                     raise FileStorageError("Evidence file is too large")
