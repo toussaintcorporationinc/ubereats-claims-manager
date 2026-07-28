@@ -642,6 +642,49 @@ def test_active_watched_threads_prioritize_actionable_backlog(
     assert [watched.gmail_thread_id for watched in selected] == [_actionable.gmail_thread_id]
 
 
+def test_active_watched_threads_prioritize_unread_remote_ref_before_actionable_backlog(
+    db_session: Session,
+    gmail_case,
+) -> None:
+    _owner, account, order = gmail_case
+    actionable, _item, _message = add_refused_work_item(
+        db_session,
+        account,
+        order,
+        thread_id="thread-actionable-after-unread",
+    )
+    actionable.last_processed_at = utc_now()
+    unread = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-unread-remote-ref",
+        first_starred_message_id="message-unread-remote-ref",
+        status="active",
+        star_active=True,
+    )
+    db_session.add(unread)
+    db_session.flush()
+    db_session.add(
+        GmailStarredWorkItem(
+            watched_thread_id=unread.id,
+            email_account_id=account.id,
+            gmail_thread_id=unread.gmail_thread_id,
+            provider_message_id="message-unread-remote-ref",
+            status="pending",
+        )
+    )
+    db_session.commit()
+
+    selected = GmailWatchedThreadMonitorService(
+        FakeWatchedGmailProvider()
+    ).get_active_watched_threads(
+        db_session,
+        account,
+        max_per_cycle=1,
+    )
+
+    assert [watched.gmail_thread_id for watched in selected] == [unread.gmail_thread_id]
+
+
 def test_active_watched_threads_prioritize_followup_backlog(
     db_session: Session,
     gmail_case,

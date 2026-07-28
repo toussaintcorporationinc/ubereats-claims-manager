@@ -112,7 +112,7 @@ class GmailInboundAutoSyncService:
                         max_threads=self.watched_threads_batch_size(),
                         discover_starred=True,
                         discover_full_history=False,
-                        starred_discovery_max_messages=self.watched_threads_batch_size(),
+                        starred_discovery_max_messages=self.starred_discovery_batch_size(),
                         process_new_messages=self.settings.gmail_watched_threads_process_new_messages,
                     )
                     self.add_watched_thread_result(result, watched_result)
@@ -275,6 +275,14 @@ class GmailInboundAutoSyncService:
         configured_batch = max(1, self.settings.gmail_watched_threads_read_batch_per_cycle)
         configured_max = max(1, self.settings.gmail_watched_threads_max_per_cycle)
         return min(configured_batch, configured_max)
+
+    def starred_discovery_batch_size(self) -> int:
+        # Gmail's list endpoint returns lightweight message/thread references.
+        # Scan one full Gmail page per cycle so the newest starred queue is not
+        # artificially limited by the much smaller thread-body read budget.
+        configured_page = max(1, self.settings.gmail_starred_page_size)
+        configured_max = max(1, self.settings.gmail_starred_max_messages_per_sync)
+        return min(configured_page, configured_max)
 
     def effective_interval_seconds(self) -> int:
         if self.settings.gmail_inbound_auto_sync_continuous_enabled:

@@ -80,6 +80,7 @@ FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed
 SKIPPABLE_FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed"}
 MAX_AUTOPILOT_REPLY_CANDIDATES_PER_CYCLE = 3
 MAX_AUTOPILOT_REPLIES_PER_CYCLE = 1
+MAX_LOCAL_CLASSIFICATIONS_PER_CYCLE = 250
 MAX_LOCAL_REPLY_CANDIDATES_PER_CYCLE = 250
 RECOVERABLE_PROOF_REPLY_REASONS = {
     "proof_reply_blocked:missing_order_amount",
@@ -459,13 +460,20 @@ class GmailWatchedThreadMonitorService:
         max_per_cycle = max_threads or self.settings.gmail_watched_threads_max_per_cycle
         sync_result = GmailInboundSyncResult(status="success")
         if process_local_backlog:
+            local_backlog_budget = max(
+                max_per_cycle,
+                min(
+                    max(1, self.settings.gmail_watched_threads_max_per_cycle),
+                    MAX_LOCAL_CLASSIFICATIONS_PER_CYCLE,
+                ),
+            )
             self.process_pending_local_work_items(
                 db,
                 user,
                 account,
                 result=result,
                 sync_result=sync_result,
-                max_items=max_per_cycle,
+                max_items=local_backlog_budget,
             )
         # Local classification does not call Gmail. Give remote thread polling
         # its own budget so a large local backlog cannot hide fresh Uber replies.
@@ -2526,9 +2534,9 @@ class GmailWatchedThreadMonitorService:
                         (GmailWatchedThread.status.in_(sorted(POSITIVE_WATCHED_STATUSES)), 0),
                         else_=1,
                     ),
+                    case((pending_remote_ref, 0), else_=1),
                     case((actionable_refusal, 0), else_=1),
                     case((actionable_followup, 0), else_=1),
-                    case((pending_remote_ref, 0), else_=1),
                     GmailWatchedThread.last_processed_at.asc().nullsfirst(),
                     GmailWatchedThread.last_message_at.desc().nullslast(),
                     GmailWatchedThread.id.asc(),

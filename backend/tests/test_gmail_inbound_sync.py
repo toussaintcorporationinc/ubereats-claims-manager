@@ -429,6 +429,21 @@ def test_auto_sync_read_batch_is_independent_from_send_candidate_batch(
     get_settings.cache_clear()
 
 
+def test_auto_sync_discovery_batch_is_independent_from_thread_read_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GMAIL_WATCHED_THREADS_READ_BATCH_PER_CYCLE", "10")
+    monkeypatch.setenv("GMAIL_STARRED_PAGE_SIZE", "500")
+    monkeypatch.setenv("GMAIL_STARRED_MAX_MESSAGES_PER_SYNC", "50000")
+    get_settings.cache_clear()
+
+    service = GmailInboundAutoSyncService(FakeInboundGmailProvider())
+
+    assert service.watched_threads_batch_size() == 10
+    assert service.starred_discovery_batch_size() == 500
+    get_settings.cache_clear()
+
+
 def test_health_public_works(unauthenticated_client: TestClient) -> None:
     response = unauthenticated_client.get("/health")
 
@@ -1410,6 +1425,7 @@ def test_auto_sync_watched_threads_skips_heavy_full_history_sync(
     assert fake_gmail_provider.all_query_options == []
     assert fake_gmail_provider.query_limits
     assert fake_gmail_provider.query_limits[0][0] == GMAIL_STARRED_URGENT_QUERY
+    assert fake_gmail_provider.query_limits[0][1] == 500
     assert sync_state.status == "success"
     assert sync_state.last_error is None
     get_settings.cache_clear()
