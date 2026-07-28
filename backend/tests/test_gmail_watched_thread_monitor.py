@@ -3706,6 +3706,77 @@ def test_positive_star_cleanup_uses_remote_state_when_first_starred_message_is_s
     assert provider.removed_labels == [("current-starred-message", "STARRED")]
 
 
+def test_stale_discovery_ref_does_not_reopen_completed_positive_thread(
+    db_session: Session,
+    gmail_case,
+) -> None:
+    _owner, account, order = gmail_case
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-completed-positive",
+        first_starred_message_id="stale-star-ref",
+        claim_order_id=order.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="payment_confirmed",
+        star_active=False,
+    )
+    db_session.add(watched)
+    db_session.flush()
+    db_session.add(
+        GmailStarredWorkItem(
+            watched_thread_id=watched.id,
+            email_account_id=account.id,
+            gmail_thread_id=watched.gmail_thread_id,
+            provider_message_id="stale-star-ref",
+            status="positive",
+            reason="payment_confirmed",
+        )
+    )
+    db_session.commit()
+    service = GmailWatchedThreadMonitorService(FakeWatchedGmailProvider())
+
+    refreshed, created = service.ensure_watched_thread_ref(
+        db_session,
+        account,
+        gmail_thread_id=watched.gmail_thread_id,
+        provider_message_id="stale-star-ref",
+    )
+
+    assert created is False
+    assert refreshed.star_active is False
+
+
+def test_new_discovery_ref_reopens_completed_positive_thread(
+    db_session: Session,
+    gmail_case,
+) -> None:
+    _owner, account, order = gmail_case
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-completed-positive-new-ref",
+        first_starred_message_id="old-star-ref",
+        claim_order_id=order.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="payment_confirmed",
+        star_active=False,
+    )
+    db_session.add(watched)
+    db_session.commit()
+    service = GmailWatchedThreadMonitorService(FakeWatchedGmailProvider())
+
+    refreshed, created = service.ensure_watched_thread_ref(
+        db_session,
+        account,
+        gmail_thread_id=watched.gmail_thread_id,
+        provider_message_id="new-star-ref",
+    )
+
+    assert created is False
+    assert refreshed.star_active is True
+
+
 def test_positive_star_removal_failure_stays_pending_and_retries_after_scope_grant(
     db_session: Session,
     gmail_case,

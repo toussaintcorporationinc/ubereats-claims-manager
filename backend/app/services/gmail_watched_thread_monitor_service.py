@@ -2954,6 +2954,20 @@ class GmailWatchedThreadMonitorService:
                 )
                 if watched is None:
                     raise
+        existing_ref_item = db.scalar(
+            select(GmailStarredWorkItem.id).where(
+                GmailStarredWorkItem.email_account_id == account.id,
+                GmailStarredWorkItem.provider_message_id == provider_message_id,
+            )
+        )
+        stale_completed_positive_ref = (
+            watched.status in POSITIVE_WATCHED_STATUSES
+            and not watched.star_active
+            and (
+                provider_message_id == watched.first_starred_message_id
+                or existing_ref_item is not None
+            )
+        )
         missing_remote_ref = None
         if watched.status == "closed":
             missing_remote_ref = db.scalar(
@@ -2968,7 +2982,7 @@ class GmailWatchedThreadMonitorService:
             watched.star_active = True
         if not watched.first_starred_message_id:
             watched.first_starred_message_id = provider_message_id
-        if watched.status != "closed":
+        if watched.status != "closed" and not stale_completed_positive_ref:
             watched.star_active = True
         db.flush()
         return watched, created
@@ -3486,6 +3500,8 @@ class GmailWatchedThreadMonitorService:
             failure_reason = "provider_unsupported"
         elif account is None:
             failure_reason = "email_account_missing"
+        elif allow_remote_lookup and not remote_lookup_complete:
+            failure_reason = "remote_star_lookup_incomplete"
         elif not starred_message_ids and not remote_lookup_complete:
             failure_reason = "starred_message_id_missing"
         elif starred_message_ids:
@@ -3528,11 +3544,16 @@ class GmailWatchedThreadMonitorService:
             labels = [label for label in (message.provider_labels_json or []) if str(label).upper() != "STARRED"]
             message.provider_labels_json = labels
         watched.star_active = False
+        audit_action = (
+            "gmail_watched_thread.star_removed_after_positive"
+            if starred_message_ids
+            else "gmail_watched_thread.star_already_removed_after_positive"
+        )
         add_audit_log(
             db,
             entity_type="gmail_watched_thread",
             entity_id=watched.id,
-            action="gmail_watched_thread.star_removed_after_positive",
+            action=audit_action,
             user_id=user.id,
             new_value={"gmail_thread_id": watched.gmail_thread_id},
         )
