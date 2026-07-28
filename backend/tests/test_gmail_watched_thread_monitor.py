@@ -929,6 +929,57 @@ def test_followup_is_prioritized_before_incomplete_proof_backlog(
     assert result.autopilot_sent_count == 1
 
 
+def test_positive_accounting_review_is_never_queued_as_followup(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    watched, item, message = add_refused_work_item(
+        db_session,
+        account,
+        order,
+        thread_id="thread-positive-accounting-review",
+    )
+    watched.status = "manual_review"
+    item.status = "manual_review"
+    item.reason = "positive_payment_not_accounted"
+    db_session.add(
+        GmailResponseAnalysis(
+            inbound_message_id=message.id,
+            order_id=order.id,
+            recommended_review_type="followup_needed",
+            status="analyzed",
+            confidence_score=Decimal("0.70"),
+            reason="waiting_or_under_review_keywords",
+        )
+    )
+    db_session.commit()
+    provider = FakeFastWatchedGmailProvider()
+    provider.latest_payloads[watched.gmail_thread_id] = payload(
+        message.provider_message_id,
+        thread_id=watched.gmail_thread_id,
+        body=message.body_text or "",
+    )
+    result = GmailWatchedThreadMonitorResult()
+
+    GmailWatchedThreadMonitorService(provider).send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=1,
+    )
+
+    assert provider.latest_calls == []
+    assert provider.created_drafts == []
+    assert provider.sent_drafts == []
+    assert result.autopilot_sent_count == 0
+
+
 def test_fast_unlinked_classification_bounds_long_gmail_threads() -> None:
     body = (
         "ancienne conversation sans decision " * 5000

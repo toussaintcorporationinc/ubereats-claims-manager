@@ -83,6 +83,11 @@ RECOVERABLE_PROOF_REPLY_REASONS = {
     "proof_reply_blocked:missing_order_amount",
     "proof_reply_blocked:missing_currency",
 }
+SAFE_FOLLOWUP_WORK_ITEM_REASONS = {
+    "waiting_or_under_review_keywords",
+    "gmail_followup_reply_sent",
+    "followup_cooldown_active",
+}
 POSITIVE_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confirmed"}
 POSITIVE_WATCHED_STATUSES = {"positive", "payment_confirmed"}
 REFUSAL_REVIEW_TYPES = {"refused"}
@@ -769,7 +774,12 @@ class GmailWatchedThreadMonitorService:
                         and_(
                             GmailStarredWorkItem.status == "manual_review",
                             or_(
-                                GmailResponseAnalysis.recommended_review_type == "followup_needed",
+                                and_(
+                                    GmailResponseAnalysis.recommended_review_type == "followup_needed",
+                                    GmailStarredWorkItem.reason.in_(
+                                        sorted(SAFE_FOLLOWUP_WORK_ITEM_REASONS)
+                                    ),
+                                ),
                                 and_(
                                     GmailResponseAnalysis.recommended_review_type.in_(
                                         sorted(EVIDENCE_REVIEW_TYPES)
@@ -2453,6 +2463,7 @@ class GmailWatchedThreadMonitorService:
                 GmailStarredWorkItem.inbound_message_id.is_not(None),
                 GmailStarredWorkItem.status == "manual_review",
                 GmailResponseAnalysis.recommended_review_type == "followup_needed",
+                GmailStarredWorkItem.reason.in_(sorted(SAFE_FOLLOWUP_WORK_ITEM_REASONS)),
             )
             .exists()
         )
