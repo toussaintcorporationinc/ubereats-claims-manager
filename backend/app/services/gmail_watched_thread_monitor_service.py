@@ -2255,36 +2255,12 @@ class GmailWatchedThreadMonitorService:
             )
             .exists()
         )
-        actionable_work_item = (
+        actionable_refusal = (
             select(GmailStarredWorkItem.id)
-            .join(
-                InboundEmailMessage,
-                InboundEmailMessage.id == GmailStarredWorkItem.inbound_message_id,
-            )
-            .outerjoin(
-                GmailResponseAnalysis,
-                GmailResponseAnalysis.inbound_message_id == InboundEmailMessage.id,
-            )
             .where(
                 GmailStarredWorkItem.watched_thread_id == GmailWatchedThread.id,
                 GmailStarredWorkItem.inbound_message_id.is_not(None),
-                or_(
-                    GmailStarredWorkItem.status.in_(["refused", "evidence_needed"]),
-                    and_(
-                        GmailStarredWorkItem.status == "manual_review",
-                        or_(
-                            GmailResponseAnalysis.recommended_review_type == "followup_needed",
-                            and_(
-                                GmailResponseAnalysis.recommended_review_type.in_(
-                                    sorted(EVIDENCE_REVIEW_TYPES)
-                                ),
-                                GmailStarredWorkItem.reason.in_(
-                                    sorted(RECOVERABLE_PROOF_REPLY_REASONS)
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
+                GmailStarredWorkItem.status == "refused",
             )
             .exists()
         )
@@ -2302,7 +2278,7 @@ class GmailWatchedThreadMonitorService:
                         (GmailWatchedThread.status.in_(sorted(POSITIVE_WATCHED_STATUSES)), 0),
                         else_=1,
                     ),
-                    case((actionable_work_item, 0), else_=1),
+                    case((actionable_refusal, 0), else_=1),
                     case((pending_remote_ref, 0), else_=1),
                     GmailWatchedThread.last_processed_at.asc().nullsfirst(),
                     GmailWatchedThread.last_message_at.desc().nullslast(),
