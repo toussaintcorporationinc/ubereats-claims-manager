@@ -34,6 +34,13 @@ from app.services.email_provider import (
 )
 from app.services.file_storage_service import FileStorageError, resolve_evidence_path
 from app.services.gmail_scope_service import gmail_scopes_allow_modify, gmail_scopes_with_modify
+from app.services.gmail_send_safety_service import (
+    GMAIL_REMOTE_SEND_WINDOW_UNAVAILABLE_REASON,
+    GMAIL_SEND_DAILY_LIMIT_REASON,
+    GMAIL_SEND_PACING_REASON,
+    GmailSendSafetyError,
+    minimum_gmail_send_interval_seconds,
+)
 from app.services.token_cipher_service import TokenCipherService
 
 GMAIL_AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -323,6 +330,53 @@ class GmailEmailProvider:
             provider_thread_id=response_payload.get("threadId") or provider_draft.provider_thread_id,
             sent_at=utc_now(),
         )
+
+    def validate_remote_send_window(
+        self,
+        db: Session,
+        user: User,
+        provider_draft: EmailProviderDraft,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        """Fail closed when the real Gmail sent history exceeds safety limits."""
+        settings = get_settings()
+        daily_limit = settings.autopilot_per_gmail_account_daily_limit
+        if daily_limit <= 0:
+            return
+
+        account = self.get_account_for_provider_draft(db, user.id, provider_draft)
+        if account is None:
+            raise GmailSendSafetyError(GMAIL_REMOTE_SEND_WINDOW_UNAVAILABLE_REASON)
+
+        current_time = now or utc_now()
+        daily_after = int((current_time - timedelta(hours=24)).timestamp())
+        minimum_interval = minimum_gmail_send_interval_seconds(daily_limit)
+        pacing_after = int((current_time - timedelta(seconds=minimum_interval)).timestamp())
+
+        try:
+            sent_refs = self.list_message_refs_for_account(
+                db,
+                account,
+                query=f"in:sent after:{daily_after}",
+                max_results=daily_limit,
+            )
+            if len(sent_refs) >= daily_limit:
+                raise GmailSendSafetyError(GMAIL_SEND_DAILY_LIMIT_REASON)
+
+            recent_sent_refs = self.list_message_refs_for_account(
+                db,
+                account,
+                query=f"in:sent after:{pacing_after}",
+                max_results=1,
+            )
+        except GmailSendSafetyError:
+            raise
+        except EmailProviderError as exc:
+            raise GmailSendSafetyError(GMAIL_REMOTE_SEND_WINDOW_UNAVAILABLE_REASON) from exc
+
+        if recent_sent_refs:
+            raise GmailSendSafetyError(GMAIL_SEND_PACING_REASON)
 
     def list_messages(self, db: Session, user: User, query: str, max_results: int) -> list[str]:
         self.ensure_enabled_and_configured(require_secret=True)

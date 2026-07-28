@@ -1770,6 +1770,9 @@ def send_provider_draft(
         raise AutopilotError(skip_reason, 409)
     try:
         lock_and_validate_gmail_send(db, provider_draft)
+        remote_send_validator = getattr(provider, "validate_remote_send_window", None)
+        if callable(remote_send_validator):
+            remote_send_validator(db, user, provider_draft)
     except GmailSendSafetyError as exc:
         raise AutopilotError(exc.reason, 409) from exc
     old_status = provider_draft.status

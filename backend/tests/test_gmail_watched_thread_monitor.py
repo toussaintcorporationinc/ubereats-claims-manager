@@ -3561,7 +3561,7 @@ def test_positive_customer_refund_amount_conflict_keeps_star_and_does_not_accoun
     assert result.positive_responses == 0
 
 
-def test_emergency_stop_keeps_star_on_positive_watched_thread(
+def test_emergency_stop_allows_verified_positive_star_cleanup(
     db_session: Session,
     gmail_case,
     monkeypatch: pytest.MonkeyPatch,
@@ -3587,8 +3587,8 @@ def test_emergency_stop_keeps_star_on_positive_watched_thread(
     watched = db_session.scalar(select(GmailWatchedThread))
     assert watched is not None
     assert watched.status == "payment_confirmed"
-    assert watched.star_active is True
-    assert provider.removed_labels == []
+    assert watched.star_active is False
+    assert provider.removed_labels == [("star-emergency-positive", "STARRED")]
     assert result.positive_responses >= 1
 
 

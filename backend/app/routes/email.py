@@ -525,6 +525,9 @@ def send_gmail_provider_draft(
 
     try:
         lock_and_validate_gmail_send(db, provider_draft)
+        remote_send_validator = getattr(provider, "validate_remote_send_window", None)
+        if callable(remote_send_validator):
+            remote_send_validator(db, current_user, provider_draft)
     except GmailSendSafetyError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.reason) from exc
 

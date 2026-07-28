@@ -29,6 +29,11 @@ from app.routes.email import get_gmail_provider
 from app.services.autopilot_service import create_emergency_stop
 from app.services.email_provider import EmailConnectionStatus, EmailProviderError, EmailSendResult
 from app.services.gmail_email_provider import GmailEmailProvider
+from app.services.gmail_send_safety_service import (
+    GMAIL_SEND_DAILY_LIMIT_REASON,
+    GMAIL_SEND_PACING_REASON,
+    GmailSendSafetyError,
+)
 
 
 def get_active_account(db: Session, user_id: int) -> EmailAccount | None:
@@ -49,6 +54,8 @@ class FakeGmailEmailProvider:
         self.last_evidence_count = 0
         self.fail_send = False
         self.send_count = 0
+        self.remote_send_safety_reason: str | None = None
+        self.remote_validation_count = 0
 
     def get_connection_status(self, db: Session, user: User) -> EmailConnectionStatus:
         if not get_settings().email_provider_enabled:
@@ -109,6 +116,16 @@ class FakeGmailEmailProvider:
             provider_thread_id=f"fake-sent-thread-{provider_draft.id}",
             sent_at=utc_now(),
         )
+
+    def validate_remote_send_window(
+        self,
+        db: Session,
+        user: User,
+        provider_draft: EmailProviderDraft,
+    ) -> None:
+        self.remote_validation_count += 1
+        if self.remote_send_safety_reason:
+            raise GmailSendSafetyError(self.remote_send_safety_reason)
 
 
 @pytest.fixture()
@@ -1384,6 +1401,96 @@ def test_send_gmail_draft_enforces_per_account_pacing(
     assert fake_gmail_provider.send_count == 1
     db_session.refresh(second_provider_draft)
     assert second_provider_draft.status == "provider_draft_created"
+
+
+def test_send_gmail_draft_respects_remote_mailbox_daily_limit(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-REMOTE-SEND-LIMIT")
+    provider_draft = create_provider_draft_record(db_session, draft["id"])
+    fake_gmail_provider.remote_send_safety_reason = GMAIL_SEND_DAILY_LIMIT_REASON
+
+    response = send_provider_draft(client, provider_draft.provider_draft_id or "")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == GMAIL_SEND_DAILY_LIMIT_REASON
+    assert fake_gmail_provider.remote_validation_count == 1
+    assert fake_gmail_provider.send_count == 0
+    db_session.refresh(provider_draft)
+    assert provider_draft.status == "provider_draft_created"
+
+
+def test_real_gmail_provider_counts_actual_sent_mail_before_send(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-REMOTE-MAILBOX-COUNT")
+    provider_draft = create_provider_draft_record(db_session, draft["id"])
+    provider = GmailEmailProvider()
+    queries: list[tuple[str, int]] = []
+
+    def fake_list_refs(
+        db: Session,
+        account: EmailAccount,
+        *,
+        query: str,
+        max_results: int,
+    ) -> list[dict[str, str]]:
+        queries.append((query, max_results))
+        return [{"id": str(index), "threadId": str(index)} for index in range(max_results)]
+
+    monkeypatch.setattr(provider, "list_message_refs_for_account", fake_list_refs)
+
+    with pytest.raises(GmailSendSafetyError) as error:
+        provider.validate_remote_send_window(db_session, owner, provider_draft)
+
+    assert error.value.reason == GMAIL_SEND_DAILY_LIMIT_REASON
+    assert len(queries) == 1
+    assert queries[0][0].startswith("in:sent after:")
+    assert queries[0][1] == get_settings().autopilot_per_gmail_account_daily_limit
+
+
+def test_real_gmail_provider_detects_recent_external_send(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-REMOTE-MAILBOX-PACING")
+    provider_draft = create_provider_draft_record(db_session, draft["id"])
+    provider = GmailEmailProvider()
+
+    def fake_list_refs(
+        db: Session,
+        account: EmailAccount,
+        *,
+        query: str,
+        max_results: int,
+    ) -> list[dict[str, str]]:
+        if max_results == 1:
+            return [{"id": "recent-external-send", "threadId": "recent-thread"}]
+        return []
+
+    monkeypatch.setattr(provider, "list_message_refs_for_account", fake_list_refs)
+
+    with pytest.raises(GmailSendSafetyError) as error:
+        provider.validate_remote_send_window(db_session, owner, provider_draft)
+
+    assert error.value.reason == GMAIL_SEND_PACING_REASON
 
 
 def test_send_gmail_draft_rejects_duplicate_initial_claim(

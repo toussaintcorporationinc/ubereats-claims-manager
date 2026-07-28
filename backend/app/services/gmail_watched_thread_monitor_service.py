@@ -487,7 +487,7 @@ class GmailWatchedThreadMonitorService:
             active_threads: list[GmailWatchedThread] = []
         else:
             can_modify_stars = gmail_scopes_allow_modify(account.scopes)
-            star_mutations_allowed = can_modify_stars and not autopilot_is_emergency_stopped(db)
+            star_mutations_allowed = can_modify_stars
             active_threads = self.get_active_watched_threads(
                 db,
                 account,
@@ -3458,8 +3458,6 @@ class GmailWatchedThreadMonitorService:
         allow_remote_lookup: bool = False,
         result: GmailWatchedThreadMonitorResult | None = None,
     ) -> bool:
-        if autopilot_is_emergency_stopped(db):
-            return False
         if (
             self._star_removal_budget_active
             and self._positive_star_removal_attempts >= MAX_POSITIVE_STAR_REMOVALS_PER_ACCOUNT_CYCLE
