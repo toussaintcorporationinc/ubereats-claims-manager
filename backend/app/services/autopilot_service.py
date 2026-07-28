@@ -63,6 +63,12 @@ from app.services.email_provider import (
 )
 from app.services.followup_policy_service import complete_task_for_sent_provider_draft
 from app.services.gmail_quota import parse_gmail_retry_after
+from app.services.gmail_send_safety_service import (
+    GMAIL_SEND_DAILY_LIMIT_REASON,
+    GMAIL_SEND_SAFETY_REASONS,
+    GmailSendSafetyError,
+    lock_and_validate_gmail_send,
+)
 from app.services.gmail_payment_signal_service import (
     current_payload_response_order_number,
     current_response_order_number,
@@ -305,6 +311,17 @@ def run_autopilot(
             if action.status == "sent":
                 global_sent += 1
                 per_restaurant_sent[candidate.restaurant_id] = per_restaurant_sent.get(candidate.restaurant_id, 0) + 1
+        except AutopilotError as exc:
+            if exc.message in GMAIL_SEND_SAFETY_REASONS:
+                mark_skipped(action, exc.message, dry_run=False)
+                if exc.message == GMAIL_SEND_DAILY_LIMIT_REASON:
+                    quota_pause_reason = exc.message
+                    break
+                continue
+            action.status = "failed"
+            action.skipped_reason = exc.message
+            action.updated_at = utc_now()
+            errors.append(f"{candidate.case_type}:{candidate.case_id}:{exc.message}")
         except Exception as exc:  # pragma: no cover - defensive path covered by integration behavior
             retry_after = parse_gmail_retry_after(
                 str(exc),
@@ -1751,6 +1768,10 @@ def send_provider_draft(
     skip_reason = provider_draft_limit_skip_reason(db, provider_draft)
     if skip_reason is not None:
         raise AutopilotError(skip_reason, 409)
+    try:
+        lock_and_validate_gmail_send(db, provider_draft)
+    except GmailSendSafetyError as exc:
+        raise AutopilotError(exc.reason, 409) from exc
     old_status = provider_draft.status
     provider_draft.status = "send_requested"
     provider_draft.updated_at = utc_now()

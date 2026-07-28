@@ -47,6 +47,7 @@ class FakeGmailEmailProvider:
         self.last_include_evidence = False
         self.last_evidence_count = 0
         self.fail_send = False
+        self.send_count = 0
 
     def get_connection_status(self, db: Session, user: User) -> EmailConnectionStatus:
         if not get_settings().email_provider_enabled:
@@ -74,12 +75,14 @@ class FakeGmailEmailProvider:
     ) -> EmailProviderDraft:
         if not get_settings().email_provider_enabled:
             raise EmailProviderError("Email provider is disabled", 503)
-        if get_active_account(db, user.id) is None:
+        account = get_active_account(db, user.id)
+        if account is None:
             raise EmailProviderError("Gmail account is not connected", 409)
         self.last_include_evidence = include_evidence
         self.last_evidence_count = len([item for item in email_draft.order.evidence_files if item.deleted_at is None])
         provider_draft = EmailProviderDraft(
             email_draft_id=email_draft.id,
+            email_account_id=account.id,
             provider="gmail",
             provider_draft_id=f"fake-gmail-draft-{email_draft.id}",
             provider_thread_id=f"fake-thread-{email_draft.id}",
@@ -99,6 +102,7 @@ class FakeGmailEmailProvider:
             raise EmailProviderError("Gmail account is not connected", 409)
         if self.fail_send:
             raise EmailProviderError("Fake Gmail send failed", 502)
+        self.send_count += 1
         return EmailSendResult(
             provider_message_id=f"fake-message-{provider_draft.id}",
             provider_thread_id=f"fake-sent-thread-{provider_draft.id}",
@@ -255,13 +259,16 @@ def create_provider_draft_record(
     draft_id: int,
     status: str = "provider_draft_created",
     created_by_user_id: int = 1,
+    provider_draft_suffix: str = "",
 ) -> EmailProviderDraft:
     draft = db_session.get(EmailDraft, draft_id)
     assert draft is not None
+    account = get_active_account(db_session, created_by_user_id)
     provider_draft = EmailProviderDraft(
         email_draft_id=draft_id,
+        email_account_id=account.id if account is not None else None,
         provider="gmail",
-        provider_draft_id=f"manual-gmail-draft-{draft_id}",
+        provider_draft_id=f"manual-gmail-draft-{draft_id}{provider_draft_suffix}",
         provider_thread_id=f"manual-thread-{draft_id}",
         to_email="merchants@uber.com",
         subject=draft.subject,
@@ -1351,6 +1358,59 @@ def test_send_gmail_draft_updates_tracking_order_thread_and_audit(
         )
     )
     assert audit_log is not None
+
+
+def test_send_gmail_draft_enforces_per_account_pacing(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    first_draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-SEND-PACING-1")
+    second_draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-SEND-PACING-2")
+    first_provider_draft = create_provider_draft_record(db_session, first_draft["id"], provider_draft_suffix="-first")
+    second_provider_draft = create_provider_draft_record(db_session, second_draft["id"], provider_draft_suffix="-second")
+
+    first_response = send_provider_draft(client, first_provider_draft.provider_draft_id or "")
+    second_response = send_provider_draft(client, second_provider_draft.provider_draft_id or "")
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 409
+    assert second_response.json()["detail"] == "gmail_account_send_pacing_active"
+    assert fake_gmail_provider.send_count == 1
+    db_session.refresh(second_provider_draft)
+    assert second_provider_draft.status == "provider_draft_created"
+
+
+def test_send_gmail_draft_rejects_duplicate_initial_claim(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-SEND-DUPLICATE")
+    first_provider_draft = create_provider_draft_record(db_session, draft["id"], provider_draft_suffix="-first")
+    second_provider_draft = create_provider_draft_record(db_session, draft["id"], provider_draft_suffix="-second")
+
+    first_response = send_provider_draft(client, first_provider_draft.provider_draft_id or "")
+    assert first_response.status_code == 200
+    db_session.refresh(first_provider_draft)
+    first_provider_draft.sent_at = utc_now() - timedelta(minutes=10)
+    db_session.commit()
+
+    second_response = send_provider_draft(client, second_provider_draft.provider_draft_id or "")
+
+    assert second_response.status_code == 409
+    assert second_response.json()["detail"] == "gmail_initial_claim_already_sent"
+    assert fake_gmail_provider.send_count == 1
+    db_session.refresh(second_provider_draft)
+    assert second_provider_draft.status == "provider_draft_created"
 
 
 def test_send_gmail_draft_provider_failure_sets_failed_status_and_audit(

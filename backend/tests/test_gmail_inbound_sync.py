@@ -91,8 +91,11 @@ class FakeInboundGmailProvider:
         to_email: str,
         include_evidence: bool,
     ) -> EmailProviderDraft:
+        account = get_active_account(db, user.id)
+        assert account is not None
         provider_draft = EmailProviderDraft(
             email_draft_id=email_draft.id,
+            email_account_id=account.id,
             provider="gmail",
             provider_draft_id=f"fake-inbound-autopilot-{email_draft.id}-{utc_now().timestamp()}",
             provider_thread_id=f"fake-inbound-thread-{email_draft.id}",
@@ -336,6 +339,7 @@ def create_sent_email_context(
     order.customer_name = "Client Test"
     order.order_date = utc_now().date()
     order.status = order_status
+    account = get_active_account(db_session, 1)
     draft = EmailDraft(
         order_id=order.id,
         draft_type="initial_claim",
@@ -347,6 +351,7 @@ def create_sent_email_context(
     db_session.flush()
     provider_draft = EmailProviderDraft(
         email_draft_id=draft.id,
+        email_account_id=account.id if account is not None else None,
         provider="gmail",
         provider_draft_id=f"gmail-draft-{order_number}",
         provider_thread_id=thread_id,
@@ -356,7 +361,7 @@ def create_sent_email_context(
         status="sent",
         created_by_user_id=1,
         sent_by_user_id=1,
-        sent_at=utc_now(),
+        sent_at=utc_now() - timedelta(minutes=10),
     )
     db_session.add(provider_draft)
     db_session.add(

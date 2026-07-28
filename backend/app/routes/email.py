@@ -81,6 +81,10 @@ from app.services.gmail_inbound_sync_service import (
 )
 from app.services.gmail_quota import parse_gmail_retry_after_from_errors, seconds_until_gmail_retry
 from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
+from app.services.gmail_send_safety_service import (
+    GmailSendSafetyError,
+    lock_and_validate_gmail_send,
+)
 from app.services.gmail_scope_service import gmail_scopes_allow_modify
 from app.services.gmail_watched_thread_monitor_service import GmailWatchedThreadMonitorService
 from app.services.resend_email_provider import ResendEmailProvider
@@ -518,6 +522,11 @@ def send_gmail_provider_draft(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Email provider is disabled")
     if not connection_status.connected:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Gmail account is not connected")
+
+    try:
+        lock_and_validate_gmail_send(db, provider_draft)
+    except GmailSendSafetyError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.reason) from exc
 
     old_status = provider_draft.status
     provider_draft.status = "send_requested"
