@@ -1075,6 +1075,84 @@ def test_terminal_positive_order_does_not_starve_next_safe_followup(
     assert result.autopilot_sent_count == 1
 
 
+def test_waiting_followup_is_prioritized_before_cooldown_work_item(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    cooldown_watched, cooldown_item, cooldown_message = add_refused_work_item(
+        db_session,
+        account,
+        order,
+        thread_id="thread-cooldown-priority",
+    )
+    cooldown_item.status = "manual_review"
+    cooldown_item.reason = "followup_cooldown_active"
+    cooldown_item.processed_at = utc_now() - timedelta(days=2)
+    db_session.add(
+        GmailResponseAnalysis(
+            inbound_message_id=cooldown_message.id,
+            order_id=order.id,
+            recommended_review_type="followup_needed",
+            status="analyzed",
+            confidence_score=Decimal("0.80"),
+            reason="waiting_or_under_review_keywords",
+        )
+    )
+    waiting_watched, waiting_item, waiting_message = add_refused_work_item(
+        db_session,
+        account,
+        order,
+        thread_id="thread-waiting-priority",
+    )
+    waiting_item.status = "manual_review"
+    waiting_item.reason = "waiting_or_under_review_keywords"
+    db_session.add(
+        GmailResponseAnalysis(
+            inbound_message_id=waiting_message.id,
+            order_id=order.id,
+            recommended_review_type="followup_needed",
+            status="analyzed",
+            confidence_score=Decimal("0.80"),
+            reason="waiting_or_under_review_keywords",
+        )
+    )
+    db_session.commit()
+    provider = FakeFastWatchedGmailProvider()
+    provider.latest_payloads[cooldown_watched.gmail_thread_id] = payload(
+        cooldown_message.provider_message_id,
+        thread_id=cooldown_watched.gmail_thread_id,
+        body=cooldown_message.body_text or "",
+    )
+    provider.latest_payloads[waiting_watched.gmail_thread_id] = payload(
+        waiting_message.provider_message_id,
+        thread_id=waiting_watched.gmail_thread_id,
+        body=waiting_message.body_text or "",
+    )
+    service = GmailWatchedThreadMonitorService(provider)
+    selected_item_ids: list[int] = []
+
+    def capture_send(db, user, email_account, watched, item, message, result):  # noqa: ANN001, ARG001
+        selected_item_ids.append(item.id)
+        return True
+
+    monkeypatch.setattr(service, "send_actionable_reply_for_work_item", capture_send)
+    service.send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=GmailWatchedThreadMonitorResult(),
+        max_items=1,
+    )
+
+    assert provider.latest_calls == [waiting_watched.gmail_thread_id]
+    assert selected_item_ids == [waiting_item.id]
+
+
 def test_fast_unlinked_classification_bounds_long_gmail_threads() -> None:
     body = (
         "ancienne conversation sans decision " * 5000

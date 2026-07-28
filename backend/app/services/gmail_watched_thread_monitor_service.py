@@ -819,6 +819,12 @@ class GmailWatchedThreadMonitorService:
                         (GmailStarredWorkItem.status == "manual_review", 3),
                         else_=4,
                     ),
+                    case(
+                        (GmailStarredWorkItem.reason == "waiting_or_under_review_keywords", 0),
+                        (GmailStarredWorkItem.reason == "gmail_followup_reply_sent", 1),
+                        (GmailStarredWorkItem.reason == "followup_cooldown_active", 2),
+                        else_=3,
+                    ),
                     case((ClaimOrder.order_amount.is_(None), 1), else_=0),
                     ClaimOrder.order_amount.desc(),
                     GmailStarredWorkItem.processed_at.asc().nullsfirst(),
