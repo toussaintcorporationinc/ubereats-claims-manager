@@ -15,6 +15,7 @@ from app.core.auth import can_access_restaurant
 from app.core.config import Settings, get_settings
 from app.models import (
     AppealAttempt,
+    AppealWorkflow,
     ClaimOrder,
     EmailAccount,
     EmailDraft,
@@ -162,6 +163,14 @@ UBER_SUPPORT_SURVEY_MARKERS = (
 )
 FAST_CLASSIFICATION_BODY_HEAD_CHARS = 12000
 FAST_CLASSIFICATION_BODY_TAIL_CHARS = 6000
+
+
+def followup_due_clause(cutoff: datetime):
+    return and_(
+        func.coalesce(InboundEmailMessage.received_at, GmailStarredWorkItem.created_at) <= cutoff,
+        or_(AppealWorkflow.last_appeal_sent_at.is_(None), AppealWorkflow.last_appeal_sent_at <= cutoff),
+        or_(ClaimOrder.last_followup_sent_at.is_(None), ClaimOrder.last_followup_sent_at <= cutoff),
+    )
 
 
 @dataclass
@@ -756,6 +765,7 @@ class GmailWatchedThreadMonitorService:
             if not reset_remote_cache
             else True
         )
+        followup_cutoff = utc_now() - timedelta(hours=self.settings.autopilot_cooldown_hours)
         items = list(
             db.scalars(
                 select(GmailStarredWorkItem)
@@ -773,12 +783,18 @@ class GmailWatchedThreadMonitorService:
                     GmailResponseAnalysis,
                     GmailResponseAnalysis.inbound_message_id == InboundEmailMessage.id,
                 )
+                .outerjoin(AppealWorkflow, AppealWorkflow.claim_order_id == ClaimOrder.id)
                 .where(
                     GmailStarredWorkItem.email_account_id == account.id,
                     GmailStarredWorkItem.inbound_message_id.is_not(None),
                     or_(
                         ClaimOrder.id.is_(None),
                         ClaimOrder.status.not_in(sorted(FOLLOWUP_TERMINAL_ORDER_STATUSES)),
+                    ),
+                    or_(
+                        GmailStarredWorkItem.status != "manual_review",
+                        GmailResponseAnalysis.recommended_review_type != "followup_needed",
+                        followup_due_clause(followup_cutoff),
                     ),
                     or_(
                         GmailStarredWorkItem.status.in_(["refused", "evidence_needed"]),
@@ -2482,6 +2498,7 @@ class GmailWatchedThreadMonitorService:
                 InboundEmailMessage.id == GmailStarredWorkItem.inbound_message_id,
             )
             .join(ClaimOrder, ClaimOrder.id == InboundEmailMessage.order_id)
+            .outerjoin(AppealWorkflow, AppealWorkflow.claim_order_id == ClaimOrder.id)
             .where(
                 GmailStarredWorkItem.watched_thread_id == GmailWatchedThread.id,
                 GmailStarredWorkItem.inbound_message_id.is_not(None),
@@ -2489,6 +2506,9 @@ class GmailWatchedThreadMonitorService:
                 GmailResponseAnalysis.recommended_review_type == "followup_needed",
                 GmailStarredWorkItem.reason.in_(sorted(SAFE_FOLLOWUP_WORK_ITEM_REASONS)),
                 ClaimOrder.status.not_in(sorted(FOLLOWUP_TERMINAL_ORDER_STATUSES)),
+                followup_due_clause(
+                    utc_now() - timedelta(hours=self.settings.autopilot_cooldown_hours)
+                ),
             )
             .exists()
         )

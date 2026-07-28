@@ -665,6 +665,7 @@ def test_active_watched_threads_prioritize_followup_backlog(
     followup.last_processed_at = utc_now()
     item.status = "manual_review"
     item.reason = "waiting_or_under_review_keywords"
+    message.received_at = utc_now() - timedelta(days=3)
     db_session.add(
         GmailResponseAnalysis(
             inbound_message_id=message.id,
@@ -1075,7 +1076,7 @@ def test_terminal_positive_order_does_not_starve_next_safe_followup(
     assert result.autopilot_sent_count == 1
 
 
-def test_waiting_followup_is_prioritized_before_cooldown_work_item(
+def test_due_waiting_followup_is_prioritized_before_recent_waiting_work_item(
     db_session: Session,
     gmail_case,
     monkeypatch: pytest.MonkeyPatch,
@@ -1091,7 +1092,7 @@ def test_waiting_followup_is_prioritized_before_cooldown_work_item(
         thread_id="thread-cooldown-priority",
     )
     cooldown_item.status = "manual_review"
-    cooldown_item.reason = "followup_cooldown_active"
+    cooldown_item.reason = "waiting_or_under_review_keywords"
     cooldown_item.processed_at = utc_now() - timedelta(days=2)
     db_session.add(
         GmailResponseAnalysis(
@@ -1111,6 +1112,7 @@ def test_waiting_followup_is_prioritized_before_cooldown_work_item(
     )
     waiting_item.status = "manual_review"
     waiting_item.reason = "waiting_or_under_review_keywords"
+    waiting_message.received_at = utc_now() - timedelta(days=3)
     db_session.add(
         GmailResponseAnalysis(
             inbound_message_id=waiting_message.id,
@@ -2273,8 +2275,8 @@ def test_old_submitted_ack_is_relaunched_in_thread_with_cooldown(
 
     db_session.refresh(item)
     assert second_result.autopilot_sent_count == 0
-    assert second_result.autopilot_skipped_count == 1
-    assert item.reason == "followup_cooldown_active"
+    assert second_result.autopilot_skipped_count == 0
+    assert item.reason == "gmail_followup_reply_sent"
     assert len(provider.sent_drafts) == 1
 
     workflow.last_appeal_sent_at = utc_now() - timedelta(hours=49)
