@@ -26,11 +26,16 @@ from app.models import (
     GmailStarredWorkItem,
     GmailWatchedThread,
     InboundEmailMessage,
+    UberCustomerRefundDispute,
     User,
 )
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.claim_validation_service import get_claim_validation_gaps
+from app.services.customer_refund_review_service import (
+    POSITIVE_CUSTOMER_REFUND_STATUSES,
+    sync_linked_customer_refund_positive_review,
+)
 from app.services.email_provider import EmailProvider, EmailProviderError, InboundEmailAttachment, InboundEmailPayload
 from app.services.email_draft_service import EmailDraftBusinessError, create_email_draft
 from app.services.file_storage_service import FileStorageError, store_evidence_bytes
@@ -49,6 +54,7 @@ from app.services.gmail_payment_signal_service import (
     text_has_explicit_payment_confirmation,
     visible_email_text,
 )
+from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
 from app.services.gmail_quota import parse_gmail_retry_after
 from app.services.gmail_scope_service import gmail_scopes_allow_modify
 from app.services.autopilot_identity_repair_service import (
@@ -210,6 +216,12 @@ class GmailWatchedThreadMonitorService:
             process_new_messages = self.settings.gmail_watched_threads_process_new_messages
 
         if process_new_messages:
+            self.sync_positive_customer_refund_backlog(
+                db,
+                user,
+                account,
+                max_items=min(max_threads or self.settings.gmail_watched_threads_max_per_cycle, 250),
+            )
             self.process_watched_threads(db, user, account, result=result, max_threads=max_threads)
 
         if any(
@@ -246,6 +258,104 @@ class GmailWatchedThreadMonitorService:
             return result
 
         return result
+
+    def sync_positive_customer_refund_backlog(
+        self,
+        db: Session,
+        user: User,
+        account: EmailAccount,
+        *,
+        max_items: int,
+    ) -> int:
+        if max_items <= 0:
+            return 0
+        analyses = list(
+            db.scalars(
+                select(GmailResponseAnalysis)
+                .join(
+                    InboundEmailMessage,
+                    InboundEmailMessage.id == GmailResponseAnalysis.inbound_message_id,
+                )
+                .join(ClaimOrder, ClaimOrder.id == InboundEmailMessage.order_id)
+                .join(
+                    UberCustomerRefundDispute,
+                    UberCustomerRefundDispute.claim_order_id == ClaimOrder.id,
+                )
+                .options(
+                    selectinload(GmailResponseAnalysis.inbound_message)
+                    .selectinload(InboundEmailMessage.order)
+                    .selectinload(ClaimOrder.customer_refund_disputes)
+                )
+                .where(
+                    InboundEmailMessage.email_account_id == account.id,
+                    UberCustomerRefundDispute.status.notin_(sorted(POSITIVE_CUSTOMER_REFUND_STATUSES)),
+                    UberCustomerRefundDispute.status != "ignored",
+                )
+                .order_by(
+                    InboundEmailMessage.received_at.desc().nullslast(),
+                    GmailResponseAnalysis.id.desc(),
+                )
+                .distinct()
+                .limit(max_items * 4)
+            ).all()
+        )
+        synced = 0
+        explicit_candidates_seen = 0
+        for analysis in analyses:
+            message = analysis.inbound_message
+            order = message.order if message is not None else None
+            if message is None or order is None or not message_has_explicit_payment_confirmation(message):
+                continue
+            explicit_candidates_seen += 1
+            if explicit_candidates_seen > max_items:
+                break
+            previous_dispute_statuses = {
+                dispute.id: dispute.status
+                for dispute in order.customer_refund_disputes
+            }
+            if (
+                analysis.status != "applied"
+                or analysis.recommended_review_type not in POSITIVE_REVIEW_TYPES
+            ):
+                message.review_status = "unreviewed"
+                message.reviewed_at = None
+                message.reviewed_by_user_id = None
+                try:
+                    analysis = GmailResponseIntelligenceService().analyze_message(
+                        db,
+                        user,
+                        message,
+                        apply_review=True,
+                    )
+                except Exception as exc:  # noqa: BLE001 - one stale analysis must not stop the Gmail worker.
+                    logger.warning(
+                        "Unable to reclassify historical positive Gmail message %s: %s",
+                        message.provider_message_id,
+                        str(exc)[:160],
+                    )
+                    continue
+            if analysis.recommended_review_type not in POSITIVE_REVIEW_TYPES:
+                continue
+            sync_result = sync_linked_customer_refund_positive_review(
+                db,
+                order=order,
+                user=user,
+                inbound_message=message,
+                review_type=analysis.recommended_review_type,
+                recovered_amount=analysis.detected_amount,
+                expected_payment_date=analysis.expected_payment_date,
+                notes=analysis.notes,
+            )
+            newly_accounted = any(
+                previous_dispute_statuses.get(dispute.id) not in POSITIVE_CUSTOMER_REFUND_STATUSES
+                and dispute.status in POSITIVE_CUSTOMER_REFUND_STATUSES
+                for dispute in order.customer_refund_disputes
+            )
+            if sync_result.applied or newly_accounted:
+                synced += 1
+        if synced:
+            db.flush()
+        return synced
 
     def process_watched_threads(
         self,
@@ -2864,7 +2974,12 @@ class GmailWatchedThreadMonitorService:
                     .where(GmailResponseAnalysis.inbound_message_id == message.id)
                     .order_by(GmailResponseAnalysis.id.desc())
                 )
-            block_reason = self.positive_accounting_block_reason(db, message, analysis)
+            block_reason = self.sync_positive_customer_refund_accounting(
+                db,
+                user,
+                message,
+                analysis,
+            ) or self.positive_accounting_block_reason(db, message, analysis)
 
         if block_reason is None:
             return False
@@ -2925,7 +3040,13 @@ class GmailWatchedThreadMonitorService:
         watched.last_processed_at = item.processed_at
         explicit_payment_confirmation = message_has_explicit_payment_confirmation(message)
         positive_accounting_block_reason = (
-            self.positive_accounting_block_reason(db, message, analysis)
+            self.sync_positive_customer_refund_accounting(
+                db,
+                user,
+                message,
+                analysis,
+            )
+            or self.positive_accounting_block_reason(db, message, analysis)
             if explicit_payment_confirmation
             else None
         )
@@ -2999,6 +3120,34 @@ class GmailWatchedThreadMonitorService:
         )
 
     @staticmethod
+    def sync_positive_customer_refund_accounting(
+        db: Session,
+        user: User,
+        message: InboundEmailMessage,
+        analysis: GmailResponseAnalysis | None,
+    ) -> str | None:
+        if (
+            message.order_id is None
+            or analysis is None
+            or analysis.recommended_review_type not in POSITIVE_REVIEW_TYPES
+        ):
+            return None
+        order = db.get(ClaimOrder, message.order_id)
+        if order is None:
+            return None
+        result = sync_linked_customer_refund_positive_review(
+            db,
+            order=order,
+            user=user,
+            inbound_message=message,
+            review_type=analysis.recommended_review_type,
+            recovered_amount=analysis.detected_amount,
+            expected_payment_date=analysis.expected_payment_date,
+            notes=analysis.notes,
+        )
+        return result.block_reason
+
+    @staticmethod
     def positive_accounting_block_reason(
         db: Session,
         message: InboundEmailMessage,
@@ -3018,16 +3167,47 @@ class GmailWatchedThreadMonitorService:
             return "positive_payment_order_mismatch"
         if analysis is None or analysis.recommended_review_type not in POSITIVE_REVIEW_TYPES:
             return "positive_payment_not_accounted"
-        if analysis.status == "applied":
+
+        active_disputes = [
+            dispute
+            for dispute in order.customer_refund_disputes
+            if dispute.claim_order_id == order.id and dispute.status != "ignored"
+        ]
+        if order.customer_refund_disputes and not active_disputes:
+            return "positive_payment_dispute_ignored"
+        if len(active_disputes) > 1:
+            return "positive_payment_dispute_ambiguous"
+
+        review_type = analysis.recommended_review_type
+        if active_disputes:
+            dispute = active_disputes[0]
+            if review_type == "payment_confirmed":
+                if dispute.status != "payment_confirmed":
+                    return "positive_customer_refund_not_accounted"
+                if analysis.detected_amount is None:
+                    return "positive_payment_amount_not_recorded"
+                if dispute.recovered_amount is not None and abs(
+                    dispute.recovered_amount - analysis.detected_amount
+                ) > Decimal("0.02"):
+                    return "positive_payment_amount_conflict"
+            elif dispute.status not in POSITIVE_CUSTOMER_REFUND_STATUSES:
+                return "positive_customer_refund_not_accounted"
+
+        if review_type == "payment_confirmed":
+            if order.status != "payment_confirmed":
+                return "positive_payment_not_accounted"
+            if analysis.detected_amount is None or order.recovered_amount is None:
+                return "positive_payment_amount_not_recorded"
+            if abs(order.recovered_amount - analysis.detected_amount) > Decimal("0.02"):
+                return "positive_payment_amount_conflict"
             return None
-        if order.status != "payment_confirmed":
+
+        allowed_order_statuses = {
+            "accepted": {"accepted", "payment_to_verify", "payment_confirmed"},
+            "payment_to_verify": {"payment_to_verify", "payment_confirmed"},
+        }
+        if order.status not in allowed_order_statuses.get(review_type, set()):
             return "positive_payment_not_accounted"
-        if analysis.detected_amount is None:
-            return None if order.recovered_amount is not None else "positive_payment_amount_not_recorded"
-        if order.recovered_amount is None:
-            return "positive_payment_amount_not_recorded"
-        if order.recovered_amount != analysis.detected_amount:
-            return "positive_payment_amount_conflict"
         return None
 
     @staticmethod

@@ -128,6 +128,10 @@ export default function DashboardPage() {
           <p className="muted">Montants calcules depuis les reponses positives, refus et dossiers suivis.</p>
           <div className="stats-grid">
             <StatCard label="Paiements confirmes" value={formatCurrency(summary?.total_recovered_amount ?? 0)} />
+            <StatCard
+              label="Accorde, a verifier"
+              value={formatCurrency(summary?.total_approved_amount ?? 0)}
+            />
             <StatCard label="A suivre" value={formatCurrency(summary?.total_pending_amount ?? 0)} />
             <StatCard label="Refuse" value={formatCurrency(summary?.total_refused_amount ?? 0)} />
             <StatCard label="Dossiers visibles" value={summary?.total_orders ?? 0} />

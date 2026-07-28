@@ -13,6 +13,10 @@ from app.models import ClaimOrder, GmailResponseAnalysis, InboundEmailMessage, U
 from app.models.domain import utc_now
 from app.schemas.domain import ClaimResponseReviewCreate
 from app.services.audit import add_audit_log
+from app.services.customer_refund_review_service import (
+    linked_customer_refund_positive_review_block_reason,
+    sync_linked_customer_refund_positive_review,
+)
 from app.services.gmail_payment_signal_service import (
     current_response_text,
     message_has_explicit_payment_confirmation,
@@ -155,6 +159,18 @@ class GmailResponseIntelligenceService:
             db.flush()
             return analysis
 
+        dispute_block_reason = linked_customer_refund_positive_review_block_reason(
+            order,
+            analysis.recommended_review_type,
+            analysis.detected_amount,
+        )
+        if dispute_block_reason is not None:
+            analysis.status = "manual_review"
+            analysis.reason = limit_reason(dispute_block_reason)
+            analysis.error_message = None
+            db.flush()
+            return analysis
+
         payload = ClaimResponseReviewCreate(
             inbound_message_id=message.id,
             review_type=analysis.recommended_review_type,  # type: ignore[arg-type]
@@ -171,6 +187,22 @@ class GmailResponseIntelligenceService:
             analysis.error_message = exc.message
             db.flush()
             raise
+
+        dispute_sync = sync_linked_customer_refund_positive_review(
+            db,
+            order=order,
+            user=user,
+            inbound_message=message,
+            review_type=analysis.recommended_review_type,
+            recovered_amount=analysis.detected_amount,
+            expected_payment_date=analysis.expected_payment_date,
+            notes=analysis.notes,
+        )
+        if dispute_sync.block_reason is not None:
+            analysis.notes = limited_note(
+                f"Synchronisation du remboursement client bloquee: {dispute_sync.block_reason}.",
+                analysis.notes,
+            )
 
         analysis.status = "applied"
         analysis.response_review_id = review.id
@@ -223,6 +255,10 @@ class GmailResponseIntelligenceService:
         pattern_positive_matches = positive_payment_pattern_matches(text)
         if pattern_positive_matches:
             matches["payment_confirmed"] = [*matches["payment_confirmed"], *pattern_positive_matches]
+        if message_has_explicit_payment_confirmation(message) and not any(
+            matches[key] for key in ("payment_confirmed", "payment_to_verify", "accepted")
+        ):
+            matches["payment_confirmed"] = ["explicit_payment_confirmation"]
         if is_starred:
             matches["gmail_labels"] = ["STARRED"]
         strong_groups = {key for key, values in matches.items() if values}

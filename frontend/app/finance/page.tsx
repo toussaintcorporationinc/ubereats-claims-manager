@@ -68,6 +68,11 @@ export default function FinancePage() {
 
       <div className="stats-grid">
         <StatCard label="Recu" value={formatCurrency(summary?.total_recovered_amount ?? 0)} detail="paiements confirmes par Uber" />
+        <StatCard
+          label="Accorde, a verifier"
+          value={formatCurrency(summary?.total_approved_amount ?? 0)}
+          detail="accord Gmail, versement a controler"
+        />
         <StatCard label="A suivre" value={formatCurrency(summary?.total_pending_amount ?? 0)} detail="encore ouvert" />
         <StatCard label="Refuse" value={formatCurrency(summary?.total_refused_amount ?? 0)} detail="a relancer si etoile active" />
         <StatCard label="Signaux positifs 24h" value={warRoom?.summary.positive_responses_last_24h ?? 0} detail="Gmail" />

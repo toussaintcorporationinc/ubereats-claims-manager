@@ -800,6 +800,7 @@ export type DashboardSummary = {
   total_orders: number;
   total_claimed_amount: MoneyValue;
   total_recovered_amount: MoneyValue;
+  total_approved_amount: MoneyValue;
   total_pending_amount: MoneyValue;
   total_refused_amount: MoneyValue;
   accepted_count: number;
@@ -876,6 +877,7 @@ export type CommercialRestaurantSummary = {
 export type CommercialCustomerRefundSummary = {
   total_deducted_amount: MoneyValue;
   total_recovered_amount: MoneyValue;
+  total_approved_amount: MoneyValue;
   total_refused_amount: MoneyValue;
   total_pending_amount: MoneyValue;
   disputes_count: number;

@@ -184,6 +184,10 @@ export default function ReportsPage() {
             <StatCard label="Revues manuelles" value={summary.responses.manual_review_count} />
             <StatCard label="Deductions Uber" value={formatCurrency(summary.customer_refunds.total_deducted_amount)} />
             <StatCard label="Deductions recuperees" value={formatCurrency(summary.customer_refunds.total_recovered_amount)} />
+            <StatCard
+              label="Deductions accordees"
+              value={formatCurrency(summary.customer_refunds.total_approved_amount)}
+            />
             <StatCard label="Deductions en attente" value={formatCurrency(summary.customer_refunds.total_pending_amount)} />
             <StatCard label="Deductions refusees" value={formatCurrency(summary.customer_refunds.total_refused_amount)} />
             <StatCard label="Disputes deductions" value={summary.customer_refunds.disputes_count} />

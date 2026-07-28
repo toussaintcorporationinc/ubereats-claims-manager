@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -40,12 +42,150 @@ CLAIM_ORDER_STATUS_TRANSITIONS = {
     "followup_needed": "manual_review",
     "manual_review": "manual_review",
 }
+POSITIVE_CUSTOMER_REFUND_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confirmed"}
+POSITIVE_CUSTOMER_REFUND_STATUSES = {"accepted", "payment_to_verify", "payment_confirmed"}
 
 
 @dataclass(frozen=True)
 class CustomerRefundReviewError(Exception):
     message: str
     status_code: int
+
+
+@dataclass(frozen=True)
+class LinkedCustomerRefundReviewSyncResult:
+    applicable: bool
+    applied: bool = False
+    dispute_id: int | None = None
+    block_reason: str | None = None
+
+
+def linked_customer_refund_positive_review_block_reason(
+    order: ClaimOrder,
+    review_type: str,
+    recovered_amount: Decimal | None,
+) -> str | None:
+    if review_type not in POSITIVE_CUSTOMER_REFUND_REVIEW_TYPES:
+        return None
+    linked_disputes = [
+        dispute
+        for dispute in order.customer_refund_disputes
+        if dispute.claim_order_id == order.id
+    ]
+    if not linked_disputes:
+        return None
+    active_disputes = [dispute for dispute in linked_disputes if dispute.status != "ignored"]
+    if not active_disputes:
+        return "positive_payment_dispute_ignored"
+    if len(active_disputes) != 1:
+        return "positive_payment_dispute_ambiguous"
+    if review_type != "payment_confirmed":
+        return None
+    if recovered_amount is None:
+        return "positive_payment_amount_not_recorded"
+    if abs(recovered_amount - active_disputes[0].customer_refund_amount) > Decimal("0.02"):
+        return "positive_payment_amount_conflict"
+    return None
+
+
+def sync_linked_customer_refund_positive_review(
+    db: Session,
+    *,
+    order: ClaimOrder,
+    user: User,
+    inbound_message: InboundEmailMessage,
+    review_type: str,
+    recovered_amount: Decimal | None = None,
+    expected_payment_date: date | None = None,
+    notes: str | None = None,
+) -> LinkedCustomerRefundReviewSyncResult:
+    if review_type not in POSITIVE_CUSTOMER_REFUND_REVIEW_TYPES:
+        return LinkedCustomerRefundReviewSyncResult(applicable=False)
+
+    linked_disputes = [
+        dispute
+        for dispute in order.customer_refund_disputes
+        if dispute.claim_order_id == order.id
+    ]
+    if not linked_disputes:
+        return LinkedCustomerRefundReviewSyncResult(applicable=False)
+
+    block_reason = linked_customer_refund_positive_review_block_reason(
+        order,
+        review_type,
+        recovered_amount,
+    )
+    if block_reason is not None:
+        return LinkedCustomerRefundReviewSyncResult(
+            applicable=True,
+            block_reason=block_reason,
+        )
+
+    active_disputes = [dispute for dispute in linked_disputes if dispute.status != "ignored"]
+    dispute = active_disputes[0]
+
+    if linked_dispute_already_accounts_review(dispute, review_type, recovered_amount):
+        return LinkedCustomerRefundReviewSyncResult(
+            applicable=True,
+            dispute_id=dispute.id,
+        )
+
+    existing_review = db.scalar(
+        select(CustomerRefundDisputeReview.id).where(
+            CustomerRefundDisputeReview.dispute_id == dispute.id,
+            CustomerRefundDisputeReview.inbound_message_id == inbound_message.id,
+            CustomerRefundDisputeReview.review_type == review_type,
+        )
+    )
+    if existing_review is not None:
+        return LinkedCustomerRefundReviewSyncResult(
+            applicable=True,
+            dispute_id=dispute.id,
+            block_reason="positive_customer_refund_not_accounted",
+        )
+
+    try:
+        create_customer_refund_review(
+            db,
+            dispute=dispute,
+            user=user,
+            payload=CustomerRefundDisputeReviewCreate(
+                inbound_message_id=inbound_message.id,
+                review_type=review_type,
+                recovered_amount=recovered_amount if review_type == "payment_confirmed" else None,
+                expected_payment_date=expected_payment_date,
+                notes=(
+                    "Synchronisation automatique depuis une reponse Gmail positive liee au dossier."
+                    if not notes
+                    else f"Synchronisation Gmail: {notes}"
+                ),
+            ),
+        )
+    except CustomerRefundReviewError as exc:
+        return LinkedCustomerRefundReviewSyncResult(
+            applicable=True,
+            dispute_id=dispute.id,
+            block_reason=f"positive_customer_refund_sync_failed:{exc.message[:120]}",
+        )
+    return LinkedCustomerRefundReviewSyncResult(
+        applicable=True,
+        applied=True,
+        dispute_id=dispute.id,
+    )
+
+
+def linked_dispute_already_accounts_review(
+    dispute: UberCustomerRefundDispute,
+    review_type: str,
+    recovered_amount: Decimal | None,
+) -> bool:
+    if review_type in {"accepted", "payment_to_verify"}:
+        return dispute.status in POSITIVE_CUSTOMER_REFUND_STATUSES
+    if review_type != "payment_confirmed" or dispute.status != "payment_confirmed":
+        return False
+    if recovered_amount is None or dispute.recovered_amount is None:
+        return True
+    return abs(dispute.recovered_amount - recovered_amount) <= Decimal("0.02")
 
 
 def create_customer_refund_review(

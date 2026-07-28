@@ -6,10 +6,14 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import get_accessible_restaurant_ids, get_current_user
 from app.core.database import get_db
-from app.models import ClaimOrder, FollowUpTask, Restaurant, User
+from app.models import ClaimOrder, FollowUpTask, Restaurant, UberCustomerRefundDispute, User
 from app.models.domain import utc_now
 from app.schemas.domain import DashboardRestaurantSummary, DashboardSummary, DashboardTopRestaurantSummary
-from app.services.reporting_service import ReportingFilters, ReportingService
+from app.services.reporting_service import (
+    ReportingFilters,
+    ReportingService,
+    recovered_amount_for_customer_refund,
+)
 
 router = APIRouter(prefix="/v1/dashboard", tags=["dashboard"])
 
@@ -31,6 +35,7 @@ def dashboard_summary(
             total_orders=0,
             total_claimed_amount=Decimal("0"),
             total_recovered_amount=Decimal("0"),
+            total_approved_amount=Decimal("0"),
             total_pending_amount=Decimal("0"),
             total_refused_amount=Decimal("0"),
             accepted_count=0,
@@ -50,6 +55,16 @@ def dashboard_summary(
     total_orders_statement = select(func.count(ClaimOrder.id))
     total_claimed_statement = select(func.sum(ClaimOrder.order_amount))
     total_recovered_statement = select(func.sum(ClaimOrder.recovered_amount))
+    has_customer_refund_dispute = (
+        select(UberCustomerRefundDispute.id)
+        .where(UberCustomerRefundDispute.claim_order_id == ClaimOrder.id)
+        .exists()
+    )
+    standalone_approved_statement = select(func.sum(ClaimOrder.order_amount)).where(
+        ClaimOrder.status.in_(["accepted", "payment_to_verify"]),
+        ClaimOrder.recovered_amount.is_(None),
+        ~has_customer_refund_dispute,
+    )
     total_refused_statement = select(func.sum(ClaimOrder.order_amount)).where(ClaimOrder.status == "refused")
     total_pending_statement = select(func.sum(ClaimOrder.order_amount)).where(
         ClaimOrder.status.notin_(TERMINAL_OR_RECOVERED_STATUSES)
@@ -60,6 +75,9 @@ def dashboard_summary(
         total_orders_statement = total_orders_statement.where(ClaimOrder.restaurant_id.in_(accessible_ids))
         total_claimed_statement = total_claimed_statement.where(ClaimOrder.restaurant_id.in_(accessible_ids))
         total_recovered_statement = total_recovered_statement.where(ClaimOrder.restaurant_id.in_(accessible_ids))
+        standalone_approved_statement = standalone_approved_statement.where(
+            ClaimOrder.restaurant_id.in_(accessible_ids)
+        )
         total_refused_statement = total_refused_statement.where(ClaimOrder.restaurant_id.in_(accessible_ids))
         total_pending_statement = total_pending_statement.where(ClaimOrder.restaurant_id.in_(accessible_ids))
         status_statement = status_statement.where(ClaimOrder.restaurant_id.in_(accessible_ids))
@@ -67,6 +85,7 @@ def dashboard_summary(
     total_orders = db.scalar(total_orders_statement) or 0
     total_claimed_amount = as_decimal(db.scalar(total_claimed_statement))
     total_recovered_amount = as_decimal(db.scalar(total_recovered_statement))
+    standalone_approved_amount = as_decimal(db.scalar(standalone_approved_statement))
     total_refused_amount = as_decimal(db.scalar(total_refused_statement))
     total_pending_amount = as_decimal(db.scalar(total_pending_statement))
 
@@ -106,7 +125,22 @@ def dashboard_summary(
         )
         for restaurant_id, restaurant_name, order_count, claimed_amount, recovered_amount in restaurant_rows
     ]
-    report_summary = ReportingService(db, current_user, ReportingFilters()).commercial_summary()
+    reporting_service = ReportingService(db, current_user, ReportingFilters())
+    report_summary = reporting_service.commercial_summary()
+    for customer_refund in reporting_service.customer_refund_rows():
+        recovered_customer_refund = recovered_amount_for_customer_refund(customer_refund)
+        if recovered_customer_refund is None:
+            continue
+        linked_order = (
+            db.get(ClaimOrder, customer_refund.claim_order_id)
+            if customer_refund.claim_order_id is not None
+            else None
+        )
+        if linked_order is None or linked_order.recovered_amount is None:
+            total_recovered_amount += recovered_customer_refund
+    total_approved_amount = (
+        standalone_approved_amount + report_summary.customer_refunds.total_approved_amount
+    )
     top_restaurants_by_claimed_amount = [
         DashboardTopRestaurantSummary(
             restaurant_id=row.restaurant_id,
@@ -128,6 +162,7 @@ def dashboard_summary(
         total_orders=total_orders,
         total_claimed_amount=total_claimed_amount,
         total_recovered_amount=total_recovered_amount,
+        total_approved_amount=total_approved_amount,
         total_pending_amount=total_pending_amount,
         total_refused_amount=total_refused_amount,
         accepted_count=accepted_count,
@@ -174,4 +209,3 @@ def get_followup_counts(db: Session, accessible_ids: set[int] | None) -> dict[st
         "escalations_due_count": db.scalar(escalation_statement) or 0,
         "manual_review_due_count": db.scalar(manual_review_statement) or 0,
     }
-

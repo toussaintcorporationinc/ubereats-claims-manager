@@ -94,6 +94,24 @@ def test_uber_processed_refund_message_is_payment_to_verify() -> None:
     assert fast_reason == "fast_unlinked_payment_positive"
 
 
+def test_uber_refund_decision_message_is_payment_to_verify() -> None:
+    message = InboundEmailMessage(
+        email_account_id=1,
+        provider_message_id="msg-refund-decision",
+        provider_thread_id="thread-refund-decision",
+        subject="Contestation de remboursement de commande F93BA",
+        body_text=(
+            "Apres examen, nous avons decide de rembourser le montant "
+            "de l'article signale pour la commande F93BA."
+        ),
+    )
+
+    classification = GmailResponseIntelligenceService().classify_message(message)
+
+    assert classification.review_type == "payment_to_verify"
+    assert classification.reason == "payment_confirmed_without_amount"
+
+
 def test_full_order_payment_retained_is_payment_to_verify() -> None:
     message = InboundEmailMessage(
         email_account_id=1,

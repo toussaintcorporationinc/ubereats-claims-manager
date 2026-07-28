@@ -591,6 +591,7 @@ class DashboardSummary(BaseModel):
     total_orders: int
     total_claimed_amount: Decimal
     total_recovered_amount: Decimal
+    total_approved_amount: Decimal = Decimal("0")
     total_pending_amount: Decimal
     total_refused_amount: Decimal
     accepted_count: int = 0
@@ -1197,6 +1198,7 @@ class CommercialResponseSummary(BaseModel):
 class CommercialCustomerRefundSummary(BaseModel):
     total_deducted_amount: Decimal = Decimal("0")
     total_recovered_amount: Decimal = Decimal("0")
+    total_approved_amount: Decimal = Decimal("0")
     total_refused_amount: Decimal = Decimal("0")
     total_pending_amount: Decimal = Decimal("0")
     disputes_count: int = 0

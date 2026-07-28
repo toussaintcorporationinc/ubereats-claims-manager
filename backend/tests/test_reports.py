@@ -308,6 +308,38 @@ def test_commercial_summary_excludes_ignored_customer_refunds_by_default(
     assert customer_refunds["disputes_count"] == 1
 
 
+def test_approved_customer_refunds_are_reported_separately_from_received(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = create_restaurant(client, "Reports Approved Refunds")
+    add_customer_refund(
+        db_session,
+        restaurant["id"],
+        order_id="UBER-REPORT-APPROVED",
+        amount="20.80",
+        status="payment_to_verify",
+    )
+    add_customer_refund(
+        db_session,
+        restaurant["id"],
+        order_id="UBER-REPORT-CONFIRMED",
+        amount="12.50",
+        status="payment_confirmed",
+    )
+
+    report_response = client.get("/v1/reports/commercial-summary")
+    dashboard_response = client.get("/v1/dashboard/summary")
+
+    assert report_response.status_code == 200
+    assert dashboard_response.status_code == 200
+    customer_refunds = report_response.json()["customer_refunds"]
+    assert customer_refunds["total_approved_amount"] == "20.80"
+    assert customer_refunds["total_recovered_amount"] == "12.50"
+    assert dashboard_response.json()["total_approved_amount"] == "20.80"
+    assert dashboard_response.json()["total_recovered_amount"] == "12.50"
+
+
 def test_manager_summary_only_includes_assigned_restaurants(client: TestClient, db_session: Session) -> None:
     data = seed_reporting_data(client, db_session)
     manager = create_user(client, "manager-reports@example.com", "manager")

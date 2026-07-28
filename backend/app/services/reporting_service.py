@@ -116,6 +116,11 @@ class ReportingService:
             customer_refunds=CommercialCustomerRefundSummary(
                 total_deducted_amount=sum_decimal(row.customer_refund_amount for row in customer_refunds),
                 total_recovered_amount=sum_decimal(recovered_amount_for_customer_refund(row) for row in customer_refunds),
+                total_approved_amount=sum_decimal(
+                    row.customer_refund_amount
+                    for row in customer_refunds
+                    if row.status in {"accepted", "payment_to_verify"}
+                ),
                 total_refused_amount=sum_decimal(
                     row.customer_refund_amount for row in customer_refunds if row.status == "refused"
                 ),
