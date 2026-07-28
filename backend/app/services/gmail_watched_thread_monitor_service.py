@@ -82,6 +82,7 @@ MAX_AUTOPILOT_REPLY_CANDIDATES_PER_CYCLE = 3
 MAX_AUTOPILOT_REPLIES_PER_CYCLE = 1
 MAX_LOCAL_CLASSIFICATIONS_PER_CYCLE = 250
 MAX_LOCAL_REPLY_CANDIDATES_PER_CYCLE = 250
+MAX_POSITIVE_STAR_REMOVALS_PER_ACCOUNT_CYCLE = 1
 RECOVERABLE_PROOF_REPLY_REASONS = {
     "proof_reply_blocked:missing_order_amount",
     "proof_reply_blocked:missing_currency",
@@ -216,6 +217,8 @@ class GmailWatchedThreadMonitorService:
         self._remote_thread_has_draft_cache: dict[tuple[int, str], bool] = {}
         self._thread_payload_cache: dict[tuple[int, str], list[InboundEmailPayload]] = {}
         self._thread_payloads_with_attachments: set[tuple[int, str]] = set()
+        self._star_removal_budget_active = False
+        self._positive_star_removal_attempts = 0
 
     def process_account(
         self,
@@ -229,6 +232,8 @@ class GmailWatchedThreadMonitorService:
         starred_discovery_max_messages: int | None = None,
         process_new_messages: bool | None = None,
     ) -> GmailWatchedThreadMonitorResult:
+        self._star_removal_budget_active = True
+        self._positive_star_removal_attempts = 0
         result = GmailWatchedThreadMonitorResult()
         if not self.settings.gmail_watched_threads_enabled:
             result.status = "disabled"
@@ -3455,6 +3460,22 @@ class GmailWatchedThreadMonitorService:
     ) -> bool:
         if autopilot_is_emergency_stopped(db):
             return False
+        if (
+            self._star_removal_budget_active
+            and self._positive_star_removal_attempts >= MAX_POSITIVE_STAR_REMOVALS_PER_ACCOUNT_CYCLE
+        ):
+            add_audit_log(
+                db,
+                entity_type="gmail_watched_thread",
+                entity_id=watched.id,
+                action="gmail_watched_thread.star_removal_deferred_for_quota",
+                user_id=user.id,
+                new_value={"gmail_thread_id": watched.gmail_thread_id},
+            )
+            db.flush()
+            return False
+        if self._star_removal_budget_active:
+            self._positive_star_removal_attempts += 1
         starred_message_ids, remote_lookup_complete = self.starred_message_ids_for_thread(
             db,
             watched,

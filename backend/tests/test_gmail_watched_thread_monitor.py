@@ -3618,6 +3618,55 @@ def test_positive_watched_thread_removes_every_starred_message_in_thread(
     assert result.positive_responses >= 1
 
 
+def test_positive_star_cleanup_is_limited_to_one_mutation_per_account_cycle(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, _order = gmail_case
+    account.scopes = "https://www.googleapis.com/auth/gmail.modify"
+    watched_threads = [
+        GmailWatchedThread(
+            email_account_id=account.id,
+            gmail_thread_id=f"thread-positive-quota-{index}",
+            first_starred_message_id=f"message-positive-quota-{index}",
+            status="payment_confirmed",
+            star_active=True,
+        )
+        for index in range(2)
+    ]
+    db_session.add_all(watched_threads)
+    db_session.commit()
+    provider = FakeWatchedGmailProvider()
+    for index, watched in enumerate(watched_threads):
+        provider.thread_payloads[watched.gmail_thread_id] = [
+            payload(
+                f"message-positive-quota-{index}",
+                thread_id=watched.gmail_thread_id,
+                starred=True,
+            )
+        ]
+    service = GmailWatchedThreadMonitorService(provider)
+    monkeypatch.setattr(
+        service,
+        "block_unverified_positive_star_cleanup",
+        lambda db, user, watched, result: False,
+    )
+
+    service.process_account(
+        db_session,
+        owner,
+        account,
+        max_threads=2,
+        discover_starred=False,
+    )
+
+    db_session.refresh(watched_threads[0])
+    db_session.refresh(watched_threads[1])
+    assert [watched.star_active for watched in watched_threads] == [False, True]
+    assert provider.removed_labels == [("message-positive-quota-0", "STARRED")]
+
+
 def test_positive_star_cleanup_uses_remote_state_when_first_starred_message_is_stale(
     db_session: Session,
     gmail_case,
@@ -3692,7 +3741,12 @@ def test_positive_star_removal_failure_stays_pending_and_retries_after_scope_gra
     provider.fail_star_removal = False
     db_session.commit()
 
-    second_result = service.process_watched_threads(db_session, owner, account)
+    second_result = service.process_account(
+        db_session,
+        owner,
+        account,
+        discover_starred=False,
+    )
 
     db_session.refresh(watched)
     db_session.refresh(starred_message)
