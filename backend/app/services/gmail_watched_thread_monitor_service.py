@@ -221,6 +221,7 @@ class GmailWatchedThreadMonitorService:
                 user,
                 account,
                 max_items=min(max_threads or self.settings.gmail_watched_threads_max_per_cycle, 250),
+                result=result,
             )
             self.process_watched_threads(db, user, account, result=result, max_threads=max_threads)
 
@@ -266,9 +267,23 @@ class GmailWatchedThreadMonitorService:
         account: EmailAccount,
         *,
         max_items: int,
+        result: GmailWatchedThreadMonitorResult | None = None,
     ) -> int:
         if max_items <= 0:
             return 0
+        monitor_result = result or GmailWatchedThreadMonitorResult()
+        watched_needs_repair = (
+            select(GmailWatchedThread.id)
+            .where(
+                GmailWatchedThread.email_account_id == InboundEmailMessage.email_account_id,
+                GmailWatchedThread.gmail_thread_id == InboundEmailMessage.provider_thread_id,
+                or_(
+                    GmailWatchedThread.star_active.is_(True),
+                    GmailWatchedThread.status.notin_(sorted(POSITIVE_WATCHED_STATUSES)),
+                ),
+            )
+            .exists()
+        )
         analyses = list(
             db.scalars(
                 select(GmailResponseAnalysis)
@@ -285,12 +300,22 @@ class GmailWatchedThreadMonitorService:
                 .where(
                     InboundEmailMessage.email_account_id == account.id,
                     ClaimOrder.customer_refund_disputes.any(
-                        and_(
-                            UberCustomerRefundDispute.status.notin_(
-                                sorted(POSITIVE_CUSTOMER_REFUND_STATUSES)
+                        UberCustomerRefundDispute.status != "ignored"
+                    ),
+                    or_(
+                        ClaimOrder.customer_refund_disputes.any(
+                            and_(
+                                UberCustomerRefundDispute.status.notin_(
+                                    sorted(POSITIVE_CUSTOMER_REFUND_STATUSES)
+                                ),
+                                UberCustomerRefundDispute.status != "ignored",
                             ),
-                            UberCustomerRefundDispute.status != "ignored",
-                        )
+                        ),
+                        GmailResponseAnalysis.recommended_review_type.is_(None),
+                        GmailResponseAnalysis.recommended_review_type.notin_(
+                            sorted(POSITIVE_REVIEW_TYPES)
+                        ),
+                        watched_needs_repair,
                     ),
                 )
                 .order_by(
@@ -347,12 +372,47 @@ class GmailWatchedThreadMonitorService:
                 expected_payment_date=analysis.expected_payment_date,
                 notes=analysis.notes,
             )
+            watched_repaired = False
+            if message.provider_thread_id:
+                watched = db.scalar(
+                    select(GmailWatchedThread).where(
+                        GmailWatchedThread.email_account_id == account.id,
+                        GmailWatchedThread.gmail_thread_id == message.provider_thread_id,
+                    )
+                )
+                if watched is not None:
+                    item, item_created = self.ensure_work_item(db, watched, account, message)
+                    if item_created:
+                        monitor_result.work_items_created += 1
+                    previous_work_item_state = (
+                        item.status,
+                        item.reason,
+                        item.inbound_message_id,
+                        watched.status,
+                        watched.star_active,
+                    )
+                    self.update_work_item_status(
+                        db,
+                        user,
+                        watched,
+                        item,
+                        message,
+                        monitor_result,
+                        allow_remote_star_lookup=False,
+                    )
+                    watched_repaired = item_created or previous_work_item_state != (
+                        item.status,
+                        item.reason,
+                        item.inbound_message_id,
+                        watched.status,
+                        watched.star_active,
+                    )
             newly_accounted = any(
                 previous_dispute_statuses.get(dispute.id) not in POSITIVE_CUSTOMER_REFUND_STATUSES
                 and dispute.status in POSITIVE_CUSTOMER_REFUND_STATUSES
                 for dispute in order.customer_refund_disputes
             )
-            if sync_result.applied or newly_accounted:
+            if sync_result.applied or newly_accounted or watched_repaired:
                 synced += 1
         if synced:
             db.flush()

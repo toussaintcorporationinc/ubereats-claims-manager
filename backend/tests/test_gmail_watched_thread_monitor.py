@@ -2985,7 +2985,7 @@ def test_positive_customer_refund_backlog_reclassifies_legacy_manual_analysis(
         match_status="linked",
         match_reason="thread_id_match",
         review_status="reviewed",
-        provider_labels_json=[],
+        provider_labels_json=["INBOX", "STARRED"],
     )
     db_session.add(message)
     db_session.flush()
@@ -2998,15 +2998,40 @@ def test_positive_customer_refund_backlog_reclassifies_legacy_manual_analysis(
         reason="manual_review_required",
     )
     db_session.add(analysis)
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id=message.provider_thread_id,
+        first_starred_message_id=message.provider_message_id,
+        claim_order_id=order.id,
+        customer_refund_dispute_id=dispute.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="manual_review",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.flush()
+    item = GmailStarredWorkItem(
+        watched_thread_id=watched.id,
+        email_account_id=account.id,
+        inbound_message_id=message.id,
+        gmail_thread_id=message.provider_thread_id,
+        provider_message_id=message.provider_message_id,
+        status="manual_review",
+        reason="manual_review_required",
+        processed_at=utc_now(),
+    )
+    db_session.add(item)
     db_session.commit()
 
-    synced = GmailWatchedThreadMonitorService(
-        FakeWatchedGmailProvider()
-    ).sync_positive_customer_refund_backlog(
+    provider = FakeWatchedGmailProvider()
+    result = GmailWatchedThreadMonitorResult()
+    synced = GmailWatchedThreadMonitorService(provider).sync_positive_customer_refund_backlog(
         db_session,
         owner,
         account,
         max_items=10,
+        result=result,
     )
 
     review = db_session.scalar(
@@ -3025,6 +3050,102 @@ def test_positive_customer_refund_backlog_reclassifies_legacy_manual_analysis(
     assert dispute.status == "payment_to_verify"
     assert dispute.recovered_amount is None
     assert review is not None
+    assert watched.status == "payment_confirmed"
+    assert watched.star_active is False
+    assert item.status == "positive"
+    assert item.reason == "payment_confirmed"
+    assert provider.removed_labels == [(message.provider_message_id, "STARRED")]
+    assert result.positive_responses == 1
+
+
+def test_positive_customer_refund_backlog_repairs_star_after_order_was_already_confirmed(
+    db_session: Session,
+    gmail_case,
+) -> None:
+    owner, account, order = gmail_case
+    dispute = add_customer_refund_dispute(
+        db_session,
+        order,
+        amount="23.90",
+        reference="refund-positive-protected-backlog",
+        status="payment_confirmed",
+    )
+    order.status = "payment_confirmed"
+    order.result = "payment_confirmed"
+    order.recovered_amount = Decimal("23.90")
+    dispute.recovered_amount = Decimal("23.90")
+    message = InboundEmailMessage(
+        email_account_id=account.id,
+        order_id=order.id,
+        provider="gmail",
+        provider_message_id="reply-positive-protected-backlog",
+        provider_thread_id="thread-positive-protected-backlog",
+        from_email="restaurantsfrance@uber.com",
+        body_text="Nous avons ajuste votre paiement de 23,90 EUR pour la commande F93BA.",
+        match_status="linked",
+        match_reason="thread_id_match",
+        review_status="ignored",
+        provider_labels_json=["INBOX", "STARRED"],
+    )
+    db_session.add(message)
+    db_session.flush()
+    analysis = GmailResponseAnalysis(
+        inbound_message_id=message.id,
+        order_id=order.id,
+        recommended_review_type="followup_needed",
+        status="ignored",
+        confidence_score=Decimal("0.40"),
+        reason="order_already_final:payment_confirmed",
+    )
+    db_session.add(analysis)
+    watched = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id=message.provider_thread_id,
+        first_starred_message_id=message.provider_message_id,
+        claim_order_id=order.id,
+        customer_refund_dispute_id=dispute.id,
+        linked_case_type="claim_order",
+        linked_case_id=order.id,
+        status="manual_review",
+        star_active=True,
+    )
+    db_session.add(watched)
+    db_session.flush()
+    item = GmailStarredWorkItem(
+        watched_thread_id=watched.id,
+        email_account_id=account.id,
+        inbound_message_id=message.id,
+        gmail_thread_id=message.provider_thread_id,
+        provider_message_id=message.provider_message_id,
+        status="manual_review",
+        reason="order_already_final:payment_confirmed",
+        processed_at=utc_now(),
+    )
+    db_session.add(item)
+    db_session.commit()
+
+    provider = FakeWatchedGmailProvider()
+    result = GmailWatchedThreadMonitorResult()
+    synced = GmailWatchedThreadMonitorService(provider).sync_positive_customer_refund_backlog(
+        db_session,
+        owner,
+        account,
+        max_items=10,
+        result=result,
+    )
+
+    db_session.refresh(analysis)
+    db_session.refresh(watched)
+    db_session.refresh(item)
+    assert synced == 1
+    assert analysis.recommended_review_type == "payment_confirmed"
+    assert analysis.status == "ignored"
+    assert watched.status == "payment_confirmed"
+    assert watched.star_active is False
+    assert item.status == "positive"
+    assert item.reason == "payment_confirmed"
+    assert provider.removed_labels == [(message.provider_message_id, "STARRED")]
+    assert result.positive_responses == 1
 
 
 def test_positive_with_multiple_customer_refunds_keeps_star_for_review(
