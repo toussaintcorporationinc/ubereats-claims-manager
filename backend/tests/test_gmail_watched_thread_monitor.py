@@ -532,7 +532,7 @@ def test_watched_cycle_caps_remote_reply_preflights(
         process_local_backlog=False,
     )
 
-    assert observed_limits == [1]
+    assert observed_limits == [3]
 
 
 def test_watched_cycle_reuses_actionable_thread_read_for_reply_preflight(
@@ -1510,7 +1510,7 @@ def test_account_send_pacing_is_checked_before_remote_draft_creation(
     assert provider.sent_drafts == []
 
 
-def test_account_send_pacing_allows_only_one_send_per_worker_cycle(
+def test_worker_cycle_sends_at_most_one_reply_when_account_pacing_is_disabled(
     db_session: Session,
     gmail_case,
     monkeypatch: pytest.MonkeyPatch,
@@ -1518,7 +1518,7 @@ def test_account_send_pacing_allows_only_one_send_per_worker_cycle(
     owner, account, order = gmail_case
     monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
     monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
-    monkeypatch.setenv("AUTOPILOT_PER_GMAIL_ACCOUNT_DAILY_LIMIT", "500")
+    monkeypatch.setenv("AUTOPILOT_PER_GMAIL_ACCOUNT_DAILY_LIMIT", "0")
     get_settings.cache_clear()
     add_refused_work_item(db_session, account, order, thread_id="thread-paced-first")
     add_refused_work_item(db_session, account, order, thread_id="thread-paced-second")
@@ -1534,7 +1534,7 @@ def test_account_send_pacing_allows_only_one_send_per_worker_cycle(
     )
 
     assert result.autopilot_sent_count == 1
-    assert result.autopilot_skipped_count == 1
+    assert result.autopilot_skipped_count == 0
     assert len(provider.created_drafts) == 1
     assert len(provider.sent_drafts) == 1
 

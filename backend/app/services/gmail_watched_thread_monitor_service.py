@@ -77,7 +77,8 @@ logger = logging.getLogger(__name__)
 
 FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed", "manual_review", "skipped"}
 SKIPPABLE_FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed"}
-MAX_AUTOPILOT_REPLY_CANDIDATES_PER_CYCLE = 1
+MAX_AUTOPILOT_REPLY_CANDIDATES_PER_CYCLE = 3
+MAX_AUTOPILOT_REPLIES_PER_CYCLE = 1
 MAX_LOCAL_REPLY_CANDIDATES_PER_CYCLE = 250
 RECOVERABLE_PROOF_REPLY_REASONS = {
     "proof_reply_blocked:missing_order_amount",
@@ -914,6 +915,8 @@ class GmailWatchedThreadMonitorService:
             if self.send_actionable_reply_for_work_item(db, user, account, watched, item, message, result):
                 sent_threads.add(watched.gmail_thread_id)
                 sent_count += 1
+                if sent_count >= MAX_AUTOPILOT_REPLIES_PER_CYCLE:
+                    break
         return sent_count
 
     @staticmethod
