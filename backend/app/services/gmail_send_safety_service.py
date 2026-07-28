@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
-from app.models import EmailAccount, EmailDraft, EmailProviderDraft
+from app.models import AutopilotRun, EmailAccount, EmailDraft, EmailProviderDraft
 from app.models.domain import utc_now
 
 GMAIL_SEND_PACING_REASON = "gmail_account_send_pacing_active"
@@ -15,6 +15,7 @@ GMAIL_INITIAL_CLAIM_DUPLICATE_REASON = "gmail_initial_claim_already_sent"
 GMAIL_SEND_ACCOUNT_MISSING_REASON = "gmail_send_account_missing"
 GMAIL_PROVIDER_DRAFT_ALREADY_SENT_REASON = "provider_draft_already_sent"
 GMAIL_PROVIDER_DRAFT_NOT_READY_REASON = "provider_draft_not_ready"
+GMAIL_EMERGENCY_STOP_REASON = "autopilot_emergency_stopped"
 GMAIL_SEND_SAFETY_REASONS = {
     GMAIL_SEND_PACING_REASON,
     GMAIL_SEND_DAILY_LIMIT_REASON,
@@ -22,6 +23,7 @@ GMAIL_SEND_SAFETY_REASONS = {
     GMAIL_SEND_ACCOUNT_MISSING_REASON,
     GMAIL_PROVIDER_DRAFT_ALREADY_SENT_REASON,
     GMAIL_PROVIDER_DRAFT_NOT_READY_REASON,
+    GMAIL_EMERGENCY_STOP_REASON,
 }
 
 
@@ -63,6 +65,15 @@ def lock_and_validate_gmail_send(
         raise GmailSendSafetyError(GMAIL_PROVIDER_DRAFT_ALREADY_SENT_REASON)
     if provider_draft.status != "provider_draft_created":
         raise GmailSendSafetyError(GMAIL_PROVIDER_DRAFT_NOT_READY_REASON)
+
+    latest_emergency_stop_status = db.scalar(
+        select(AutopilotRun.status)
+        .where(AutopilotRun.mode == "emergency_stop")
+        .order_by(AutopilotRun.id.desc())
+        .limit(1)
+    )
+    if latest_emergency_stop_status == "stopped":
+        raise GmailSendSafetyError(GMAIL_EMERGENCY_STOP_REASON)
 
     current_time = now or utc_now()
     active_settings = settings or get_settings()

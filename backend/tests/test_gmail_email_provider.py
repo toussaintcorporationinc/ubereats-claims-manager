@@ -26,6 +26,7 @@ from app.models import (
 )
 from app.models.domain import utc_now
 from app.routes.email import get_gmail_provider
+from app.services.autopilot_service import create_emergency_stop
 from app.services.email_provider import EmailConnectionStatus, EmailProviderError, EmailSendResult
 from app.services.gmail_email_provider import GmailEmailProvider
 
@@ -1411,6 +1412,29 @@ def test_send_gmail_draft_rejects_duplicate_initial_claim(
     assert fake_gmail_provider.send_count == 1
     db_session.refresh(second_provider_draft)
     assert second_provider_draft.status == "provider_draft_created"
+
+
+def test_send_gmail_draft_respects_emergency_stop(
+    client: TestClient,
+    db_session: Session,
+    gmail_enabled: None,
+    fake_gmail_provider: FakeGmailEmailProvider,
+) -> None:
+    owner = get_user(db_session, "owner@example.com")
+    connect_gmail_account(db_session, owner.id)
+    restaurant = create_restaurant(client)
+    draft = create_ready_order_and_draft(client, restaurant["id"], "UBER-SEND-EMERGENCY-STOP")
+    provider_draft = create_provider_draft_record(db_session, draft["id"])
+    create_emergency_stop(db_session, owner)
+    db_session.commit()
+
+    response = send_provider_draft(client, provider_draft.provider_draft_id or "")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "autopilot_emergency_stopped"
+    assert fake_gmail_provider.send_count == 0
+    db_session.refresh(provider_draft)
+    assert provider_draft.status == "provider_draft_created"
 
 
 def test_send_gmail_draft_provider_failure_sets_failed_status_and_audit(
