@@ -562,7 +562,7 @@ def test_watched_cycle_without_cached_threads_does_not_add_a_remote_preflight(
     assert result.autopilot_sent_count == 0
 
 
-def test_active_watched_threads_keep_fair_polling_order_with_actionable_backlog(
+def test_active_watched_threads_prioritize_actionable_backlog(
     db_session: Session,
     gmail_case,
 ) -> None:
@@ -592,7 +592,7 @@ def test_active_watched_threads_keep_fair_polling_order_with_actionable_backlog(
         max_per_cycle=1,
     )
 
-    assert [watched.gmail_thread_id for watched in selected] == [oldest.gmail_thread_id]
+    assert [watched.gmail_thread_id for watched in selected] == [_actionable.gmail_thread_id]
 
 
 def test_latest_reply_failure_stops_remaining_remote_preflights(
