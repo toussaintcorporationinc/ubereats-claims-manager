@@ -277,10 +277,6 @@ class GmailWatchedThreadMonitorService:
                     InboundEmailMessage.id == GmailResponseAnalysis.inbound_message_id,
                 )
                 .join(ClaimOrder, ClaimOrder.id == InboundEmailMessage.order_id)
-                .join(
-                    UberCustomerRefundDispute,
-                    UberCustomerRefundDispute.claim_order_id == ClaimOrder.id,
-                )
                 .options(
                     selectinload(GmailResponseAnalysis.inbound_message)
                     .selectinload(InboundEmailMessage.order)
@@ -288,14 +284,19 @@ class GmailWatchedThreadMonitorService:
                 )
                 .where(
                     InboundEmailMessage.email_account_id == account.id,
-                    UberCustomerRefundDispute.status.notin_(sorted(POSITIVE_CUSTOMER_REFUND_STATUSES)),
-                    UberCustomerRefundDispute.status != "ignored",
+                    ClaimOrder.customer_refund_disputes.any(
+                        and_(
+                            UberCustomerRefundDispute.status.notin_(
+                                sorted(POSITIVE_CUSTOMER_REFUND_STATUSES)
+                            ),
+                            UberCustomerRefundDispute.status != "ignored",
+                        )
+                    ),
                 )
                 .order_by(
                     InboundEmailMessage.received_at.desc().nullslast(),
                     GmailResponseAnalysis.id.desc(),
                 )
-                .distinct()
                 .limit(max_items * 4)
             ).all()
         )
