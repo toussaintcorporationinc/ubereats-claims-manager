@@ -89,6 +89,12 @@ SAFE_FOLLOWUP_WORK_ITEM_REASONS = {
     "gmail_followup_reply_sent",
     "followup_cooldown_active",
 }
+FOLLOWUP_TERMINAL_ORDER_STATUSES = {
+    "accepted",
+    "payment_to_verify",
+    "payment_confirmed",
+    "closed",
+}
 POSITIVE_REVIEW_TYPES = {"accepted", "payment_to_verify", "payment_confirmed"}
 POSITIVE_WATCHED_STATUSES = {"positive", "payment_confirmed"}
 REFUSAL_REVIEW_TYPES = {"refused"}
@@ -770,6 +776,10 @@ class GmailWatchedThreadMonitorService:
                 .where(
                     GmailStarredWorkItem.email_account_id == account.id,
                     GmailStarredWorkItem.inbound_message_id.is_not(None),
+                    or_(
+                        ClaimOrder.id.is_(None),
+                        ClaimOrder.status.not_in(sorted(FOLLOWUP_TERMINAL_ORDER_STATUSES)),
+                    ),
                     or_(
                         GmailStarredWorkItem.status.in_(["refused", "evidence_needed"]),
                         and_(
@@ -2461,12 +2471,18 @@ class GmailWatchedThreadMonitorService:
                 GmailResponseAnalysis,
                 GmailResponseAnalysis.inbound_message_id == GmailStarredWorkItem.inbound_message_id,
             )
+            .join(
+                InboundEmailMessage,
+                InboundEmailMessage.id == GmailStarredWorkItem.inbound_message_id,
+            )
+            .join(ClaimOrder, ClaimOrder.id == InboundEmailMessage.order_id)
             .where(
                 GmailStarredWorkItem.watched_thread_id == GmailWatchedThread.id,
                 GmailStarredWorkItem.inbound_message_id.is_not(None),
                 GmailStarredWorkItem.status == "manual_review",
                 GmailResponseAnalysis.recommended_review_type == "followup_needed",
                 GmailStarredWorkItem.reason.in_(sorted(SAFE_FOLLOWUP_WORK_ITEM_REASONS)),
+                ClaimOrder.status.not_in(sorted(FOLLOWUP_TERMINAL_ORDER_STATUSES)),
             )
             .exists()
         )

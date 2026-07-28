@@ -980,6 +980,101 @@ def test_positive_accounting_review_is_never_queued_as_followup(
     assert result.autopilot_sent_count == 0
 
 
+def test_terminal_positive_order_does_not_starve_next_safe_followup(
+    db_session: Session,
+    gmail_case,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owner, account, valid_order = gmail_case
+    monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
+    monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
+    get_settings.cache_clear()
+    terminal_order = ClaimOrder(
+        restaurant_id=valid_order.restaurant_id,
+        uber_order_number="PAID1",
+        customer_name="Client rembourse",
+        order_date=date(2026, 6, 18),
+        order_amount=Decimal("40.00"),
+        currency="EUR",
+        status="payment_confirmed",
+        recovered_amount=Decimal("40.00"),
+    )
+    db_session.add(terminal_order)
+    db_session.flush()
+    terminal_watched, terminal_item, terminal_message = add_refused_work_item(
+        db_session,
+        account,
+        terminal_order,
+        thread_id="thread-terminal-positive",
+    )
+    terminal_watched.status = "manual_review"
+    terminal_item.status = "manual_review"
+    terminal_item.reason = "gmail_followup_reply_sent"
+    terminal_item.processed_at = utc_now() - timedelta(days=2)
+    db_session.add(
+        GmailResponseAnalysis(
+            inbound_message_id=terminal_message.id,
+            order_id=terminal_order.id,
+            recommended_review_type="followup_needed",
+            status="analyzed",
+            confidence_score=Decimal("0.80"),
+            reason="waiting_or_under_review_keywords",
+        )
+    )
+    valid_watched, valid_item, valid_message = add_refused_work_item(
+        db_session,
+        account,
+        valid_order,
+        thread_id="thread-safe-after-terminal",
+    )
+    valid_watched.status = "manual_review"
+    valid_item.status = "manual_review"
+    valid_item.reason = "waiting_or_under_review_keywords"
+    valid_message.received_at = utc_now() - timedelta(days=3)
+    db_session.add(
+        GmailResponseAnalysis(
+            inbound_message_id=valid_message.id,
+            order_id=valid_order.id,
+            recommended_review_type="followup_needed",
+            status="analyzed",
+            confidence_score=Decimal("0.80"),
+            reason="waiting_or_under_review_keywords",
+        )
+    )
+    db_session.commit()
+    provider = FakeFastWatchedGmailProvider()
+    provider.latest_payloads[terminal_watched.gmail_thread_id] = payload(
+        terminal_message.provider_message_id,
+        thread_id=terminal_watched.gmail_thread_id,
+        body=terminal_message.body_text or "",
+    )
+    provider.latest_payloads[valid_watched.gmail_thread_id] = payload(
+        valid_message.provider_message_id,
+        thread_id=valid_watched.gmail_thread_id,
+        body=valid_message.body_text or "",
+    )
+    service = GmailWatchedThreadMonitorService(provider)
+
+    assert service.get_active_watched_threads(
+        db_session,
+        account,
+        max_per_cycle=1,
+    ) == [valid_watched]
+
+    result = GmailWatchedThreadMonitorResult()
+    service.send_pending_actionable_replies(
+        db_session,
+        owner,
+        account,
+        result=result,
+        max_items=3,
+    )
+
+    assert provider.latest_calls == [valid_watched.gmail_thread_id]
+    assert provider.created_draft_thread_ids == [valid_watched.gmail_thread_id]
+    assert result.autopilot_sent_count == 1
+
+
 def test_fast_unlinked_classification_bounds_long_gmail_threads() -> None:
     body = (
         "ancienne conversation sans decision " * 5000
