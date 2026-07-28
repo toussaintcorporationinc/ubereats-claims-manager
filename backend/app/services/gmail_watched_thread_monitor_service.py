@@ -787,9 +787,16 @@ class GmailWatchedThreadMonitorService:
                     cached_thread_priority,
                     case(
                         (GmailStarredWorkItem.status == "refused", 0),
-                        (GmailStarredWorkItem.status == "evidence_needed", 1),
-                        (GmailStarredWorkItem.status == "manual_review", 2),
-                        else_=3,
+                        (
+                            and_(
+                                GmailStarredWorkItem.status == "manual_review",
+                                GmailResponseAnalysis.recommended_review_type == "followup_needed",
+                            ),
+                            1,
+                        ),
+                        (GmailStarredWorkItem.status == "evidence_needed", 2),
+                        (GmailStarredWorkItem.status == "manual_review", 3),
+                        else_=4,
                     ),
                     case((ClaimOrder.order_amount.is_(None), 1), else_=0),
                     ClaimOrder.order_amount.desc(),
@@ -2435,6 +2442,20 @@ class GmailWatchedThreadMonitorService:
             )
             .exists()
         )
+        actionable_followup = (
+            select(GmailStarredWorkItem.id)
+            .join(
+                GmailResponseAnalysis,
+                GmailResponseAnalysis.inbound_message_id == GmailStarredWorkItem.inbound_message_id,
+            )
+            .where(
+                GmailStarredWorkItem.watched_thread_id == GmailWatchedThread.id,
+                GmailStarredWorkItem.inbound_message_id.is_not(None),
+                GmailStarredWorkItem.status == "manual_review",
+                GmailResponseAnalysis.recommended_review_type == "followup_needed",
+            )
+            .exists()
+        )
         return list(
             db.scalars(
                 select(GmailWatchedThread)
@@ -2450,6 +2471,7 @@ class GmailWatchedThreadMonitorService:
                         else_=1,
                     ),
                     case((actionable_refusal, 0), else_=1),
+                    case((actionable_followup, 0), else_=1),
                     case((pending_remote_ref, 0), else_=1),
                     GmailWatchedThread.last_processed_at.asc().nullsfirst(),
                     GmailWatchedThread.last_message_at.desc().nullslast(),

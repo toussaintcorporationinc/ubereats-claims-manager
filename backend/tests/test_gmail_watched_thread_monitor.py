@@ -642,6 +642,52 @@ def test_active_watched_threads_prioritize_actionable_backlog(
     assert [watched.gmail_thread_id for watched in selected] == [_actionable.gmail_thread_id]
 
 
+def test_active_watched_threads_prioritize_followup_backlog(
+    db_session: Session,
+    gmail_case,
+) -> None:
+    _owner, account, order = gmail_case
+    oldest = GmailWatchedThread(
+        email_account_id=account.id,
+        gmail_thread_id="thread-oldest-before-followup",
+        first_starred_message_id="message-thread-oldest-before-followup",
+        status="active",
+        star_active=True,
+    )
+    db_session.add(oldest)
+    followup, item, message = add_refused_work_item(
+        db_session,
+        account,
+        order,
+        thread_id="thread-actionable-followup",
+    )
+    followup.status = "manual_review"
+    followup.last_processed_at = utc_now()
+    item.status = "manual_review"
+    item.reason = "waiting_or_under_review_keywords"
+    db_session.add(
+        GmailResponseAnalysis(
+            inbound_message_id=message.id,
+            order_id=order.id,
+            recommended_review_type="followup_needed",
+            status="analyzed",
+            confidence_score=Decimal("0.80"),
+            reason="waiting_or_under_review_keywords",
+        )
+    )
+    db_session.commit()
+
+    selected = GmailWatchedThreadMonitorService(
+        FakeWatchedGmailProvider()
+    ).get_active_watched_threads(
+        db_session,
+        account,
+        max_per_cycle=1,
+    )
+
+    assert [watched.gmail_thread_id for watched in selected] == [followup.gmail_thread_id]
+
+
 def test_latest_reply_failure_stops_remaining_remote_preflights(
     db_session: Session,
     gmail_case,
@@ -791,7 +837,7 @@ def test_local_stale_scan_continues_past_remote_preflight_budget(
     assert provider.created_drafts == []
 
 
-def test_missing_proof_is_checked_before_the_next_followup(
+def test_followup_is_prioritized_before_incomplete_proof_backlog(
     db_session: Session,
     gmail_case,
     monkeypatch: pytest.MonkeyPatch,
@@ -876,11 +922,11 @@ def test_missing_proof_is_checked_before_the_next_followup(
 
     db_session.refresh(blocked_item)
     db_session.refresh(followup_item)
-    assert blocked_item.status == "manual_review"
-    assert blocked_item.reason == "proof_reply_blocked:missing_evidence"
-    assert provider.latest_calls == [_blocked_watched.gmail_thread_id]
-    assert followup_item.reason == "waiting_or_under_review_keywords"
-    assert result.autopilot_sent_count == 0
+    assert blocked_item.status == "evidence_needed"
+    assert blocked_item.reason == "evidence_requested"
+    assert provider.latest_calls == [followup_watched.gmail_thread_id]
+    assert followup_item.reason == "gmail_followup_reply_sent"
+    assert result.autopilot_sent_count == 1
 
 
 def test_fast_unlinked_classification_bounds_long_gmail_threads() -> None:
