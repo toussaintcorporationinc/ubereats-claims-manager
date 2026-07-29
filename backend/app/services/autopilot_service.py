@@ -232,6 +232,35 @@ def create_emergency_stop(db: Session, user: User) -> AutopilotRun:
     return run
 
 
+def create_emergency_resume(db: Session, user: User) -> AutopilotRun:
+    if not autopilot_is_emergency_stopped(db):
+        raise AutopilotError("autopilot_not_emergency_stopped", 409)
+    run = AutopilotRun(
+        started_by_user_id=user.id,
+        mode="emergency_stop",
+        status="completed",
+        total_candidates=0,
+        sent_count=0,
+        skipped_count=0,
+        failed_count=0,
+        completed_at=utc_now(),
+    )
+    db.add(run)
+    db.flush()
+    add_audit_log(
+        db,
+        entity_type="autopilot_run",
+        entity_id=run.id,
+        action="autopilot.emergency_resumed",
+        user_id=user.id,
+        new_value={
+            "status": run.status,
+            "gmail_send_limits_remain_active": True,
+        },
+    )
+    return run
+
+
 def run_autopilot(
     db: Session,
     user: User,

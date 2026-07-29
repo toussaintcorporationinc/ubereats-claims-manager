@@ -53,7 +53,7 @@ def test_uber_next_cycle_payment_addition_is_payment_to_verify() -> None:
 
     assert classification.review_type == "payment_to_verify"
     assert classification.reason == "payment_to_verify_keywords"
-    assert fast_review_type == "payment_confirmed"
+    assert fast_review_type == "payment_to_verify"
     assert fast_reason == "fast_unlinked_payment_positive"
 
 
@@ -90,11 +90,11 @@ def test_uber_processed_refund_message_is_payment_to_verify() -> None:
 
     assert classification.review_type == "payment_to_verify"
     assert classification.reason == "payment_confirmed_without_amount"
-    assert fast_review_type == "payment_confirmed"
+    assert fast_review_type == "payment_to_verify"
     assert fast_reason == "fast_unlinked_payment_positive"
 
 
-def test_uber_refund_decision_message_is_payment_to_verify() -> None:
+def test_uber_refund_decision_for_reported_item_is_refused() -> None:
     message = InboundEmailMessage(
         email_account_id=1,
         provider_message_id="msg-refund-decision",
@@ -108,8 +108,8 @@ def test_uber_refund_decision_message_is_payment_to_verify() -> None:
 
     classification = GmailResponseIntelligenceService().classify_message(message)
 
-    assert classification.review_type == "payment_to_verify"
-    assert classification.reason == "payment_confirmed_without_amount"
+    assert classification.review_type == "refused"
+    assert classification.reason == "refused_keywords"
 
 
 def test_full_order_payment_retained_is_payment_to_verify() -> None:
@@ -189,12 +189,12 @@ def test_fast_watched_classifier_detects_next_payout_positive() -> None:
 
     review_type, reason, confidence = classify_unlinked_watched_message(message)
 
-    assert review_type == "payment_confirmed"
+    assert review_type == "payment_to_verify"
     assert reason == "fast_unlinked_payment_positive"
     assert confidence >= 0
 
 
-def test_adjusted_payment_is_confirmed_and_amount_is_rounded() -> None:
+def test_adjusted_payment_is_pending_uber_reconciliation_and_amount_is_rounded() -> None:
     message = InboundEmailMessage(
         email_account_id=1,
         provider_message_id="msg-adjusted-payment",
@@ -211,10 +211,10 @@ def test_adjusted_payment_is_confirmed_and_amount_is_rounded() -> None:
     classification = GmailResponseIntelligenceService().classify_message(message)
     fast_review_type, fast_reason, _confidence = classify_unlinked_watched_message(message)
 
-    assert classification.review_type == "payment_confirmed"
-    assert classification.reason == "payment_confirmed_with_amount"
+    assert classification.review_type == "payment_to_verify"
+    assert classification.reason == "payment_promised_with_amount"
     assert str(classification.detected_amount) == "37.38"
-    assert fast_review_type == "payment_confirmed"
+    assert fast_review_type == "payment_to_verify"
     assert fast_reason == "fast_unlinked_payment_positive"
 
 

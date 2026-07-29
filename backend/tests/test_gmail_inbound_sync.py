@@ -1711,7 +1711,7 @@ def test_auto_sync_makes_existing_linked_starred_thread_actionable_without_workf
     get_settings.cache_clear()
 
 
-def test_sync_payment_confirmed_response_updates_recovered_amount(
+def test_sync_payment_email_waits_for_official_uber_reconciliation(
     client: TestClient,
     db_session: Session,
     gmail_inbound_enabled: None,
@@ -1740,11 +1740,12 @@ def test_sync_payment_confirmed_response_updates_recovered_amount(
     assert response.status_code == 200
     assert response.json()["applied_reviews"] == 1
     db_session.refresh(order)
-    assert order.status == "payment_confirmed"
-    assert str(order.recovered_amount) == "24.90"
+    assert order.status == "payment_to_verify"
+    assert order.recovered_amount is None
     analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
     assert analysis is not None
-    assert analysis.recommended_review_type == "payment_confirmed"
+    assert analysis.recommended_review_type == "payment_to_verify"
+    assert analysis.reason == "payment_promised_with_amount"
     assert str(analysis.detected_amount) == "24.90"
 
 
@@ -1780,8 +1781,8 @@ def test_sync_payment_signal_wins_over_starred_gmail_label(
     assert payload["applied_reviews"] == 1
     assert payload["negative_responses_detected"] == 0
     db_session.refresh(order)
-    assert order.status == "payment_confirmed"
-    assert str(order.recovered_amount) == "19.99"
+    assert order.status == "payment_to_verify"
+    assert order.recovered_amount is None
     account = get_active_account(db_session, owner.id)
     assert account is not None
     assert fake_gmail_provider.removed_labels == [(account.id, "msg-starred-paid", "STARRED")]
@@ -1792,8 +1793,8 @@ def test_sync_payment_signal_wins_over_starred_gmail_label(
     assert inbound_message.provider_labels_json == []
     analysis = db_session.scalar(select(GmailResponseAnalysis).where(GmailResponseAnalysis.order_id == order.id))
     assert analysis is not None
-    assert analysis.recommended_review_type == "payment_confirmed"
-    assert analysis.reason == "payment_confirmed_with_amount"
+    assert analysis.recommended_review_type == "payment_to_verify"
+    assert analysis.reason == "payment_promised_with_amount"
 
 
 def test_emergency_stop_applies_payment_but_keeps_inbound_star(
@@ -1827,8 +1828,8 @@ def test_emergency_stop_applies_payment_but_keeps_inbound_star(
 
     assert response.status_code == 200
     db_session.refresh(order)
-    assert order.status == "payment_confirmed"
-    assert str(order.recovered_amount) == "21.24"
+    assert order.status == "payment_to_verify"
+    assert order.recovered_amount is None
     assert fake_gmail_provider.removed_labels == []
     message = db_session.scalar(
         select(InboundEmailMessage).where(InboundEmailMessage.provider_message_id == "msg-stop-paid")
@@ -1923,8 +1924,8 @@ def test_sync_french_payment_approved_with_old_refusal_conflict_is_counted(
     assert payload["applied_reviews"] == 1
     assert payload["negative_responses_detected"] == 0
     db_session.refresh(order)
-    assert order.status == "payment_confirmed"
-    assert str(order.recovered_amount) == "24.90"
+    assert order.status == "payment_to_verify"
+    assert order.recovered_amount is None
     account = get_active_account(db_session, owner.id)
     assert account is not None
     assert fake_gmail_provider.removed_labels == [(account.id, "msg-french-paid", "STARRED")]

@@ -16,7 +16,6 @@ EXPLICIT_PAYMENT_PROMISE_MARKERS = (
     "remboursement accepte",
     "remboursement approuve",
     "nous allons vous rembourser",
-    "nous avons decide de rembourser",
     "nous avons decide de vous rembourser",
     "vous serez rembourse",
     "sera verse",
@@ -120,6 +119,10 @@ PAYMENT_REJECTION_MARKERS = (
     "declined",
     "no refund",
     "cannot refund",
+    "rembourser le montant de l'article signale",
+    "rembourser le montant des articles signales",
+    "rembourser le montant du plat signale",
+    "rembourser le montant des plats signales",
 )
 PAYMENT_AMOUNT_PATTERN = re.compile(
     r"(?<![\w.,])(?:€\s*\d+(?:[.,]\d{1,3})?|\d+(?:[.,]\d{1,3})?\s*(?:€|eur|euros?))(?![\w.,])",
@@ -226,6 +229,8 @@ def text_has_explicit_payment_confirmation(text: str) -> bool:
         context = normalize_payment_signal_text(
             text[max(0, amount_match.start() - 160) : min(len(text), amount_match.end() + 160)]
         )
+        if any(marker in context for marker in PAYMENT_REJECTION_MARKERS):
+            continue
         if any(marker in context for marker in PAYMENT_CONTEXT_MARKERS) and any(
             marker in context for marker in PAYMENT_APPROVAL_MARKERS
         ):

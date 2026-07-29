@@ -79,12 +79,14 @@ def linked_customer_refund_positive_review_block_reason(
         return "positive_payment_dispute_ignored"
     if len(active_disputes) != 1:
         return "positive_payment_dispute_ambiguous"
+    if recovered_amount is not None and abs(
+        recovered_amount - active_disputes[0].customer_refund_amount
+    ) > Decimal("0.02"):
+        return "positive_payment_amount_conflict"
     if review_type != "payment_confirmed":
         return None
     if recovered_amount is None:
         return "positive_payment_amount_not_recorded"
-    if abs(recovered_amount - active_disputes[0].customer_refund_amount) > Decimal("0.02"):
-        return "positive_payment_amount_conflict"
     return None
 
 

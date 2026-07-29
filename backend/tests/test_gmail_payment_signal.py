@@ -94,13 +94,13 @@ def test_uber_decided_to_refund_with_next_payment_amount_is_confirmed() -> None:
     assert text_has_explicit_payment_confirmation(text) is True
 
 
-def test_uber_decided_to_refund_reported_items_is_confirmed() -> None:
+def test_uber_decided_to_refund_reported_items_is_not_merchant_payment() -> None:
     text = (
         "Apres examen des elements fournis, nous avons decide de rembourser le montant "
         "de l'article signale sur la commande 62B6B."
     )
 
-    assert text_has_explicit_payment_confirmation(text) is True
+    assert text_has_explicit_payment_confirmation(text) is False
 
 
 def test_uber_decided_not_to_refund_is_not_confirmed() -> None:

@@ -275,12 +275,16 @@ class GmailResponseIntelligenceService:
         if "payment_confirmed" in strong_groups:
             if amount is not None:
                 return GmailResponseClassification(
-                    review_type="payment_confirmed",
+                    review_type="payment_to_verify",
                     confidence_score=Decimal("0.92"),
-                    reason="payment_confirmed_with_amount",
+                    reason="payment_promised_with_amount",
                     detected_amount=amount,
                     matched_keywords=matches,
-                    notes=build_notes("Paiement confirme avec montant detecte.", message, matches),
+                    notes=build_notes(
+                        "Montant annonce par email; credit Uber officiel encore a rapprocher.",
+                        message,
+                        matches,
+                    ),
                 )
             return GmailResponseClassification(
                 review_type="payment_to_verify",
@@ -442,13 +446,17 @@ class GmailResponseIntelligenceService:
                 matched_keywords={**matches, "ai": [ai.reason]},
                 notes=build_notes("IA bloquee: signaux positifs et negatifs contradictoires.", message, matches),
             )
-        if ai.review_type == "payment_confirmed" and ai.detected_amount is None:
+        if ai.review_type == "payment_confirmed":
             return GmailResponseClassification(
                 review_type="payment_to_verify",
-                confidence_score=min(ai.confidence, Decimal("0.78")),
-                reason="ai_payment_without_amount",
+                confidence_score=min(ai.confidence, Decimal("0.90")),
+                reason="ai_payment_requires_uber_reconciliation",
+                detected_amount=ai.detected_amount,
                 matched_keywords={**matches, "ai": [ai.reason]},
-                notes=limited_note("IA detecte un paiement mais aucun montant explicite exploitable.", ai.notes),
+                notes=limited_note(
+                    "IA detecte un paiement annonce; credit officiel Uber encore a rapprocher.",
+                    ai.notes,
+                ),
             )
         if ai.review_type == "refused" and any(token in normalized_text for token in ("payment has been issued", "paiement effectue", "montant verse")):
             return None
@@ -714,6 +722,10 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
         "ne sommes pas en mesure",
         "nous ne pourrons pas",
         "pas possible de rembourser",
+        "rembourser le montant de l'article signale",
+        "rembourser le montant des articles signales",
+        "rembourser le montant du plat signale",
+        "rembourser le montant des plats signales",
     ),
     "information_requested": (
         "need more information",

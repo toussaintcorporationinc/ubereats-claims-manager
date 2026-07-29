@@ -3048,6 +3048,7 @@ export const api = {
   runAutopilot: (payload: AutopilotRunPayload) =>
     postJson<AutopilotRunDetail, AutopilotRunPayload>("/v1/autopilot/run", { ...payload, dry_run: false }),
   stopAutopilot: () => postJson<AutopilotRun, Record<string, never>>("/v1/autopilot/stop", {}),
+  resumeAutopilot: () => postJson<AutopilotRun, Record<string, never>>("/v1/autopilot/resume", {}),
   getAutopilotRuns: (filters: { limit?: number; offset?: number } = {}) =>
     request<AutopilotRunsResponse>(`/v1/autopilot/runs${buildQuery(filters)}`),
   getAutopilotRun: (id: number) => request<AutopilotRunDetail>(`/v1/autopilot/runs/${id}`),

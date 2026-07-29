@@ -22,6 +22,7 @@ from app.schemas.domain import (
 from app.services.autopilot_service import (
     AutopilotError,
     autopilot_is_emergency_stopped,
+    create_emergency_resume,
     create_emergency_stop,
     run_autopilot,
     sent_today_count,
@@ -128,6 +129,20 @@ def stop_autopilot(
     current_user: User = Depends(require_owner_or_manager),
 ) -> AutopilotRunRead:
     run = create_emergency_stop(db, current_user)
+    db.commit()
+    db.refresh(run)
+    return AutopilotRunRead.model_validate(run)
+
+
+@router.post("/resume", response_model=AutopilotRunRead, status_code=status.HTTP_201_CREATED)
+def resume_autopilot(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+) -> AutopilotRunRead:
+    try:
+        run = create_emergency_resume(db, current_user)
+    except AutopilotError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     db.commit()
     db.refresh(run)
     return AutopilotRunRead.model_validate(run)

@@ -3224,10 +3224,11 @@ class GmailWatchedThreadMonitorService:
             result.manual_reviews += 1
         elif explicit_payment_confirmation and positive_accounting_block_reason is None:
             item.status = "positive"
-            item.reason = "payment_confirmed"
-            watched.status = "payment_confirmed"
+            item.reason = review_type or "positive_payment"
+            watched.status = "payment_confirmed" if review_type == "payment_confirmed" else "positive"
             result.positive_responses += 1
-            result.payment_confirmed += 1
+            if review_type == "payment_confirmed":
+                result.payment_confirmed += 1
             self.remove_thread_star(
                 db,
                 user,
@@ -3763,7 +3764,7 @@ def classify_unlinked_watched_message(message: InboundEmailMessage) -> tuple[str
     )
     text = normalize_fast_classification_text(raw_text)
     if text_has_explicit_payment_confirmation(raw_text):
-        return "payment_confirmed", "fast_unlinked_payment_positive", Decimal("0.84")
+        return "payment_to_verify", "fast_unlinked_payment_positive", Decimal("0.84")
     if any(marker in text for marker in FAST_REFUSAL_MARKERS):
         return "refused", "fast_unlinked_uber_refusal", Decimal("0.82")
     if any(marker in text for marker in FAST_EVIDENCE_MARKERS):

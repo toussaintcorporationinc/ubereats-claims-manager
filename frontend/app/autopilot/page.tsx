@@ -73,6 +73,19 @@ export default function AutopilotPage() {
     }
   }
 
+  async function resume() {
+    setRunning(true);
+    setError(null);
+    try {
+      await api.resumeAutopilot();
+      await loadData();
+    } catch (apiError) {
+      setError(apiError);
+    } finally {
+      setRunning(false);
+    }
+  }
+
   if (loading) {
     return <LoadingState label="Chargement AutoPilot" />;
   }
@@ -89,9 +102,15 @@ export default function AutopilotPage() {
           <Link href="/autopilot/runs" className="secondary-button">
             Runs
           </Link>
-          <button type="button" className="danger-button" disabled={running} onClick={() => void stop()}>
-            Arret urgence
-          </button>
+          {status?.emergency_stopped ? (
+            <button type="button" className="button" disabled={running} onClick={() => void resume()}>
+              Reprendre sous limites Gmail
+            </button>
+          ) : (
+            <button type="button" className="danger-button" disabled={running} onClick={() => void stop()}>
+              Arret urgence
+            </button>
+          )}
         </div>
       </div>
 

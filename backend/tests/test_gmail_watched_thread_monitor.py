@@ -1232,7 +1232,7 @@ def test_fast_unlinked_positive_payment_wins_over_old_refusal_text() -> None:
 
     review_type, reason, confidence = classify_unlinked_watched_message(message)
 
-    assert review_type == "payment_confirmed"
+    assert review_type == "payment_to_verify"
     assert reason == "fast_unlinked_payment_positive"
     assert confidence == Decimal("0.84")
 
@@ -3171,14 +3171,14 @@ def test_historical_payment_promise_wins_over_later_administrative_reply(
     db_session.refresh(order)
     assert watched is not None
     assert positive_item is not None
-    assert order.status == "payment_confirmed"
-    assert order.recovered_amount == Decimal("59.96")
-    assert watched.status == "payment_confirmed"
+    assert order.status == "payment_to_verify"
+    assert order.recovered_amount is None
+    assert watched.status == "positive"
     assert watched.star_active is False
     assert positive_item.status == "positive"
     assert ("star-later-administrative", "STARRED") in provider.removed_labels
     assert provider.sent_drafts == []
-    assert result.payment_confirmed == 1
+    assert result.payment_confirmed == 0
 
 
 def test_full_order_payment_retained_is_accounted_before_star_removal(
@@ -3213,7 +3213,7 @@ def test_full_order_payment_retained_is_accounted_before_star_removal(
     assert item is not None
     assert order.status == "payment_to_verify"
     assert order.recovered_amount is None
-    assert watched.status == "payment_confirmed"
+    assert watched.status == "positive"
     assert watched.star_active is False
     assert item.status == "positive"
     assert provider.removed_labels == [("star-full-payment", "STARRED")]
@@ -3239,8 +3239,8 @@ def test_positive_without_amount_updates_unique_customer_refund_before_unstar(
             payload(
                 "reply-refund-positive",
                 body=(
-                    "Apres examen, nous avons decide de rembourser le montant "
-                    "de l'article signale pour la commande F93BA."
+                    "Apres examen, nous avons decide de vous rembourser "
+                    "pour la commande F93BA."
                 ),
             ),
         ]
@@ -3275,6 +3275,48 @@ def test_positive_without_amount_updates_unique_customer_refund_before_unstar(
     assert result.positive_responses == 1
 
 
+def test_customer_item_refund_decision_keeps_star_and_requires_followup(
+    db_session: Session,
+    gmail_case,
+) -> None:
+    owner, account, order = gmail_case
+    provider = FakeWatchedGmailProvider()
+    provider.starred_payloads = [payload("star-customer-refund", starred=True)]
+    provider.thread_payloads = {
+        "thread-f93ba": [
+            payload("star-customer-refund", starred=True),
+            payload(
+                "reply-customer-refund",
+                body=(
+                    "Apres examen des elements fournis, nous avons decide de rembourser "
+                    "le montant de l'article signale comme manquant ou incorrect "
+                    "sur la commande F93BA."
+                ),
+            ),
+        ]
+    }
+
+    result = GmailWatchedThreadMonitorService(provider).process_account(db_session, owner, account)
+
+    watched = db_session.scalar(select(GmailWatchedThread))
+    item = db_session.scalar(
+        select(GmailStarredWorkItem).where(
+            GmailStarredWorkItem.provider_message_id == "reply-customer-refund"
+        )
+    )
+    db_session.refresh(order)
+    assert watched is not None
+    assert item is not None
+    assert order.recovered_amount is None
+    assert watched.status == "active"
+    assert watched.star_active is True
+    assert item.status == "refused"
+    assert item.reason == "uber_refusal"
+    assert provider.removed_labels == []
+    assert result.refused_responses >= 1
+    assert result.payment_confirmed == 0
+
+
 def test_positive_customer_refund_backlog_reclassifies_legacy_manual_analysis(
     db_session: Session,
     gmail_case,
@@ -3294,8 +3336,8 @@ def test_positive_customer_refund_backlog_reclassifies_legacy_manual_analysis(
         provider_thread_id="thread-positive-backlog",
         from_email="restaurantsfrance@uber.com",
         body_text=(
-            "Apres examen, nous avons decide de rembourser le montant "
-            "de l'article signale pour la commande F93BA."
+            "Apres examen, nous avons decide de vous rembourser "
+            "pour la commande F93BA."
         ),
         match_status="linked",
         match_reason="thread_id_match",
@@ -3365,10 +3407,10 @@ def test_positive_customer_refund_backlog_reclassifies_legacy_manual_analysis(
     assert dispute.status == "payment_to_verify"
     assert dispute.recovered_amount is None
     assert review is not None
-    assert watched.status == "payment_confirmed"
+    assert watched.status == "positive"
     assert watched.star_active is False
     assert item.status == "positive"
-    assert item.reason == "payment_confirmed"
+    assert item.reason == "payment_to_verify"
     assert provider.removed_labels == [(message.provider_message_id, "STARRED")]
     assert result.positive_responses == 1
 
@@ -3453,12 +3495,12 @@ def test_positive_customer_refund_backlog_repairs_star_after_order_was_already_c
     db_session.refresh(watched)
     db_session.refresh(item)
     assert synced == 1
-    assert analysis.recommended_review_type == "payment_confirmed"
+    assert analysis.recommended_review_type == "payment_to_verify"
     assert analysis.status == "ignored"
-    assert watched.status == "payment_confirmed"
+    assert watched.status == "positive"
     assert watched.star_active is False
     assert item.status == "positive"
-    assert item.reason == "payment_confirmed"
+    assert item.reason == "payment_to_verify"
     assert provider.removed_labels == [(message.provider_message_id, "STARRED")]
     assert result.positive_responses == 1
 
@@ -4133,7 +4175,7 @@ def test_stale_survey_skip_reprocesses_full_payment_confirmation(
     db_session.refresh(analysis)
     db_session.refresh(order)
     assert item.status == "positive"
-    assert watched.status == "payment_confirmed"
+    assert watched.status == "positive"
     assert watched.star_active is False
     assert analysis.recommended_review_type == "payment_to_verify"
     assert analysis.status == "applied"

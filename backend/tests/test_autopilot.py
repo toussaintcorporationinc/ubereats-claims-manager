@@ -1635,3 +1635,28 @@ def test_autopilot_emergency_stop_blocks_run(
 
     assert response.status_code == 409
     assert response.json()["detail"] == "autopilot_emergency_stopped"
+
+
+def test_autopilot_emergency_resume_releases_stop(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    stop_response = client.post("/v1/autopilot/stop")
+    assert stop_response.status_code == 201
+
+    resume_response = client.post("/v1/autopilot/resume")
+    assert resume_response.status_code == 201
+    assert resume_response.json()["mode"] == "emergency_stop"
+    assert resume_response.json()["status"] == "completed"
+
+    status_response = client.get("/v1/autopilot/status")
+    assert status_response.status_code == 200
+    assert status_response.json()["emergency_stopped"] is False
+    assert (
+        db_session.scalar(
+            select(AuditLog).where(AuditLog.action == "autopilot.emergency_resumed")
+        )
+        is not None
+    )
