@@ -743,7 +743,7 @@ def initial_claim_candidates(
         statement = statement.limit(limit)
     orders = db.scalars(statement).all()
     for order in orders:
-        repair_order_identity_for_autopilot(db, user, order)
+        repair_order_identity_for_autopilot(db, user, order, allow_ai=False)
     return [
         Candidate(
             case_type="claim_order",
@@ -787,7 +787,7 @@ def followup_candidates(
         statement = statement.limit(limit)
     tasks = db.scalars(statement).all()
     for task in tasks:
-        repair_order_identity_for_autopilot(db, user, task.order)
+        repair_order_identity_for_autopilot(db, user, task.order, allow_ai=False)
     return [
         Candidate(
             case_type="followup_task",
@@ -829,7 +829,7 @@ def appeal_candidates(
         statement = statement.limit(limit)
     workflows = db.scalars(statement).all()
     for workflow in workflows:
-        repair_appeal_workflow_for_autopilot(db, user, workflow)
+        repair_appeal_workflow_for_autopilot(db, user, workflow, allow_ai=False)
     return [
         Candidate(
             case_type="appeal_workflow",

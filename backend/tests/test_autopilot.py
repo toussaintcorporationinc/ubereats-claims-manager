@@ -31,7 +31,7 @@ from app.models import (
     User,
 )
 from app.models.domain import utc_now
-from app.services.openai_structured_analysis_service import AIProofExtraction, OpenAIStructuredAnalysisService
+from app.services.openai_structured_analysis_service import OpenAIStructuredAnalysisService
 from app.routes.email import get_gmail_provider
 from app.services.autopilot_service import (
     gmail_account_send_pacing_active,
@@ -1530,7 +1530,7 @@ def test_autopilot_reopens_manual_review_when_starred_gmail_thread_has_complete_
     assert workflow.next_action_type == "review_refusal"
 
 
-def test_autopilot_repairs_identity_from_attached_proof_image_when_gmail_text_is_incomplete(
+def test_autopilot_dry_run_does_not_analyze_proof_images_in_bulk(
     client: TestClient,
     db_session: Session,
     fake_gmail_provider: FakeAutopilotGmailProvider,
@@ -1542,29 +1542,11 @@ def test_autopilot_repairs_identity_from_attached_proof_image_when_gmail_text_is
     monkeypatch.setenv("EVIDENCE_STORAGE_DIR", str(tmp_path))
     get_settings.cache_clear()
 
-    monkeypatch.setattr(
-        OpenAIStructuredAnalysisService,
-        "analyze_order_identity_text",
-        lambda *args, **kwargs: None,
-    )
+    def unexpected_ai_call(*args, **kwargs):
+        raise AssertionError("bulk AutoPilot scans must not call external AI")
 
-    def fake_analyze_proof(self, **kwargs) -> AIProofExtraction:
-        return AIProofExtraction(
-            detected_evidence_type="ticket_agraphe",
-            case_type="refund",
-            restaurant_name="Frit Dodo",
-            customer_name="Yoann O",
-            order_number="F93BA",
-            display_id="F93BA",
-            order_date=None,
-            order_amount=Decimal("24.99"),
-            currency="EUR",
-            confidence=Decimal("0.92"),
-            missing_fields=["order_date"],
-            notes="ticket visible",
-        )
-
-    monkeypatch.setattr(OpenAIStructuredAnalysisService, "analyze_proof", fake_analyze_proof)
+    monkeypatch.setattr(OpenAIStructuredAnalysisService, "analyze_order_identity_text", unexpected_ai_call)
+    monkeypatch.setattr(OpenAIStructuredAnalysisService, "analyze_proof", unexpected_ai_call)
 
     restaurant = create_restaurant(client, "Frit Dodo")
     order = ClaimOrder(
@@ -1617,8 +1599,8 @@ def test_autopilot_repairs_identity_from_attached_proof_image_when_gmail_text_is
     assert payload["actions"][0]["reason"] == "dry_run_candidate"
     assert payload["actions"][0]["skipped_reason"] is None
     db_session.refresh(order)
-    assert order.customer_name == "Yoann O"
-    assert order.internal_reference == "F93BA"
+    assert order.customer_name is None
+    assert order.internal_reference is None
 
 
 def test_autopilot_appeal_refuses_same_template_without_new_argument(

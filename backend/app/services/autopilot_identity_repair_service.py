@@ -74,7 +74,13 @@ IDENTITY_REPAIR_PROTECTED_STATUSES = {
 }
 
 
-def repair_order_identity_for_autopilot(db: Session, user: User, order: ClaimOrder) -> bool:
+def repair_order_identity_for_autopilot(
+    db: Session,
+    user: User,
+    order: ClaimOrder,
+    *,
+    allow_ai: bool = True,
+) -> bool:
     """Fill missing order identity from trusted local data, Gmail thread text, then AI if available."""
     before = snapshot_order_identity(order)
     changed = hydrate_order_identity_from_sources(db, order)
@@ -83,14 +89,14 @@ def repair_order_identity_for_autopilot(db: Session, user: User, order: ClaimOrd
     if apply_identity_to_order(order, identity):
         changed = True
 
-    if not order_identity_is_complete(order):
+    if allow_ai and not order_identity_is_complete(order):
         ai_identity = analyze_identity_with_ai(db, order)
         if ai_identity is not None:
             merge_identity(identity, ai_identity, prefer_display=True)
             if apply_identity_to_order(order, identity):
                 changed = True
 
-    if not order_identity_is_complete(order):
+    if allow_ai and not order_identity_is_complete(order):
         proof_identity = analyze_attached_evidence_with_ai(db, order)
         if proof_identity is not None:
             merge_identity(identity, proof_identity, prefer_display=True)
@@ -283,11 +289,17 @@ def merge_identity_without_overriding_local_facts(
         target.currency = source.currency
 
 
-def repair_appeal_workflow_for_autopilot(db: Session, user: User, workflow: AppealWorkflow) -> bool:
+def repair_appeal_workflow_for_autopilot(
+    db: Session,
+    user: User,
+    workflow: AppealWorkflow,
+    *,
+    allow_ai: bool = True,
+) -> bool:
     changed = False
     order = workflow.claim_order
     if order is not None:
-        changed = repair_order_identity_for_autopilot(db, user, order) or changed
+        changed = repair_order_identity_for_autopilot(db, user, order, allow_ai=allow_ai) or changed
 
     if workflow.next_action_type != "manual_review" or order is None:
         return changed
