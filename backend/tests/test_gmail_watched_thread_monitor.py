@@ -3275,7 +3275,7 @@ def test_positive_without_amount_updates_unique_customer_refund_before_unstar(
     assert result.positive_responses == 1
 
 
-def test_customer_item_refund_decision_keeps_star_and_requires_followup(
+def test_customer_item_refund_decision_removes_star_and_waits_for_credit(
     db_session: Session,
     gmail_case,
 ) -> None:
@@ -3308,12 +3308,13 @@ def test_customer_item_refund_decision_keeps_star_and_requires_followup(
     assert watched is not None
     assert item is not None
     assert order.recovered_amount is None
-    assert watched.status == "active"
-    assert watched.star_active is True
-    assert item.status == "refused"
-    assert item.reason == "uber_refusal"
-    assert provider.removed_labels == []
-    assert result.refused_responses >= 1
+    assert order.status == "payment_to_verify"
+    assert watched.status == "positive"
+    assert watched.star_active is False
+    assert item.status == "positive"
+    assert item.reason == "payment_to_verify"
+    assert provider.removed_labels == [("star-customer-refund", "STARRED")]
+    assert result.positive_responses == 1
     assert result.payment_confirmed == 0
 
 

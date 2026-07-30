@@ -17,6 +17,10 @@ EXPLICIT_PAYMENT_PROMISE_MARKERS = (
     "remboursement approuve",
     "nous allons vous rembourser",
     "nous avons decide de vous rembourser",
+    "nous avons decide de rembourser le montant de l'article signale",
+    "nous avons decide de rembourser le montant des articles signales",
+    "nous avons decide de rembourser le montant du plat signale",
+    "nous avons decide de rembourser le montant des plats signales",
     "vous serez rembourse",
     "sera verse",
     "sera credite",
@@ -119,10 +123,6 @@ PAYMENT_REJECTION_MARKERS = (
     "declined",
     "no refund",
     "cannot refund",
-    "rembourser le montant de l'article signale",
-    "rembourser le montant des articles signales",
-    "rembourser le montant du plat signale",
-    "rembourser le montant des plats signales",
 )
 PAYMENT_AMOUNT_PATTERN = re.compile(
     r"(?<![\w.,])(?:€\s*\d+(?:[.,]\d{1,3})?|\d+(?:[.,]\d{1,3})?\s*(?:€|eur|euros?))(?![\w.,])",
