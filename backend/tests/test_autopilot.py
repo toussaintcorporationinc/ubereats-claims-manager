@@ -330,6 +330,60 @@ def test_autopilot_dry_run_lists_candidates_without_sending(
     assert db_session.scalar(select(EmailProviderDraft).where(EmailProviderDraft.status == "sent")) is None
 
 
+def test_autopilot_dry_run_does_not_call_ai_for_complete_order_identity(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_ai_call(*args, **kwargs):
+        raise AssertionError("complete order identity must not trigger AI analysis")
+
+    monkeypatch.setattr(OpenAIStructuredAnalysisService, "analyze_order_identity_text", unexpected_ai_call)
+    monkeypatch.setattr(OpenAIStructuredAnalysisService, "analyze_proof", unexpected_ai_call)
+
+    restaurant = create_restaurant(client, "Asian Passion")
+    order = ClaimOrder(
+        restaurant_id=restaurant["id"],
+        uber_order_number="AP-COMPLETE-001",
+        customer_name="Client Complet",
+        order_date=date(2026, 7, 20),
+        order_amount=Decimal("29.90"),
+        currency="EUR",
+        accepted_by_restaurant=True,
+        prepared_before_cancellation=True,
+        status="refused",
+    )
+    db_session.add(order)
+    db_session.flush()
+    db_session.add(
+        AppealWorkflow(
+            case_type="claim_order",
+            case_id=order.id,
+            restaurant_id=order.restaurant_id,
+            claim_order_id=order.id,
+            status="appeal_needed",
+            refusal_count=1,
+            next_action_type="create_appeal_draft",
+            next_action_at=utc_now() - timedelta(hours=1),
+        )
+    )
+    db_session.commit()
+    account = add_gmail_account(db_session)
+    add_starred_inbound_message(db_session, order, account)
+
+    response = client.post(
+        "/v1/autopilot/dry-run",
+        json={"mode": "appeals", "restaurant_id": restaurant["id"]},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["run"]["total_candidates"] == 1
+    assert payload["actions"][0]["reason"] == "dry_run_candidate"
+
+
 def test_autopilot_candidate_iteration_respects_run_limit(
     client: TestClient,
     db_session: Session,

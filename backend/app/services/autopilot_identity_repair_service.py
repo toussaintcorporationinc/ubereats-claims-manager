@@ -80,17 +80,22 @@ def repair_order_identity_for_autopilot(db: Session, user: User, order: ClaimOrd
     changed = hydrate_order_identity_from_sources(db, order)
 
     identity = extract_identity_from_linked_text(db, order)
-    if identity_score(identity) < 4:
+    if apply_identity_to_order(order, identity):
+        changed = True
+
+    if not order_identity_is_complete(order):
         ai_identity = analyze_identity_with_ai(db, order)
         if ai_identity is not None:
             merge_identity(identity, ai_identity, prefer_display=True)
-    if identity_score(identity) < 4:
+            if apply_identity_to_order(order, identity):
+                changed = True
+
+    if not order_identity_is_complete(order):
         proof_identity = analyze_attached_evidence_with_ai(db, order)
         if proof_identity is not None:
             merge_identity(identity, proof_identity, prefer_display=True)
-
-    if apply_identity_to_order(order, identity):
-        changed = True
+            if apply_identity_to_order(order, identity):
+                changed = True
 
     if changed:
         db.flush()
