@@ -360,7 +360,7 @@ jobs:
           grep -q 'id="sellForm"' ecraneo-site/index.html
           grep -q 'id="checkoutForm"' ecraneo-site/index.html
           grep -q 'toussaintcorporation@gmail.com' ecraneo-site/index.html
-          grep -q 'data-ecraneo-email' ecraneo-site/index.html
+          grep -q 'data-ecraneo-mail' ecraneo-site/index.html
           grep -q 'ecraneo-email-routing' ecraneo-site/index.html
           find ecraneo-site -maxdepth 3 -type f -printf '%p %s bytes\n' | sort
 
@@ -375,3 +375,5 @@ jobs:
             git commit -m 'feat: publish recovered ECRANEO site with direct email routing'
             git push
           fi
+
+# Registered and retriggered on 2026-08-28
