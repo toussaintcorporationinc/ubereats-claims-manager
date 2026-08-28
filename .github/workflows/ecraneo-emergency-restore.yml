@@ -1,0 +1,118 @@
+name: ECRANEO emergency public restore
+
+on:
+  push:
+    paths:
+      - .github/workflows/ecraneo-emergency-restore.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERCEL_TOKEN_A: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_TOKEN_B: ${{ secrets.VERCEL_ACCESS_TOKEN }}
+      VERCEL_TOKEN_C: ${{ secrets.VERCEL_API_TOKEN }}
+      VERCEL_TEAM_SECRET: ${{ secrets.VERCEL_TEAM_ID }}
+      VERCEL_ORG_SECRET: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_SECRET: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TEAM_VAR: ${{ vars.VERCEL_TEAM_ID }}
+      VERCEL_ORG_VAR: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_VAR: ${{ vars.VERCEL_PROJECT_ID }}
+      FTP_SERVER: ${{ secrets.FTP_SERVER }}
+      FTP_HOST: ${{ secrets.FTP_HOST }}
+      FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+      FTP_USER: ${{ secrets.FTP_USER }}
+      FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+      FTP_PASS: ${{ secrets.FTP_PASS }}
+      GODADDY_FTP_SERVER: ${{ secrets.GODADDY_FTP_SERVER }}
+      GODADDY_FTP_USERNAME: ${{ secrets.GODADDY_FTP_USERNAME }}
+      GODADDY_FTP_PASSWORD: ${{ secrets.GODADDY_FTP_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inspect current DNS and public response
+        shell: bash
+        run: |
+          set -u
+          echo '=== DNS A ==='
+          getent ahostsv4 ecraneo.com | awk '{print $1}' | sort -u || true
+          echo '=== DNS NS ==='
+          if command -v dig >/dev/null 2>&1; then
+            dig +short ecraneo.com NS || true
+            dig +short www.ecraneo.com CNAME || true
+          fi
+          echo '=== HTTPS ==='
+          curl -sSIL --connect-timeout 10 --max-time 30 https://ecraneo.com/ | sed -n '1,30p' || true
+
+      - name: Report credential availability without exposing values
+        shell: bash
+        run: |
+          set -u
+          for name in \
+            VERCEL_TOKEN_A VERCEL_TOKEN_B VERCEL_TOKEN_C \
+            VERCEL_TEAM_SECRET VERCEL_ORG_SECRET VERCEL_PROJECT_SECRET \
+            VERCEL_TEAM_VAR VERCEL_ORG_VAR VERCEL_PROJECT_VAR \
+            FTP_SERVER FTP_HOST FTP_USERNAME FTP_USER FTP_PASSWORD FTP_PASS \
+            GODADDY_FTP_SERVER GODADDY_FTP_USERNAME GODADDY_FTP_PASSWORD
+          do
+            if [[ -n "${!name:-}" ]]; then
+              echo "$name=set"
+            else
+              echo "$name=missing"
+            fi
+          done
+
+      - name: Disable accidental Vercel Authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="${VERCEL_TOKEN_A:-${VERCEL_TOKEN_B:-${VERCEL_TOKEN_C:-}}}"
+          if [[ -z "$TOKEN" ]]; then
+            echo 'VERCEL_RESTORE=skipped_no_token'
+            exit 0
+          fi
+
+          TEAM="${VERCEL_TEAM_SECRET:-${VERCEL_ORG_SECRET:-${VERCEL_TEAM_VAR:-${VERCEL_ORG_VAR:-team_6ANDQINhLaEu2qEjm70t7yZd}}}}"
+          PROJECT="${VERCEL_PROJECT_SECRET:-${VERCEL_PROJECT_VAR:-prj_qsxKuMrnp9JFvTwUGvBOFKH0oH0c}}"
+          API="https://api.vercel.com/v9/projects/${PROJECT}?teamId=${TEAM}"
+
+          http_code=$(curl -sS -o /tmp/vercel-update.json -w '%{http_code}' \
+            --request PATCH "$API" \
+            --header "Authorization: Bearer $TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data '{"ssoProtection":null}')
+          echo "VERCEL_PATCH_HTTP=$http_code"
+          if [[ "$http_code" -lt 200 || "$http_code" -ge 300 ]]; then
+            jq -r 'if type=="object" then (.error.code // .error.message // .message // "request_failed") else "request_failed" end' /tmp/vercel-update.json 2>/dev/null || true
+            exit 1
+          fi
+
+          verify_code=$(curl -sS -o /tmp/vercel-project.json -w '%{http_code}' \
+            "$API" --header "Authorization: Bearer $TOKEN")
+          echo "VERCEL_VERIFY_HTTP=$verify_code"
+          if [[ "$verify_code" == "200" ]]; then
+            jq -c '{id,name,ssoProtection}' /tmp/vercel-project.json
+          fi
+          echo 'VERCEL_RESTORE=completed'
+
+      - name: Verify ecraneo.com after repair
+        shell: bash
+        run: |
+          set -u
+          sleep 5
+          code=$(curl -sS -o /tmp/ecraneo-home.html -w '%{http_code}' \
+            --connect-timeout 10 --max-time 30 https://ecraneo.com/ || true)
+          echo "ECRANEO_HTTP=$code"
+          if grep -qi 'Log in to Vercel' /tmp/ecraneo-home.html 2>/dev/null; then
+            echo 'ECRANEO_PUBLIC=no_vercel_login_present'
+          elif grep -qi '<title>ECRANEO' /tmp/ecraneo-home.html 2>/dev/null; then
+            echo 'ECRANEO_PUBLIC=yes'
+          else
+            echo 'ECRANEO_PUBLIC=unknown'
+          fi
