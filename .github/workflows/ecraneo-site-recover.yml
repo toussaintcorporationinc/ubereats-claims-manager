@@ -1,0 +1,377 @@
+name: Recover and publish ECRANEO static source
+
+on:
+  push:
+    paths:
+      - .github/workflows/ecraneo-site-recover.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_BASE: https://ecraneo-hj63pt06v-toussaintcorporationincs-projects.vercel.app
+      SOURCE_ENTRY: https://ecraneo-hj63pt06v-toussaintcorporationincs-projects.vercel.app/?_vercel_share=a5e8bIEYER01HMw98ECrJKr7mByoE4OY
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recover original ECRANEO files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf ecraneo-site
+          mkdir -p ecraneo-site/assets/products
+          cookie=/tmp/ecraneo-cookie.jar
+          rm -f "$cookie"
+
+          curl -fsSL --max-redirs 12 --connect-timeout 15 --max-time 120 \
+            -A 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36' \
+            -c "$cookie" -b "$cookie" \
+            "$SOURCE_ENTRY" -o ecraneo-site/index.html
+
+          grep -q 'id="sellForm"' ecraneo-site/index.html
+          grep -q 'id="checkoutForm"' ecraneo-site/index.html
+          grep -q '<title>ECRANEO' ecraneo-site/index.html
+
+          fetch_optional() {
+            local remote="$1" local_path="$2" code
+            mkdir -p "$(dirname "ecraneo-site/$local_path")"
+            code=$(curl -sSL --max-redirs 8 --connect-timeout 15 --max-time 90 \
+              -A 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36' \
+              -c "$cookie" -b "$cookie" \
+              -o "ecraneo-site/$local_path.tmp" -w '%{http_code}' \
+              "$SOURCE_BASE/$remote" || true)
+            if [[ "$code" == "200" ]]; then
+              mv "ecraneo-site/$local_path.tmp" "ecraneo-site/$local_path"
+              echo "RECOVERED $remote"
+            else
+              rm -f "ecraneo-site/$local_path.tmp"
+              echo "SKIPPED $remote HTTP $code"
+            fi
+          }
+
+          for page in favicon.svg admin.html mentions-legales.html cgv.html retractation.html confidentialite.html livraison-retours.html contact.html robots.txt; do
+            fetch_optional "$page" "$page"
+          done
+
+          for image in samsung-43.webp lg-40.webp philips-50.webp tcl-55.webp samsung-32.webp sony-43.webp hisense-58.webp panasonic-42.webp lg-nanocell-50.webp; do
+            fetch_optional "assets/products/$image" "assets/products/$image"
+          done
+
+      - name: Integrate direct e-mail routing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          index = Path('ecraneo-site/index.html')
+          html = index.read_text(encoding='utf-8')
+          html = html.replace('<link rel="manifest" href="site.webmanifest">', '')
+          html = html.replace('href="favicon.svg"', 'href="/favicon.svg"')
+
+          script = r'''<script id="ecraneo-email-routing">
+          (() => {
+            'use strict';
+            const DESTINATION = 'toussaintcorporation@gmail.com';
+            const ENDPOINT = `https://formsubmit.co/${DESTINATION}`;
+            const FRAME_NAME = 'ecraneoMailFrame';
+            const SUCCESS_PATH = '/form-success.html';
+            const byId = id => document.getElementById(id);
+            const notify = text => typeof window.toast === 'function' ? window.toast(text) : window.alert(text);
+            const makeReference = prefix => `${prefix}-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+
+            function setFieldName(form, id, name) {
+              const field = form.querySelector(`#${id}`);
+              if (field) field.name = name;
+            }
+
+            function setHidden(form, name, value) {
+              let field = [...form.querySelectorAll('input[type="hidden"][data-ecraneo-mail]')]
+                .find(input => input.name === name);
+              if (!field) {
+                field = document.createElement('input');
+                field.type = 'hidden';
+                field.name = name;
+                field.dataset.ecraneoMail = '1';
+                form.appendChild(field);
+              }
+              field.value = value == null ? '' : String(value);
+            }
+
+            function getFrame() {
+              let frame = document.querySelector(`iframe[name="${FRAME_NAME}"]`);
+              if (frame) return frame;
+              frame = document.createElement('iframe');
+              frame.name = FRAME_NAME;
+              frame.title = 'Transmission sécurisée ECRANEO';
+              frame.setAttribute('aria-hidden', 'true');
+              frame.style.cssText = 'position:fixed;left:-10000px;top:-10000px;width:1px;height:1px;opacity:0;border:0;pointer-events:none';
+              document.body.appendChild(frame);
+              return frame;
+            }
+
+            function configure(form, subject, requestReference, source) {
+              form.action = ENDPOINT;
+              form.method = 'POST';
+              form.enctype = 'multipart/form-data';
+              form.target = FRAME_NAME;
+              const successUrl = `${location.origin}${SUCCESS_PATH}?ref=${encodeURIComponent(requestReference)}`;
+              setHidden(form, '_subject', subject);
+              setHidden(form, '_template', 'table');
+              setHidden(form, '_captcha', 'false');
+              setHidden(form, '_honey', '');
+              setHidden(form, '_next', successUrl);
+              setHidden(form, '_url', `${location.origin}/${source || ''}`);
+              setHidden(form, 'Site', 'ecraneo.com');
+              setHidden(form, 'Date et heure', new Date().toLocaleString('fr-FR', { timeZone: 'Europe/Paris' }));
+            }
+
+            function setBusy(form, active, label) {
+              const button = form.querySelector('button[type="submit"]');
+              if (!button) return;
+              if (active) {
+                if (!button.dataset.originalHtml) button.dataset.originalHtml = button.innerHTML;
+                button.disabled = true;
+                button.setAttribute('aria-busy', 'true');
+                button.textContent = label;
+              } else {
+                button.disabled = false;
+                button.removeAttribute('aria-busy');
+                if (button.dataset.originalHtml) button.innerHTML = button.dataset.originalHtml;
+              }
+            }
+
+            async function compressUploads(form) {
+              const compressor = typeof compress === 'function' ? compress : window.compress;
+              if (typeof compressor !== 'function' || typeof DataTransfer === 'undefined') return;
+              for (const input of form.querySelectorAll('input[type="file"]')) {
+                const original = input.files?.[0];
+                if (!original) continue;
+                try {
+                  const dataUrl = await compressor(original);
+                  const [header, encoded] = dataUrl.split(',');
+                  if (!encoded) continue;
+                  const mime = (header.match(/:(.*?);/) || [null, 'image/jpeg'])[1];
+                  const binary = atob(encoded);
+                  const bytes = new Uint8Array(binary.length);
+                  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+                  const name = (original.name || 'photo').replace(/\.[^.]+$/, '') + '.jpg';
+                  const optimized = new File([bytes], name, { type: mime, lastModified: Date.now() });
+                  const transfer = new DataTransfer();
+                  transfer.items.add(optimized);
+                  input.files = transfer.files;
+                } catch (error) {
+                  console.warn('[ECRANEO] Photo conservée sans recompression', error);
+                }
+              }
+            }
+
+            function submitInBackground(form) {
+              return new Promise(resolve => {
+                const frame = getFrame();
+                let completed = false;
+                const finish = success => {
+                  if (completed) return;
+                  completed = true;
+                  clearTimeout(timeout);
+                  frame.removeEventListener('load', onLoad);
+                  resolve(success);
+                };
+                const onLoad = () => {
+                  try {
+                    const current = new URL(frame.contentWindow.location.href);
+                    if (current.origin === location.origin && current.pathname === SUCCESS_PATH) finish(true);
+                  } catch (_) {}
+                };
+                frame.addEventListener('load', onLoad);
+                const timeout = setTimeout(() => finish(false), 30000);
+                HTMLFormElement.prototype.submit.call(form);
+              });
+            }
+
+            function clearPhotos(form) {
+              form.querySelectorAll('.photo').forEach(container => {
+                container.querySelector('img')?.remove();
+                container.classList.remove('has');
+              });
+              try {
+                if (typeof photoData === 'object' && photoData) {
+                  Object.keys(photoData).forEach(key => delete photoData[key]);
+                }
+              } catch (_) {}
+            }
+
+            function stopLegacy(event) {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+            }
+
+            function wireSeller() {
+              const form = byId('sellForm');
+              if (!form || form.dataset.emailReady === '1') return;
+              form.dataset.emailReady = '1';
+              [
+                ['sellerName', 'Nom du propriétaire'],
+                ['sellerPhone', 'Téléphone'],
+                ['sellerCity', 'Ville'],
+                ['sellerPostcode', 'Code postal'],
+                ['sellerBrand', 'Marque du téléviseur'],
+                ['sellerSize', 'Taille du téléviseur'],
+                ['sellerWorks', 'État de fonctionnement'],
+                ['sellerNotes', 'Détails complémentaires'],
+                ['photo1', 'Photo de face'],
+                ['photo2', 'Photo écran allumé'],
+                ['photo3', 'Photo étiquette arrière']
+              ].forEach(([id, name]) => setFieldName(form, id, name));
+
+              form.addEventListener('submit', async event => {
+                stopLegacy(event);
+                if (!form.reportValidity()) return;
+                if (!form.querySelector('#photo1')?.files?.[0]) {
+                  notify('Ajoutez au moins une photo de face du téléviseur.');
+                  return;
+                }
+                setBusy(form, true, 'Transmission en cours…');
+                await compressUploads(form);
+                const requestType = form.querySelector('input[name="offerType"]:checked')?.value || 'Proposition de téléviseur';
+                const isDonation = /don/i.test(requestType);
+                const ref = makeReference(isDonation ? 'DON' : 'VENTE-TV');
+                configure(form, `[ECRANEO] ${requestType} — ${ref}`, ref, '#reprise');
+                setHidden(form, 'Référence ECRANEO', ref);
+                setHidden(form, 'Type de demande', requestType);
+                setHidden(form, 'Service', isDonation ? 'Don de téléviseur' : 'Vente / estimation de téléviseur');
+                const delivered = await submitInBackground(form);
+                setBusy(form, false);
+                if (!delivered) {
+                  notify('La transmission n’a pas été confirmée. Réessayez dans quelques instants.');
+                  return;
+                }
+                form.reset();
+                clearPhotos(form);
+                notify(`Demande ${ref} transmise à ECRANEO.`);
+              }, true);
+
+              if (!form.querySelector('[data-email-note]')) {
+                const note = document.createElement('p');
+                note.dataset.emailNote = '1';
+                note.className = 'note';
+                note.textContent = 'Vos coordonnées, les informations du téléviseur et les photos sont transmis directement au service ECRANEO.';
+                form.appendChild(note);
+              }
+            }
+
+            function cartDetails() {
+              try {
+                return cart.map(item => {
+                  const product = products.find(entry => entry.id === item.id);
+                  return product
+                    ? `${product.brand} ${product.name} — Réf. ${product.id} — ${item.price} €`
+                    : `${item.id} — ${item.price} €`;
+                }).join('\n');
+              } catch (_) { return ''; }
+            }
+
+            function wireCheckout() {
+              const form = byId('checkoutForm');
+              if (!form || form.dataset.emailReady === '1') return;
+              form.dataset.emailReady = '1';
+              [
+                ['orderName', 'Nom du client'],
+                ['orderPhone', 'Téléphone du client'],
+                ['orderPostcode', 'Code postal'],
+                ['orderAddress', 'Adresse de livraison']
+              ].forEach(([id, name]) => setFieldName(form, id, name));
+              const emailField = form.querySelector('#orderEmail');
+              if (emailField) emailField.name = 'email';
+
+              form.addEventListener('submit', async event => {
+                stopLegacy(event);
+                if (!form.reportValidity()) return;
+                if (typeof cart === 'undefined' || !cart.length) {
+                  notify('Votre panier est vide.');
+                  return;
+                }
+                setBusy(form, true, 'Transmission en cours…');
+                const ref = makeReference('ACHAT');
+                const amount = typeof total === 'function' ? total() : 0;
+                const email = emailField?.value?.trim() || '';
+                configure(form, `[ECRANEO] Nouvelle demande d’achat — ${ref}`, ref, '#boutique');
+                setHidden(form, 'Référence ECRANEO', ref);
+                setHidden(form, 'Type de demande', 'Achat / réservation de téléviseur');
+                setHidden(form, 'E-mail du client', email);
+                setHidden(form, 'Articles demandés', cartDetails());
+                setHidden(form, 'Total indicatif', `${amount} €`);
+                setHidden(form, 'Mode de remise', form.querySelector('input[name="delivery"]:checked')?.value || 'Non renseigné');
+                setHidden(form, '_replyto', email);
+                const delivered = await submitInBackground(form);
+                setBusy(form, false);
+                if (!delivered) {
+                  notify('La transmission n’a pas été confirmée. Réessayez dans quelques instants.');
+                  return;
+                }
+                try { cart = []; saveCart(); } catch (_) {}
+                form.reset();
+                try { closeCheckout(); } catch (_) {}
+                notify(`Demande ${ref} transmise à ECRANEO.`);
+              }, true);
+            }
+
+            function init() {
+              getFrame();
+              wireSeller();
+              wireCheckout();
+              document.documentElement.dataset.ecraneoEmail = 'active';
+            }
+            document.readyState === 'loading'
+              ? document.addEventListener('DOMContentLoaded', init, { once: true })
+              : init();
+          })();
+          </script>'''
+
+          if 'id="ecraneo-email-routing"' not in html:
+              html = html.replace('</body>', script + '\n</body>')
+          index.write_text(html, encoding='utf-8')
+          PY
+
+          cat > ecraneo-site/form-success.html <<'HTML'
+          <!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Demande transmise — ECRANEO</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f4ee;color:#11110f;font-family:Inter,Arial,sans-serif}.box{max-width:540px;margin:24px;padding:34px;border:1px solid #dedfd5;border-radius:22px;background:#fff;text-align:center;box-shadow:0 24px 70px rgba(17,17,15,.13)}.mark{width:58px;height:58px;margin:auto;border-radius:18px;background:#c9ff3a;display:grid;place-items:center;font-size:30px;font-weight:1000}.title{font-size:28px;letter-spacing:-1px;margin:17px 0 8px}.text{line-height:1.6;color:#6f7068}</style></head><body><main class="box"><div class="mark">✓</div><h1 class="title">Demande transmise</h1><p class="text">ECRANEO a bien reçu votre demande. Notre équipe vous recontactera avec la référence communiquée.</p></main></body></html>
+          HTML
+
+          cat > ecraneo-site/health.json <<'JSON'
+          {"ok":true,"service":"ecraneo-email-routing","destination":"toussaintcorporation@gmail.com","forms":["achat","vente-tv","don"]}
+          JSON
+
+          if [[ ! -f ecraneo-site/favicon.svg ]]; then
+            cat > ecraneo-site/favicon.svg <<'SVG'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="#11110f"/><text x="32" y="42" text-anchor="middle" font-family="Arial,sans-serif" font-weight="900" font-size="30" fill="#c9ff3a">E:</text></svg>
+          SVG
+          fi
+
+      - name: Validate recovered production bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(wc -c < ecraneo-site/index.html)" -gt 80000
+          grep -q 'id="sellForm"' ecraneo-site/index.html
+          grep -q 'id="checkoutForm"' ecraneo-site/index.html
+          grep -q 'toussaintcorporation@gmail.com' ecraneo-site/index.html
+          grep -q 'data-ecraneo-email' ecraneo-site/index.html
+          grep -q 'ecraneo-email-routing' ecraneo-site/index.html
+          find ecraneo-site -maxdepth 3 -type f -printf '%p %s bytes\n' | sort
+
+      - name: Commit recovered site
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'ECRANEO deployment bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add ecraneo-site
+          if ! git diff --cached --quiet; then
+            git commit -m 'feat: publish recovered ECRANEO site with direct email routing'
+            git push
+          fi
