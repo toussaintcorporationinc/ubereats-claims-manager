@@ -1,0 +1,138 @@
+name: ECRANEO Vercel device unlock
+
+on:
+  push:
+    branches:
+      - ecraneo-vercel-device-login-20260828
+    paths:
+      - .github/workflows/ecraneo-vercel-device-unlock.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unlock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERCEL_PROJECT_ID: prj_qsxKuMrnp9JFvTwUGvBOFKH0oH0c
+      VERCEL_TEAM_ID: team_6ANDQINhLaEu2qEjm70t7yZd
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Vercel CLI
+        shell: bash
+        run: npm install --global vercel@latest
+
+      - name: Authorize the ephemeral runner
+        shell: bash
+        env:
+          BROWSER: none
+          NO_COLOR: "1"
+        run: |
+          set -euo pipefail
+          unset CI
+          echo 'VERCEL_DEVICE_AUTH=waiting_for_owner_approval'
+          script -q -e -c "vercel login --no-color" /dev/null
+          echo 'VERCEL_DEVICE_AUTH=approved'
+
+      - name: Disable accidental Vercel Authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          AUTH_FILE=$(find "$HOME" -maxdepth 8 -type f -name auth.json -path '*vercel*' 2>/dev/null | head -n 1 || true)
+          if [[ -z "$AUTH_FILE" ]]; then
+            echo 'AUTH_FILE=not_found'
+            exit 1
+          fi
+          echo 'AUTH_FILE=found'
+          TOKEN=$(python3 - "$AUTH_FILE" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], "r", encoding="utf-8") as handle:
+              data = json.load(handle)
+
+          candidates = []
+          if isinstance(data, dict):
+              candidates.extend([
+                  data.get("token"),
+                  data.get("accessToken"),
+                  data.get("access_token"),
+              ])
+              nested = data.get("auth")
+              if isinstance(nested, dict):
+                  candidates.extend([
+                      nested.get("token"),
+                      nested.get("accessToken"),
+                      nested.get("access_token"),
+                  ])
+
+          token = next(
+              (value.strip() for value in candidates if isinstance(value, str) and value.strip()),
+              "",
+          )
+          if not token:
+              raise SystemExit(1)
+          print(token)
+          PY
+          )
+
+          API="https://api.vercel.com/v9/projects/${VERCEL_PROJECT_ID}?teamId=${VERCEL_TEAM_ID}"
+          HTTP_CODE=$(curl -sS -o /tmp/ecraneo-project-update.json -w '%{http_code}' \
+            --request PATCH "$API" \
+            --header "Authorization: Bearer $TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data '{"ssoProtection":null}')
+          unset TOKEN
+          echo "VERCEL_PATCH_HTTP=$HTTP_CODE"
+
+          if [[ "$HTTP_CODE" -lt 200 || "$HTTP_CODE" -ge 300 ]]; then
+            python3 - <<'PY'
+          import json
+          try:
+              with open('/tmp/ecraneo-project-update.json', encoding='utf-8') as handle:
+                  data = json.load(handle)
+              error = data.get('error', {}) if isinstance(data, dict) else {}
+              print('VERCEL_PATCH_ERROR=' + str(error.get('code') or error.get('message') or 'request_failed'))
+          except Exception:
+              print('VERCEL_PATCH_ERROR=request_failed')
+          PY
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import json
+          with open('/tmp/ecraneo-project-update.json', encoding='utf-8') as handle:
+              data = json.load(handle)
+          value = data.get('ssoProtection', 'field_missing') if isinstance(data, dict) else 'invalid_response'
+          print('SSO_PROTECTION=' + ('disabled' if value is None else str(value)))
+          PY
+
+      - name: Verify ecraneo.com is public again
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 8
+          curl -sS -L --connect-timeout 10 --max-time 45 -A 'Mozilla/5.0' \
+            -D /tmp/ecraneo-headers.txt -o /tmp/ecraneo-home.html https://ecraneo.com/
+          HTTP_FINAL=$(awk 'toupper($1) ~ /^HTTP\// {code=$2} END {print code}' /tmp/ecraneo-headers.txt)
+          echo "ECRANEO_HTTP_FINAL=${HTTP_FINAL:-unknown}"
+
+          if grep -qi 'Log in to Vercel\|Login – Vercel' /tmp/ecraneo-home.html; then
+            echo 'ECRANEO_PUBLIC=no'
+            exit 1
+          fi
+
+          if grep -qi '<title[^>]*>.*ECRANEO\|id="sellForm"\|id="checkoutForm"' /tmp/ecraneo-home.html; then
+            echo 'ECRANEO_PUBLIC=yes'
+            exit 0
+          fi
+
+          echo 'ECRANEO_PUBLIC=unexpected_content'
+          exit 1
