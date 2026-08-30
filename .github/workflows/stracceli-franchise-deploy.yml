@@ -1,0 +1,80 @@
+name: Deploy STRACCELI franchise site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'stracceli-franchise/**'
+      - '.github/workflows/stracceli-franchise-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VERCEL_TOKEN_A: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_TOKEN_B: ${{ secrets.VERCEL_ACCESS_TOKEN }}
+      VERCEL_TOKEN_C: ${{ secrets.VERCEL_API_TOKEN }}
+      VERCEL_ORG_ID: team_6ANDQINhLaEu2qEjm70t7yZd
+      VERCEL_PROJECT_ID: prj_joeawthWsqIrhU7LMuhtHWKrZ5eN
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Vercel token
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="${VERCEL_TOKEN_A:-${VERCEL_TOKEN_B:-${VERCEL_TOKEN_C:-}}}"
+          if [[ -z "$TOKEN" ]]; then
+            echo 'No Vercel token configured in repository secrets.'
+            exit 1
+          fi
+          echo "VERCEL_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Prepare STRACCELI deployment directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/stracceli-deploy
+          mkdir -p /tmp/stracceli-deploy/.vercel
+          cp stracceli-franchise/index.html /tmp/stracceli-deploy/index.html
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > /tmp/stracceli-deploy/.vercel/project.json
+          cat > /tmp/stracceli-deploy/vercel.json <<'JSON'
+          {
+            "cleanUrls": true,
+            "trailingSlash": false,
+            "headers": [
+              {
+                "source": "/(.*)",
+                "headers": [
+                  {"key":"Cache-Control","value":"no-store, max-age=0, must-revalidate"},
+                  {"key":"X-Content-Type-Options","value":"nosniff"},
+                  {"key":"Referrer-Policy","value":"strict-origin-when-cross-origin"}
+                ]
+              }
+            ]
+          }
+          JSON
+
+      - name: Deploy to STRACCELI production
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/stracceli-deploy
+          npx --yes vercel@latest deploy --prod --yes --token="$VERCEL_TOKEN"
+
+      - name: Verify public STRACCELI
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 4
+          code=$(curl -sS -L -o /tmp/stracceli-home.html -w '%{http_code}' 'https://stracceli.vercel.app/?ref=locked-franchise-ui')
+          echo "STRACCELI_HTTP=$code"
+          grep -q 'COMPOSER MON MENU' /tmp/stracceli-home.html
+          grep -q 'STRACCELITO' /tmp/stracceli-home.html
+          grep -q 'Aranciata Rossa' /tmp/stracceli-home.html
+          echo 'STRACCELI_REFERENCE_UI=verified'
