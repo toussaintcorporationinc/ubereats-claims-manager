@@ -72,9 +72,10 @@ jobs:
         run: |
           set -euo pipefail
           sleep 4
-          code=$(curl -sS -L -o /tmp/stracceli-home.html -w '%{http_code}' 'https://stracceli.vercel.app/?ref=locked-franchise-ui')
+          code=$(curl -sS -L -o /tmp/stracceli-home.html -w '%{http_code}' 'https://stracceli.vercel.app/?ref=locked-franchise-ui-v2')
           echo "STRACCELI_HTTP=$code"
-          grep -q 'COMPOSER MON MENU' /tmp/stracceli-home.html
+          grep -qi 'composer mon menu' /tmp/stracceli-home.html
           grep -q 'STRACCELITO' /tmp/stracceli-home.html
           grep -q 'Aranciata Rossa' /tmp/stracceli-home.html
-          echo 'STRACCELI_REFERENCE_UI=verified'
+          grep -q '18,90' /tmp/stracceli-home.html
+          echo 'STRACCELI_REFERENCE_UI_V2=verified'
