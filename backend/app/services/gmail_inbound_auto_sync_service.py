@@ -58,6 +58,7 @@ class GmailInboundAutoSyncResult:
     autopilot_sent_count: int = 0
     autopilot_skipped_count: int = 0
     autopilot_failed_count: int = 0
+    autopilot_skip_reasons: dict[str, int] = field(default_factory=dict)
     workspace_machine_runs: int = 0
     workspace_machine_warnings: int = 0
     workspace_machine_failures: int = 0
@@ -331,6 +332,8 @@ class GmailInboundAutoSyncService:
         result.autopilot_sent_count += watched_result.autopilot_sent_count
         result.autopilot_skipped_count += watched_result.autopilot_skipped_count
         result.autopilot_failed_count += watched_result.autopilot_failed_count
+        for reason, count in watched_result.autopilot_skip_reasons.items():
+            result.autopilot_skip_reasons[reason] = result.autopilot_skip_reasons.get(reason, 0) + count
         result.errors.extend(watched_result.errors)
 
     def watched_result_ran_autopilot(self, watched_result: GmailWatchedThreadMonitorResult | None) -> bool:
