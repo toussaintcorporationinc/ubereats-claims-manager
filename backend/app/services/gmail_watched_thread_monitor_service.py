@@ -1141,7 +1141,40 @@ class GmailWatchedThreadMonitorService:
         if latest_payload is None:
             return "gmail_latest_reply_not_found"
         if payload_is_uber_support_survey(latest_payload):
-            return "latest_uber_reply_is_support_survey"
+            # Uber often appends a satisfaction survey after the substantive
+            # answer. The survey is not a decision and must not hide the
+            # refusal or evidence request that preceded it.
+            get_thread_messages = getattr(self.provider, "get_thread_messages_for_account", None)
+            if not callable(get_thread_messages):
+                return "latest_uber_reply_is_support_survey"
+            try:
+                try:
+                    payloads = list(
+                        get_thread_messages(
+                            db,
+                            account,
+                            watched.gmail_thread_id,
+                            include_attachments=False,
+                        )
+                    )
+                except TypeError:
+                    payloads = list(get_thread_messages(db, account, watched.gmail_thread_id))
+            except Exception as exc:  # noqa: BLE001 - a failed safety lookup must block sending.
+                logger.warning(
+                    "Unable to inspect substantive reply behind survey for watched thread %s: %s",
+                    watched.gmail_thread_id,
+                    exc,
+                )
+                return "latest_uber_reply_is_support_survey"
+            substantive_payload = self.select_latest_external_payload(
+                payloads,
+                account,
+                include_support_surveys=False,
+            )
+            if substantive_payload is None:
+                return "latest_uber_reply_is_support_survey"
+            latest_payload = substantive_payload
+            self._latest_external_message_cache[cache_key] = latest_payload
         if latest_payload.provider_message_id != message.provider_message_id:
             return "superseded_by_newer_uber_message"
         return None

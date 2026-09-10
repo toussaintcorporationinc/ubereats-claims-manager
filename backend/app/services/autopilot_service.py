@@ -1729,6 +1729,8 @@ def build_starred_thread_reply_body(
     restaurant_name = restaurant_display_name(restaurant) if restaurant else "le restaurant"
     if reply_kind == "followup":
         opening = f"Je vous relance concernant {identity_phrase} pour {restaurant_name}, toujours sans decision de paiement claire."
+    elif workflow.appeal_attempt_count >= 1:
+        opening = f"Je demande un nouveau reexamen concernant {identity_phrase} pour {restaurant_name}."
     else:
         opening = f"Je conteste le refus concernant {identity_phrase} pour {restaurant_name}."
 

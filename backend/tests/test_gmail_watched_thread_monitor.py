@@ -1864,7 +1864,7 @@ def test_newer_uber_message_blocks_reply_to_stale_refusal(
     assert provider.sent_drafts == []
 
 
-def test_latest_uber_survey_blocks_automatic_reply_to_old_refusal(
+def test_latest_uber_survey_does_not_hide_old_refusal_from_automatic_reply(
     db_session: Session,
     gmail_case,
     monkeypatch: pytest.MonkeyPatch,
@@ -1873,7 +1873,7 @@ def test_latest_uber_survey_blocks_automatic_reply_to_old_refusal(
     monkeypatch.setenv("AUTOPILOT_ENABLED", "true")
     monkeypatch.setenv("AUTOPILOT_APPEALS_ENABLED", "true")
     get_settings.cache_clear()
-    watched, item, _message = add_refused_work_item(
+    watched, item, message = add_refused_work_item(
         db_session,
         account,
         order,
@@ -1894,6 +1894,14 @@ def test_latest_uber_survey_blocks_automatic_reply_to_old_refusal(
         subject="Commercant - Assistance client",
         body=long_html_survey,
     )
+    provider.thread_payloads[watched.gmail_thread_id] = [
+        payload(
+            message.provider_message_id,
+            thread_id=watched.gmail_thread_id,
+            body=message.body_text,
+        ),
+        provider.latest_payloads[watched.gmail_thread_id],
+    ]
     result = GmailWatchedThreadMonitorResult()
 
     GmailWatchedThreadMonitorService(provider).send_pending_actionable_replies(
@@ -1905,11 +1913,11 @@ def test_latest_uber_survey_blocks_automatic_reply_to_old_refusal(
     )
 
     db_session.refresh(item)
-    assert result.autopilot_sent_count == 0
-    assert item.status == "skipped"
-    assert item.reason == "latest_uber_reply_is_support_survey"
-    assert provider.created_drafts == []
-    assert provider.sent_drafts == []
+    assert result.autopilot_sent_count == 1
+    assert item.status == "processed"
+    assert item.reason == "gmail_reply_sent"
+    assert len(provider.created_drafts) == 1
+    assert len(provider.sent_drafts) == 1
 
 
 def test_sent_reply_after_message_blocks_cross_cycle_duplicate(
