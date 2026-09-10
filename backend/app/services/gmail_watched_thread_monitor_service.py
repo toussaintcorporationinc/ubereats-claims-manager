@@ -78,7 +78,9 @@ logger = logging.getLogger(__name__)
 
 FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed", "manual_review", "skipped"}
 SKIPPABLE_FINAL_WORK_ITEM_STATUSES = {"processed", "positive", "refused", "evidence_needed"}
-MAX_AUTOPILOT_REPLY_CANDIDATES_PER_CYCLE = 3
+# Scan broadly so an unsafe or already-processed item does not hide the next
+# eligible thread. Sending itself remains individually paced by Gmail safety.
+MAX_AUTOPILOT_REPLY_CANDIDATES_PER_CYCLE = 250
 MAX_AUTOPILOT_REPLIES_PER_CYCLE = 1
 MAX_LOCAL_CLASSIFICATIONS_PER_CYCLE = 250
 MAX_LOCAL_REPLY_CANDIDATES_PER_CYCLE = 250

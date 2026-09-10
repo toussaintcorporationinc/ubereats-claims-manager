@@ -1722,33 +1722,27 @@ def build_starred_thread_reply_body(
     reply_kind: str = "refusal",
 ) -> str:
     restaurant = order.restaurant
-    subject_text = " ".join(value for value in [starred_message.subject, starred_message.snippet, starred_message.body_text] if value)
-    is_cancellation = "annulation" in subject_text.casefold() or "cancel" in subject_text.casefold()
     identity_phrase = build_order_identity_phrase(order)
     date_line = format_display_date(order.order_date)
     if date_line and f"du {date_line}" not in identity_phrase:
         identity_phrase = f"{identity_phrase}, du {date_line}"
+    restaurant_name = restaurant_display_name(restaurant) if restaurant else "le restaurant"
     if reply_kind == "followup":
-        opening = (
-            f"Je vous relance concernant {identity_phrase} "
-            f"pour le restaurant {restaurant_display_name(restaurant) if restaurant else 'le restaurant'}, "
-            "toujours sans decision de paiement claire."
-        )
+        opening = f"Je vous relance concernant {identity_phrase} pour {restaurant_name}, toujours sans decision de paiement claire."
     else:
-        opening = (
-            f"Je vous demande de reexaminer le refus concernant {identity_phrase} "
-            f"pour le restaurant {restaurant_display_name(restaurant) if restaurant else 'le restaurant'}."
-        )
-    if is_cancellation:
-        argument = (
-            "La commande avait ete acceptee et preparee avant l'annulation. "
-            "Le restaurant a supporte une perte et du gaspillage; merci de reexaminer le dossier."
-        )
+        opening = f"Je conteste le refus concernant {identity_phrase} pour {restaurant_name}."
+
+    # State only facts stored on the claim. The request stays firm even when
+    # Uber's latest reply is generic or omits the event chronology.
+    verified_facts: list[str] = []
+    if order.accepted_by_restaurant is True:
+        verified_facts.append("la commande a ete acceptee par le restaurant")
+    if order.prepared_before_cancellation is True:
+        verified_facts.append("elle a ete preparee avant l'annulation")
+    if verified_facts:
+        argument = "Les informations verifiees du dossier etablissent que " + " et ".join(verified_facts) + "."
     else:
-        argument = (
-            "La commande a ete preparee complete et les articles demandes ont ete places dans le sac avant l'envoi. "
-            "Nous verifions les commandes avant remise au livreur."
-        )
+        argument = "Votre dernier message ne permet pas de verifier le motif individualise ni le calcul applique a cette commande."
     if workflow.appeal_attempt_count >= 2:
         argument += (
             "\n\nLe dossier a deja ete relance sans regularisation claire. "
@@ -1763,7 +1757,7 @@ def build_starred_thread_reply_body(
     paragraphs.extend(
         [
             argument,
-            "Merci de revoir ce dossier et de nous confirmer la suite donnee a la demande.",
+            "Merci de rouvrir ce dossier et de confirmer le paiement du montant concerne. A defaut, indiquez le motif precis, le calcul retenu et la piece exacte qui justifierait le refus.",
             f"Cordialement,\n{format_restaurant_signature(restaurant) if restaurant else 'Restaurant'}",
         ]
     )
