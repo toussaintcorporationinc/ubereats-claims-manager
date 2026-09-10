@@ -130,6 +130,10 @@ class Settings(BaseSettings):
     login_rate_limit_per_minute: int = 10
     build_sha: str | None = None
     app_version: str = "1.1.1-tennet"
+    vercel: bool = False
+    background_scheduler_enabled: bool = True
+    cron_secret: str | None = None
+    tennet_cron_secret: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=(".env", "../.env"),
@@ -156,6 +160,13 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":
+        if self.vercel:
+            runtime_root = Path("/tmp/tennet")
+            self.local_storage_dir = runtime_root / "storage"
+            self.evidence_storage_dir = runtime_root / "evidence"
+            self.import_storage_dir = runtime_root / "imports"
+            self.background_scheduler_enabled = False
+
         if self.runtime_environment != "production":
             return self
 
