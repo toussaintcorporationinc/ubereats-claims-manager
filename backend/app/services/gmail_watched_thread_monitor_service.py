@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -194,6 +195,7 @@ class GmailWatchedThreadMonitorResult:
     autopilot_sent_count: int = 0
     autopilot_skipped_count: int = 0
     autopilot_failed_count: int = 0
+    autopilot_skip_reasons: dict[str, int] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
 
 
@@ -964,6 +966,9 @@ class GmailWatchedThreadMonitorService:
                 sent_count += 1
                 if sent_count >= MAX_AUTOPILOT_REPLIES_PER_CYCLE:
                     break
+        result.autopilot_skip_reasons.update(
+            Counter(item.reason or "unset" for item in items if item.reason)
+        )
         return sent_count
 
     @staticmethod
