@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.core.config import get_settings
 from app.core.rate_limit import is_rate_limited
@@ -92,6 +92,42 @@ async def production_hardening_middleware(request: Request, call_next):
     if settings.runtime_environment == "production":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
+
+
+@app.get("/reset-password", response_class=HTMLResponse, include_in_schema=False)
+def password_recovery_page() -> str:
+    return """<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TENNET — Récupération</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:#07090d;color:#f6f7f9;font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif}.card{width:min(520px,100%);background:#10141b;border:1px solid #232a35;border-radius:22px;padding:30px;box-shadow:0 24px 70px #0008}.brand{font-weight:900;letter-spacing:.14em;font-size:24px;margin-bottom:28px}.brand span{opacity:.55}h1{font-size:30px;margin:0 0 8px}p{color:#9aa5b4;line-height:1.55;margin:0 0 24px}.field{margin:16px 0}label{display:block;font-size:13px;font-weight:700;margin-bottom:8px}input{width:100%;border:1px solid #303846;background:#0b0e13;color:#fff;border-radius:12px;padding:14px 15px;font:inherit;outline:none}input:focus{border-color:#eef2f7}button{width:100%;border:0;border-radius:12px;background:#f4f5f7;color:#090b0f;padding:14px 16px;font-weight:900;font-size:15px;cursor:pointer;margin-top:10px}button:disabled{opacity:.55;cursor:wait}.msg{margin-top:18px;padding:13px;border-radius:11px;background:#171d26;color:#dce3ec;display:none}.bad{border:1px solid #733}.good{border:1px solid #365}.back{display:block;text-align:center;color:#aab4c1;text-decoration:none;margin-top:18px;font-size:14px}
+</style>
+</head>
+<body>
+<main class="card">
+<div class="brand">TENNET <span>RECOVERY</span></div>
+<div id="requestBox">
+<h1>Récupérer l’accès</h1>
+<p>Un lien sécurisé à usage unique sera envoyé à l’adresse owner TENNET.</p>
+<form id="requestForm"><div class="field"><label for="email">Email owner</label><input id="email" type="email" autocomplete="email" required></div><button id="requestBtn" type="submit">Envoyer le lien sécurisé</button></form>
+</div>
+<div id="confirmBox" hidden>
+<h1>Nouveau mot de passe</h1>
+<p>Choisissez votre nouveau mot de passe. Le lien expire après 30 minutes et ne peut être utilisé qu’une fois.</p>
+<form id="confirmForm"><div class="field"><label for="password">Nouveau mot de passe</label><input id="password" type="password" autocomplete="new-password" minlength="12" required></div><div class="field"><label for="password2">Confirmer</label><input id="password2" type="password" autocomplete="new-password" minlength="12" required></div><button id="confirmBtn" type="submit">Réinitialiser le mot de passe</button></form>
+</div>
+<div id="msg" class="msg"></div><a class="back" href="/login">Retour à la connexion</a>
+</main>
+<script>
+const q=new URLSearchParams(location.search),token=q.get('token'),requestBox=document.getElementById('requestBox'),confirmBox=document.getElementById('confirmBox'),msg=document.getElementById('msg');
+function show(t,ok){msg.textContent=t;msg.className='msg '+(ok?'good':'bad');msg.style.display='block'}
+if(token){requestBox.hidden=true;confirmBox.hidden=false}
+document.getElementById('requestForm').addEventListener('submit',async e=>{e.preventDefault();const b=document.getElementById('requestBtn');b.disabled=true;msg.style.display='none';try{const r=await fetch('/api/v1/auth/password-reset/request',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:document.getElementById('email').value.trim()})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||'Impossible d’envoyer le lien.');show('Lien envoyé. Vérifiez votre boîte e-mail.',true)}catch(err){show(err.message||'Erreur de récupération.',false)}finally{b.disabled=false}});
+document.getElementById('confirmForm').addEventListener('submit',async e=>{e.preventDefault();const b=document.getElementById('confirmBtn'),p=document.getElementById('password').value,p2=document.getElementById('password2').value;if(p.length<12){show('Le mot de passe doit contenir au moins 12 caractères.',false);return}if(p!==p2){show('Les deux mots de passe ne correspondent pas.',false);return}b.disabled=true;msg.style.display='none';try{const r=await fetch('/api/v1/auth/password-reset/confirm',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token,password:p})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||'Réinitialisation impossible.');show('Mot de passe réinitialisé. Redirection vers la connexion…',true);setTimeout(()=>location.href='/login',900)}catch(err){show(err.message||'Réinitialisation impossible.',false)}finally{b.disabled=false}});
+</script>
+</body></html>"""
 
 
 app.include_router(health.router)
