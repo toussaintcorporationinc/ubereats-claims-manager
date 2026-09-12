@@ -1,0 +1,24 @@
+name: TENNET recovery smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/tennet-recovery-smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check recovery API against production
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/body.json -w '%{http_code}'             -X POST 'https://thetennet.com/api/v1/auth/password-reset/request'             -H 'content-type: application/json'             --data '{"email":"tennet-smoke@example.invalid"}')
+          echo "HTTP=$code"
+          cat /tmp/body.json
+          test "$code" = "202"
+          grep -q '"status":"accepted"' /tmp/body.json
