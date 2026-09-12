@@ -20,7 +20,7 @@ export default function ResetPasswordPage() {
   const token = searchParams.get("token") ?? "";
   const hasToken = useMemo(() => token.length > 0, [token]);
 
-  const [email, setEmail] = useState("toussaintcorporation@gmail.com");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
