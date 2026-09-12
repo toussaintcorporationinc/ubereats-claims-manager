@@ -1,0 +1,67 @@
+name: Deploy TENNET production
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/app/core/security.py'
+      - 'backend/app/routes/auth.py'
+      - 'frontend/app/login/page.tsx'
+      - 'frontend/app/reset-password/**'
+      - '.github/workflows/tennet-production-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tennet-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERCEL_TOKEN_A: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_TOKEN_B: ${{ secrets.VERCEL_ACCESS_TOKEN }}
+      VERCEL_TOKEN_C: ${{ secrets.VERCEL_API_TOKEN }}
+      VERCEL_ORG_ID: team_6ANDQINhLaEu2qEjm70t7yZd
+      VERCEL_PROJECT_ID: prj_DS4cMQkfJylLEcMGn8xjnk27O9Pn
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Vercel token
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="${VERCEL_TOKEN_A:-${VERCEL_TOKEN_B:-${VERCEL_TOKEN_C:-}}}"
+          if [[ -z "$TOKEN" ]]; then
+            echo 'No Vercel token configured in repository secrets.'
+            exit 1
+          fi
+          echo "VERCEL_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Link TENNET production project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Deploy TENNET production
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest deploy --prod --yes --token="$VERCEL_TOKEN"
+
+      - name: Verify TENNET recovery page
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 5
+          code=$(curl -sS -L -o /tmp/tennet-reset.html -w '%{http_code}' 'https://thetennet.com/reset-password')
+          echo "TENNET_RESET_HTTP=$code"
+          test "$code" = "200"
+          grep -qi 'Réinitialiser le mot de passe' /tmp/tennet-reset.html
