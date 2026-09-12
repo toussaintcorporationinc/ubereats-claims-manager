@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'backend/app/core/database.py'
+      - 'backend/vercel_app.py'
+      - 'vercel.json'
       - 'backend/app/core/security.py'
       - 'backend/app/routes/auth.py'
       - 'frontend/app/login/page.tsx'
