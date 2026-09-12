@@ -1,0 +1,88 @@
+name: Build TENNET Vercel source manifest
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/tennet-source-manifest.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-manifest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build chunked deployment manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf deploy/tennet-vercel-manifest
+          mkdir -p deploy/tennet-vercel-manifest
+          python - <<'PY'
+          import base64
+          import json
+          import pathlib
+          import subprocess
+
+          tracked = subprocess.check_output(["git", "ls-files"], text=True).splitlines()
+          paths = [
+              p for p in tracked
+              if p == "vercel.json"
+              or p == "VERSION"
+              or p == "backend/pyproject.toml"
+              or p.startswith("backend/app/")
+              or p.startswith("frontend/")
+          ]
+
+          max_bytes = 600_000
+          chunks = []
+          current = []
+          current_size = 2
+
+          for path in paths:
+              data = base64.b64encode(pathlib.Path(path).read_bytes()).decode("ascii")
+              item = {"file": path, "data": data, "encoding": "base64"}
+              encoded = json.dumps(item, separators=(",", ":"))
+              if current and current_size + len(encoded) + 1 > max_bytes:
+                  chunks.append(current)
+                  current = []
+                  current_size = 2
+              current.append(item)
+              current_size += len(encoded) + 1
+          if current:
+              chunks.append(current)
+
+          out = pathlib.Path("deploy/tennet-vercel-manifest")
+          for index, chunk in enumerate(chunks):
+              (out / f"part-{index:03d}.json").write_text(
+                  json.dumps(chunk, separators=(",", ":")),
+                  encoding="utf-8",
+              )
+
+          (out / "index.json").write_text(
+              json.dumps({"parts": len(chunks), "files": len(paths)}, separators=(",", ":")),
+              encoding="utf-8",
+          )
+          print(f"manifest parts={len(chunks)} files={len(paths)}")
+          PY
+
+      - name: Commit deployment manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "TENNET deployment bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add deploy/tennet-vercel-manifest
+          if git diff --cached --quiet; then
+            echo "Manifest already current."
+            exit 0
+          fi
+          git commit -m "Build TENNET Vercel deployment manifest"
+          git push
