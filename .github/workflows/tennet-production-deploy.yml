@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'backend/app/core/database.py'
       - 'backend/app/core/security.py'
       - 'backend/app/routes/auth.py'
       - 'frontend/app/login/page.tsx'
