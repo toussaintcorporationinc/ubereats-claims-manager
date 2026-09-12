@@ -21,7 +21,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.models import User
+from app.models import AuditLog, User
 from app.schemas.domain import LoginRequest, RefreshTokenRequest, RegisterRequest, TokenResponse, UserRead
 from app.services.audit import add_audit_log
 
@@ -34,6 +34,11 @@ class PasswordResetRequest(BaseModel):
 
 class PasswordResetConfirm(BaseModel):
     token: str = Field(min_length=20, max_length=4096)
+    password: str = Field(min_length=12, max_length=256)
+
+
+class OwnerRecoveryConfirm(BaseModel):
+    recovery_token: str = Field(min_length=40, max_length=4096)
     password: str = Field(min_length=12, max_length=256)
 
 
@@ -224,6 +229,107 @@ def confirm_password_reset(payload: PasswordResetConfirm, db: Session = Depends(
         action="auth.password_reset_completed",
         user_id=user.id,
         new_value={"email": user.email},
+    )
+    db.commit()
+    db.refresh(user)
+    return build_token_response(user)
+
+
+@router.post("/owner-recovery/confirm", response_model=TokenResponse)
+def confirm_owner_recovery(payload: OwnerRecoveryConfirm, db: Session = Depends(get_db)) -> TokenResponse:
+    token_hash = hashlib.sha256(payload.recovery_token.encode("utf-8")).hexdigest()
+    issued_rows = db.scalars(
+        select(AuditLog)
+        .where(
+            AuditLog.entity_type == "user",
+            AuditLog.action == "auth.owner_recovery_issued",
+        )
+        .order_by(AuditLog.id.desc())
+        .limit(50)
+    ).all()
+
+    issued_log = None
+    issued_payload: dict[str, str] | None = None
+    for row in issued_rows:
+        try:
+            data = json.loads(row.new_value or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        candidate_hash = str(data.get("token_hash") or "")
+        if candidate_hash and hmac.compare_digest(candidate_hash, token_hash):
+            issued_log = row
+            issued_payload = data
+            break
+
+    if issued_log is None or issued_payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired owner recovery link",
+        )
+
+    try:
+        expires_at_raw = str(issued_payload["expires_at"])
+        expires_at = datetime.fromisoformat(expires_at_raw.replace("Z", "+00:00"))
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired owner recovery link",
+        ) from None
+
+    if datetime.now(timezone.utc) >= expires_at:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired owner recovery link",
+        )
+
+    used_rows = db.scalars(
+        select(AuditLog)
+        .where(
+            AuditLog.entity_type == "user",
+            AuditLog.entity_id == issued_log.entity_id,
+            AuditLog.action == "auth.owner_recovery_used",
+        )
+        .order_by(AuditLog.id.desc())
+        .limit(50)
+    ).all()
+    for row in used_rows:
+        try:
+            data = json.loads(row.new_value or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        used_hash = str(data.get("token_hash") or "")
+        if used_hash and hmac.compare_digest(used_hash, token_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired owner recovery link",
+            )
+
+    user = db.get(User, issued_log.entity_id)
+    if user is None or user.role != "owner":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired owner recovery link",
+        )
+
+    user.hashed_password = hash_password(payload.password)
+    user.active = True
+    add_audit_log(
+        db,
+        entity_type="user",
+        entity_id=user.id,
+        action="auth.owner_recovery_used",
+        user_id=user.id,
+        new_value={"token_hash": token_hash},
+    )
+    add_audit_log(
+        db,
+        entity_type="user",
+        entity_id=user.id,
+        action="auth.password_reset_completed",
+        user_id=user.id,
+        new_value={"email": user.email, "via": "owner_recovery"},
     )
     db.commit()
     db.refresh(user)
