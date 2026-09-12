@@ -18,7 +18,9 @@ export default function ResetPasswordPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token") ?? "";
-  const hasToken = useMemo(() => token.length > 0, [token]);
+  const recovery = searchParams.get("recovery") ?? "";
+  const recoveryMode = useMemo(() => recovery.length > 0, [recovery]);
+  const hasToken = useMemo(() => token.length > 0 || recoveryMode, [token, recoveryMode]);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -66,10 +68,16 @@ export default function ResetPasswordPage() {
 
     setSubmitting(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/v1/auth/password-reset/confirm`, {
+      const endpoint = recoveryMode
+        ? `${API_BASE_URL}/v1/auth/owner-recovery/confirm`
+        : `${API_BASE_URL}/v1/auth/password-reset/confirm`;
+      const payload = recoveryMode
+        ? { recovery_token: recovery, password }
+        : { token, password };
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, password }),
+        body: JSON.stringify(payload),
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
