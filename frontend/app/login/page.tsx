@@ -71,8 +71,8 @@ export default function LoginPage() {
           <button type="submit" className="button" disabled={submitting}>
             {submitting ? "Connexion" : "Se connecter"}
           </button>
-          <Link href="/setup-owner" className="secondary-button">
-            Premier owner
+          <Link href="/reset-password" className="secondary-button">
+            Mot de passe oublié ?
           </Link>
         </div>
       </form>
