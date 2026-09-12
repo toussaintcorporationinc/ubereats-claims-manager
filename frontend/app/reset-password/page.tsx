@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 import BrandLogo from "@/components/BrandLogo";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/api";
 const TOKEN_STORAGE_KEY = "ubereats_claims_manager_token";
 const REFRESH_TOKEN_STORAGE_KEY = "ubereats_claims_manager_refresh_token";
 
