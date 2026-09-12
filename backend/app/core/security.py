@@ -61,10 +61,15 @@ def create_refresh_token(subject: str, extra_claims: dict[str, Any] | None = Non
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=JWT_ALGORITHM)
 
 
-def create_password_reset_token(subject: str) -> str:
+def create_password_reset_token(subject: str, password_fingerprint: str) -> str:
     settings = get_settings()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
-    payload: dict[str, Any] = {"sub": subject, "exp": expires_at, "purpose": "password_reset"}
+    payload: dict[str, Any] = {
+        "sub": subject,
+        "exp": expires_at,
+        "purpose": "password_reset",
+        "password_fingerprint": password_fingerprint,
+    }
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=JWT_ALGORITHM)
 
 
