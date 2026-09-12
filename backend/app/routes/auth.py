@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -168,7 +170,8 @@ def request_password_reset(payload: PasswordResetRequest, db: Session = Depends(
     if user is None or user.role != "owner" or not user.active:
         return {"status": "accepted"}
 
-    token = create_password_reset_token(str(user.id))
+    password_fingerprint = hashlib.sha256(user.hashed_password.encode("utf-8")).hexdigest()
+    token = create_password_reset_token(str(user.id), password_fingerprint)
     settings = get_settings()
     frontend_url = (settings.frontend_url or "https://thetennet.com").rstrip("/")
     reset_url = f"{frontend_url}/reset-password?token={token}"
@@ -191,6 +194,7 @@ def confirm_password_reset(payload: PasswordResetConfirm, db: Session = Depends(
     try:
         token_payload = decode_password_reset_token(payload.token)
         user_id = int(token_payload["sub"])
+        token_password_fingerprint = str(token_payload["password_fingerprint"])
     except (KeyError, TypeError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -199,6 +203,13 @@ def confirm_password_reset(payload: PasswordResetConfirm, db: Session = Depends(
 
     user = db.get(User, user_id)
     if user is None or user.role != "owner":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired password reset link",
+        )
+
+    current_password_fingerprint = hashlib.sha256(user.hashed_password.encode("utf-8")).hexdigest()
+    if not hmac.compare_digest(token_password_fingerprint, current_password_fingerprint):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired password reset link",
