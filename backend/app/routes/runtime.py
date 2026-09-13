@@ -1,4 +1,5 @@
 import json
+import time
 import logging
 from dataclasses import asdict
 from datetime import date, timedelta
@@ -9,6 +10,7 @@ import jwt
 from jwt import PyJWKClient
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -178,11 +180,30 @@ def _run_gmail_backfill(
 ) -> dict[str, object]:
     _require_runtime_authorization(authorization)
 
-    owner = db.scalar(
-        select(User)
-        .where(User.active.is_(True), User.role == "owner")
-        .order_by(User.id)
-    )
+    owner = None
+    last_db_error: OperationalError | None = None
+    for attempt in range(3):
+        try:
+            owner = db.scalar(
+                select(User)
+                .where(User.active.is_(True), User.role == "owner")
+                .order_by(User.id)
+            )
+            last_db_error = None
+            break
+        except OperationalError as exc:
+            last_db_error = exc
+            db.rollback()
+            if attempt < 2:
+                time.sleep(0.4 * (attempt + 1))
+    if last_db_error is not None:
+        raw_error = str(getattr(last_db_error, "orig", last_db_error)).replace("\n", " ").strip()
+        if "password=" in raw_error.casefold():
+            raw_error = "database_connection_failed"
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Database connection failed after retries: {raw_error[:500]}",
+        )
     if owner is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
