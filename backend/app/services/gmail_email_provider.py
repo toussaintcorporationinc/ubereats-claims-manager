@@ -97,11 +97,17 @@ def reply_context_from_inbound_message(message: InboundEmailMessage) -> GmailRep
 class GmailEmailProvider:
     provider = "gmail"
 
-    def __init__(self, token_cipher: TokenCipherService | None = None) -> None:
+    def __init__(
+        self,
+        token_cipher: TokenCipherService | None = None,
+        *,
+        trusted_runtime: bool = False,
+    ) -> None:
         self.token_cipher = token_cipher or TokenCipherService()
+        self.trusted_runtime = trusted_runtime
 
     def get_connection_status(self, db: Session, user: User) -> EmailConnectionStatus:
-        if not get_settings().email_provider_enabled:
+        if not get_settings().email_provider_enabled and not self.trusted_runtime:
             return EmailConnectionStatus(connected=False, provider=self.provider, email_address=None, enabled=False)
         account = self.get_active_account(db, user.id)
         return EmailConnectionStatus(
@@ -1068,7 +1074,7 @@ class GmailEmailProvider:
 
     def ensure_enabled_and_configured(self, *, require_secret: bool) -> None:
         settings = get_settings()
-        if not settings.email_provider_enabled:
+        if not settings.email_provider_enabled and not self.trusted_runtime:
             raise EmailProviderError("Email provider is disabled", 503)
         if not settings.gmail_oauth_client_id or not settings.gmail_oauth_redirect_uri:
             raise EmailProviderError("Gmail OAuth is not configured", 503)

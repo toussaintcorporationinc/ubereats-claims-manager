@@ -309,7 +309,7 @@ def _run_followup_worker(
             mode="followups",
             restaurant_id=None,
             dry_run=False,
-            provider=GmailEmailProvider(),
+            provider=GmailEmailProvider(trusted_runtime=True),
             max_candidates=10,
             trusted_runtime_followups=True,
         )
