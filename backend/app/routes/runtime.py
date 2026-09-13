@@ -1,4 +1,5 @@
 import json
+import logging
 from dataclasses import asdict
 from datetime import date, timedelta
 from secrets import compare_digest
@@ -17,6 +18,8 @@ from app.services.audit import add_audit_log
 from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncService
 from app.services.gmail_inbound_sync_service import GmailInboundSyncService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/runtime", tags=["runtime"])
 
@@ -52,14 +55,46 @@ def _valid_github_actions_runtime_token(token: str) -> bool:
                 ]
             },
         )
-    except Exception:
+    except Exception as exc:
+        try:
+            safe_claims = jwt.decode(
+                token,
+                options={
+                    "verify_signature": False,
+                    "verify_aud": False,
+                    "verify_iss": False,
+                    "verify_exp": False,
+                },
+            )
+        except Exception:
+            safe_claims = {}
+        logger.warning(
+            "GitHub OIDC validation failed: %s: %s; iss=%r aud=%r repository=%r ref=%r workflow_ref=%r",
+            type(exc).__name__,
+            str(exc)[:300],
+            safe_claims.get("iss"),
+            safe_claims.get("aud"),
+            safe_claims.get("repository"),
+            safe_claims.get("ref"),
+            safe_claims.get("workflow_ref"),
+        )
         return False
 
-    return (
+    allowed = (
         claims.get("repository") == GITHUB_OIDC_REPOSITORY
         and claims.get("ref") == "refs/heads/main"
         and claims.get("workflow_ref") in GITHUB_OIDC_ALLOWED_WORKFLOW_REFS
     )
+    if not allowed:
+        logger.warning(
+            "GitHub OIDC claims rejected: repository=%r ref=%r workflow_ref=%r aud=%r iss=%r",
+            claims.get("repository"),
+            claims.get("ref"),
+            claims.get("workflow_ref"),
+            claims.get("aud"),
+            claims.get("iss"),
+        )
+    return allowed
 
 
 def _require_runtime_authorization(authorization: str | None) -> None:
