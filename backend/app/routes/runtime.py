@@ -18,6 +18,7 @@ from app.core.database import get_db
 from app.models import AuditLog, User
 from app.services.audit import add_audit_log
 from app.services.autopilot_service import AutopilotError, run_autopilot
+from app.services.email_provider import EmailProviderError
 from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncService
 from app.services.gmail_inbound_sync_service import GmailInboundSyncService
@@ -221,19 +222,32 @@ def _run_gmail_backfill(
 
     next_day = day + timedelta(days=1)
     query = f"after:{day.strftime('%Y/%m/%d')} before:{next_day.strftime('%Y/%m/%d')}"
-    result = service.sync_account(
-        db,
-        owner,
-        account,
-        lookback_days=365,
-        max_messages=500,
-        analyze_responses=True,
-        apply_reviews=True,
-        reprocess_existing_limit=500,
-        query_override=query,
-        full_history=True,
-        include_starred_discovery=False,
-    )
+    try:
+        result = service.sync_account(
+            db,
+            owner,
+            account,
+            lookback_days=365,
+            max_messages=500,
+            analyze_responses=True,
+            apply_reviews=True,
+            reprocess_existing_limit=500,
+            query_override=query,
+            full_history=True,
+            include_starred_discovery=False,
+        )
+    except EmailProviderError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    except Exception as exc:
+        db.rollback()
+        safe_error = str(exc).replace("\n", " ").strip()
+        if "password=" in safe_error.casefold():
+            safe_error = "database_or_provider_error"
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"{type(exc).__name__}: {safe_error[:500]}",
+        ) from exc
 
     payload = {
         "day": day.isoformat(),
