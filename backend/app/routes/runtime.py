@@ -4,6 +4,8 @@ from datetime import date, timedelta
 from secrets import compare_digest
 from typing import Annotated
 
+import jwt
+from jwt import PyJWKClient
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -19,9 +21,53 @@ from app.services.gmail_inbound_sync_service import GmailInboundSyncService
 router = APIRouter(prefix="/v1/runtime", tags=["runtime"])
 
 HISTORICAL_BACKFILL_START = date(2026, 1, 1)
+GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com"
+GITHUB_OIDC_JWKS_URI = "https://token.actions.githubusercontent.com/.well-known/jwks"
+GITHUB_OIDC_AUDIENCE = "tennet-runtime"
+GITHUB_OIDC_REPOSITORY = "toussaintcorporationinc/ubereats-claims-manager"
+GITHUB_OIDC_ALLOWED_WORKFLOW_REFS = {
+    f"{GITHUB_OIDC_REPOSITORY}/.github/workflows/tennet-gmail-sync.yml@refs/heads/main",
+    f"{GITHUB_OIDC_REPOSITORY}/.github/workflows/tennet-gmail-backfill.yml@refs/heads/main",
+}
+
+
+def _valid_github_actions_runtime_token(token: str) -> bool:
+    try:
+        signing_key = PyJWKClient(GITHUB_OIDC_JWKS_URI).get_signing_key_from_jwt(token)
+        claims = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=GITHUB_OIDC_AUDIENCE,
+            issuer=GITHUB_OIDC_ISSUER,
+            options={
+                "require": [
+                    "exp",
+                    "iat",
+                    "iss",
+                    "aud",
+                    "repository",
+                    "ref",
+                    "workflow_ref",
+                ]
+            },
+        )
+    except Exception:
+        return False
+
+    return (
+        claims.get("repository") == GITHUB_OIDC_REPOSITORY
+        and claims.get("ref") == "refs/heads/main"
+        and claims.get("workflow_ref") in GITHUB_OIDC_ALLOWED_WORKFLOW_REFS
+    )
 
 
 def _require_runtime_authorization(authorization: str | None) -> None:
+    if authorization and authorization.startswith("Bearer "):
+        bearer_token = authorization.removeprefix("Bearer ").strip()
+        if bearer_token and _valid_github_actions_runtime_token(bearer_token):
+            return
+
     settings = get_settings()
     secrets_to_try = [value for value in (settings.tennet_cron_secret, settings.cron_secret) if value]
     if not secrets_to_try:
