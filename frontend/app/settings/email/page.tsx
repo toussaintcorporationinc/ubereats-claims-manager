@@ -94,7 +94,8 @@ export default function EmailSettingsPage() {
     return <LoadingState label="Chargement email" />;
   }
 
-  const reconnectRequired = accounts.some((account) => !account.gmail_modify_enabled);
+  const reconnectRequired =
+    status?.connected === false || accounts.some((account) => !account.gmail_modify_enabled);
 
   return (
     <section className="page-section">
