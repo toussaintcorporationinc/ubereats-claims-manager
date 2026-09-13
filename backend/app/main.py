@@ -45,16 +45,12 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     ensure_local_storage()
     ensure_evidence_storage()
     ensure_import_storage()
-    gmail_auto_sync_scheduler = None
-    runtime_settings = get_settings()
-    if runtime_settings.background_scheduler_enabled:
-        gmail_auto_sync_scheduler = GmailInboundAutoSyncScheduler(settings=runtime_settings)
-        await gmail_auto_sync_scheduler.start()
+    gmail_auto_sync_scheduler = GmailInboundAutoSyncScheduler()
+    await gmail_auto_sync_scheduler.start()
     try:
         yield
     finally:
-        if gmail_auto_sync_scheduler is not None:
-            await gmail_auto_sync_scheduler.stop()
+        await gmail_auto_sync_scheduler.stop()
 
 
 settings = get_settings()
