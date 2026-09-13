@@ -28,6 +28,7 @@ from app.routes import (
     reports,
     response_reviews,
     restaurants,
+    runtime,
     smart_import,
     uber,
     users,
@@ -44,12 +45,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     ensure_local_storage()
     ensure_evidence_storage()
     ensure_import_storage()
-    gmail_auto_sync_scheduler = GmailInboundAutoSyncScheduler()
-    await gmail_auto_sync_scheduler.start()
+    gmail_auto_sync_scheduler = None
+    runtime_settings = get_settings()
+    if runtime_settings.background_scheduler_enabled:
+        gmail_auto_sync_scheduler = GmailInboundAutoSyncScheduler(settings=runtime_settings)
+        await gmail_auto_sync_scheduler.start()
     try:
         yield
     finally:
-        await gmail_auto_sync_scheduler.stop()
+        if gmail_auto_sync_scheduler is not None:
+            await gmail_auto_sync_scheduler.stop()
 
 
 settings = get_settings()
@@ -137,6 +142,7 @@ app.include_router(autopilot.router)
 app.include_router(customer_refunds.router)
 app.include_router(customer_refunds.reviews_router)
 app.include_router(restaurants.router)
+app.include_router(runtime.router)
 app.include_router(orders.router)
 app.include_router(recovery.router)
 app.include_router(reports.router)
