@@ -41,7 +41,7 @@ from app.services.gmail_send_safety_service import (
     GmailSendSafetyError,
     minimum_gmail_send_interval_seconds,
 )
-from app.services.token_cipher_service import TokenCipherService
+from app.services.token_cipher_service import TokenCipherError, TokenCipherService
 
 GMAIL_AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -110,8 +110,14 @@ class GmailEmailProvider:
         if not get_settings().email_provider_enabled and not self.trusted_runtime:
             return EmailConnectionStatus(connected=False, provider=self.provider, email_address=None, enabled=False)
         account = self.get_active_account(db, user.id)
+        connected = account is not None
+        if account is not None:
+            try:
+                self.token_cipher.decrypt(account.refresh_token_encrypted)
+            except TokenCipherError:
+                connected = False
         return EmailConnectionStatus(
-            connected=account is not None,
+            connected=connected,
             provider=self.provider,
             email_address=account.email_address if account else None,
             enabled=True,
