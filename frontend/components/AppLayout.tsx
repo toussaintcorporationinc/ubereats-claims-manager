@@ -43,14 +43,6 @@ const navGroups: Array<{ key: NavItem["group"]; label: string }> = [
   { key: "admin", label: "Pilotage" },
 ];
 
-const primaryNavigationHrefs = new Set([
-  "/dashboard",
-  "/remboursements",
-  "/annulations",
-  "/relance-gmail",
-  "/finance",
-]);
-
 const publicPaths = new Set(["/login", "/setup-owner"]);
 
 export default function AppLayout({ children }: { children: ReactNode }) {
@@ -84,8 +76,6 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     router.replace("/login");
   };
   const visibleNavigation = navigation.filter((item) => canSeeNavItem(item, user.role));
-  const primaryNavigation = visibleNavigation.filter((item) => primaryNavigationHrefs.has(item.href));
-  const advancedNavigation = visibleNavigation.filter((item) => !primaryNavigationHrefs.has(item.href));
 
   return (
     <div className="app-shell">
@@ -102,37 +92,24 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           <BrandLogo />
         </Link>
         <nav className="nav-list nav-list--grouped">
-          <div className="nav-section">
-            <span className="nav-section-title">Essentiel</span>
-            {primaryNavigation.map((item) => (
-              <Link key={item.href} href={item.href} className="nav-link">
-                {item.label}
-              </Link>
-            ))}
-          </div>
-          {advancedNavigation.length > 0 ? (
-            <details className="nav-advanced">
-              <summary>Outils avances</summary>
-              {navGroups.map((group) => {
-                const groupItems = advancedNavigation.filter((item) => item.group === group.key);
+          {navGroups.map((group) => {
+            const groupItems = visibleNavigation.filter((item) => item.group === group.key);
 
-                if (groupItems.length === 0) {
-                  return null;
-                }
+            if (groupItems.length === 0) {
+              return null;
+            }
 
-                return (
-                  <div key={group.key} className="nav-section">
-                    <span className="nav-section-title">{group.label}</span>
-                    {groupItems.map((item) => (
-                      <Link key={item.href} href={item.href} className="nav-link">
-                        {item.label}
-                      </Link>
-                    ))}
-                  </div>
-                );
-              })}
-            </details>
-          ) : null}
+            return (
+              <div key={group.key} className="nav-section">
+                <span className="nav-section-title">{group.label}</span>
+                {groupItems.map((item) => (
+                  <Link key={item.href} href={item.href} className="nav-link">
+                    {item.label}
+                  </Link>
+                ))}
+              </div>
+            );
+          })}
         </nav>
         <div className="user-card">
           <span>{user.full_name ?? user.email}</span>
