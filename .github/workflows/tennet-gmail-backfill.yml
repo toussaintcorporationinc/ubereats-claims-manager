@@ -1,0 +1,32 @@
+name: TENNET Gmail history backfill
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: tennet-gmail-history-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Backfill one Gmail day safely
+        env:
+          TENNET_CRON_SECRET: ${{ secrets.TENNET_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --request POST \
+            --header "Authorization: Bearer ${TENNET_CRON_SECRET}" \
+            --header "Accept: application/json" \
+            --output response.json \
+            --write-out "%{http_code}" \
+            "https://thetennet.com/api/v1/runtime/gmail-backfill")"
+          cat response.json
+          case "$status" in
+            2*) ;;
+            *) echo "TENNET history backfill returned HTTP $status" >&2; exit 1 ;;
+          esac
