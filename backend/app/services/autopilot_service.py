@@ -19,6 +19,7 @@ from app.models import (
     ClaimOrder,
     ClaimResponseReview,
     EmailAccount,
+    EmailAccountRestaurantMapping,
     EmailDraft,
     EmailProviderDraft,
     EmailThread,
@@ -967,11 +968,8 @@ def followup_skip_reason(db: Session, task: FollowUpTask) -> str | None:
         return "cooldown_active"
     if task.generated_provider_draft is not None and task.generated_provider_draft.status == "sent":
         return "already_sent"
-    if latest_starred_linked_inbound_message(db, order.id) is None:
-        return "starred_gmail_thread_required"
-    thread_identity_reason = local_thread_identity_skip_reason(db, order)
-    if thread_identity_reason is not None:
-        return thread_identity_reason
+    if latest_verified_followup_email_thread(db, order) is None:
+        return "gmail_reply_thread_required"
     return None
 
 
@@ -1140,6 +1138,30 @@ def latest_starred_linked_inbound_message(db: Session, order_id: int) -> Inbound
     return None
 
 
+
+def latest_verified_followup_email_thread(db: Session, order: ClaimOrder) -> EmailThread | None:
+    raw_identifier = order.uber_order_number or order.internal_reference
+    identifier_key = "".join(character for character in str(raw_identifier or "").upper() if character.isalnum())
+    if not identifier_key:
+        return None
+    threads = db.scalars(
+        select(EmailThread)
+        .where(
+            EmailThread.order_id == order.id,
+            EmailThread.provider == "gmail",
+            EmailThread.direction == "outbound",
+            EmailThread.thread_id.is_not(None),
+        )
+        .order_by(EmailThread.id.desc())
+        .limit(25)
+    ).all()
+    for thread in threads:
+        thread_text = f"{thread.subject or ''}\n{thread.body or ''}"
+        thread_key = "".join(character for character in thread_text.upper() if character.isalnum())
+        if identifier_key in thread_key:
+            return thread
+    return None
+
 def positive_payment_signal_skip_reason(db: Session, order_id: int) -> str | None:
     if (
         db.scalar(
@@ -1267,12 +1289,39 @@ def remote_thread_safety_skip_reason(
     order = candidate_order(candidate)
     if order is None or candidate.action_type == "send_initial_claim":
         return None
-    starred_message = latest_starred_linked_inbound_message(db, order.id)
-    if starred_message is None or not starred_message.provider_thread_id:
-        return None
-    account = db.get(EmailAccount, starred_message.email_account_id)
-    if account is None:
+
+    account: EmailAccount | None = None
+    thread_id: str | None = None
+
+    if isinstance(candidate.object, FollowUpTask):
+        followup_thread = latest_verified_followup_email_thread(db, order)
+        if followup_thread is None or not followup_thread.thread_id:
+            return "gmail_reply_thread_required"
+        thread_id = followup_thread.thread_id
+        account = db.scalar(
+            select(EmailAccount)
+            .join(
+                EmailAccountRestaurantMapping,
+                EmailAccountRestaurantMapping.email_account_id == EmailAccount.id,
+            )
+            .where(
+                EmailAccountRestaurantMapping.restaurant_id == order.restaurant_id,
+                EmailAccount.provider == "gmail",
+                EmailAccount.disconnected_at.is_(None),
+            )
+            .order_by(EmailAccount.id.desc())
+            .limit(1)
+        )
+    else:
+        starred_message = latest_starred_linked_inbound_message(db, order.id)
+        if starred_message is None or not starred_message.provider_thread_id:
+            return None
+        thread_id = starred_message.provider_thread_id
+        account = db.get(EmailAccount, starred_message.email_account_id)
+
+    if account is None or not thread_id:
         return "gmail_thread_history_preflight_failed"
+
     get_thread_messages = getattr(provider, "get_thread_messages_for_account", None)
     if not callable(get_thread_messages):
         return None
@@ -1282,15 +1331,15 @@ def remote_thread_safety_skip_reason(
                 get_thread_messages(
                     db,
                     account,
-                    starred_message.provider_thread_id,
+                    thread_id,
                     include_attachments=False,
                 )
             )
         except TypeError:
-            payloads = list(get_thread_messages(db, account, starred_message.provider_thread_id))
+            payloads = list(get_thread_messages(db, account, thread_id))
     except Exception as exc:  # noqa: BLE001 - an unreadable thread must never be sent to blindly.
         if gmail_thread_history_not_found(exc):
-            return None
+            return "gmail_reply_thread_required"
         return "gmail_thread_history_preflight_failed"
 
     sender_filter = get_settings().gmail_support_sender_filter.strip().casefold()
@@ -1307,7 +1356,7 @@ def remote_thread_safety_skip_reason(
     ):
         return "gmail_thread_order_identity_mismatch"
     for payload in payloads:
-        if payload.provider_thread_id != starred_message.provider_thread_id:
+        if payload.provider_thread_id != thread_id:
             continue
         from_email = str(payload.from_email or "").strip().casefold()
         if not from_email or from_email == account_address:
@@ -1325,7 +1374,6 @@ def remote_thread_safety_skip_reason(
             continue
         return "positive_gmail_thread_history_detected"
     return None
-
 
 def first_account_sent_order_identifier(
     messages: list[InboundEmailMessage] | list[InboundEmailPayload],
