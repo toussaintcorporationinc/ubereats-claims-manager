@@ -275,6 +275,8 @@ class GmailEmailProvider:
             except EmailProviderError as exc:
                 if reply_context is None or not gmail_resource_not_found(exc):
                     raise
+                if email_draft.draft_type in {"followup_1", "followup_2", "escalation"}:
+                    raise EmailProviderError("Gmail reply thread is unavailable", 409) from exc
                 reply_context = None
                 gmail_subject = build_reply_subject(email_draft.subject, reply_context)
                 raw_message = self.build_raw_message(account, email_draft, to_email, attachments, reply_context)
