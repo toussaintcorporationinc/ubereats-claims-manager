@@ -22,6 +22,7 @@ from app.services.gmail_inbound_sync_service import GmailInboundSyncService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/runtime", tags=["runtime"])
+# GitHub Actions OIDC workers trigger these runtime routes.
 
 HISTORICAL_BACKFILL_START = date(2026, 1, 1)
 GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com"
