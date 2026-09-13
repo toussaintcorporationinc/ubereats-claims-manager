@@ -24,7 +24,7 @@ jobs:
             --header "Accept: application/json" \
             --output response.json \
             --write-out "%{http_code}" \
-            "https://thetennet.com/api/v1/runtime/gmail-backfill")"
+            "https://ubereats-claims-manager.vercel.app/api/v1/runtime/gmail-backfill")"
           cat response.json
           case "$status" in
             2*) ;;
