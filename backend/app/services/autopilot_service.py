@@ -805,6 +805,8 @@ def followup_candidates(
         repair_order_identity_for_autopilot(db, user, task.order, allow_ai=False)
         if latest_verified_followup_email_thread(db, task.order) is None:
             continue
+        if followup_skip_reason(db, task) is not None:
+            continue
         eligible_tasks.append(task)
         if limit is not None and limit > 0 and len(eligible_tasks) >= limit:
             break

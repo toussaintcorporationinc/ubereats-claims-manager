@@ -210,7 +210,7 @@ def _run_gmail_backfill(
             detail="No active TENNET owner is configured",
         )
 
-    service = GmailInboundSyncService(GmailEmailProvider())
+    service = GmailInboundSyncService(GmailEmailProvider(trusted_runtime=True))
     account, day = _next_backfill_target(db, service, owner)
     if account is None or day is None:
         return {
