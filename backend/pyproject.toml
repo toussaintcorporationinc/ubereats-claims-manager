@@ -21,6 +21,7 @@ dependencies = [
   "pillow",
   "pytesseract",
   "pypdf",
+  "httpx",
 ]
 
 [project.optional-dependencies]
