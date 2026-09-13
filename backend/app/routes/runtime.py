@@ -311,6 +311,7 @@ def _run_followup_worker(
             dry_run=False,
             provider=GmailEmailProvider(),
             max_candidates=10,
+            trusted_runtime_followups=True,
         )
     except AutopilotError as exc:
         db.rollback()

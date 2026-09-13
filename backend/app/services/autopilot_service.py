@@ -271,6 +271,7 @@ def run_autopilot(
     dry_run: bool,
     provider: EmailProvider,
     max_candidates: int | None = None,
+    trusted_runtime_followups: bool = False,
 ) -> AutopilotExecutionResult:
     if user.role == "staff":
         raise AutopilotError("Staff cannot run AutoPilot", 403)
@@ -281,7 +282,9 @@ def run_autopilot(
 
     settings = get_settings()
     if not dry_run:
-        if not settings.autopilot_enabled:
+        if not settings.autopilot_enabled and not (
+            trusted_runtime_followups and mode == "followups"
+        ):
             raise AutopilotError("autopilot_disabled", 409)
         if autopilot_is_emergency_stopped(db):
             raise AutopilotError("autopilot_emergency_stopped", 409)
@@ -322,7 +325,12 @@ def run_autopilot(
         action = create_candidate_action(db, run, candidate)
         actions.append(action)
 
-        skip_reason = candidate_skip_reason(db, candidate, connection)
+        skip_reason = candidate_skip_reason(
+            db,
+            candidate,
+            connection,
+            allow_followups_disabled=trusted_runtime_followups and mode == "followups",
+        )
         if skip_reason is None and not dry_run:
             skip_reason = limit_skip_reason(
                 db,
@@ -882,6 +890,8 @@ def candidate_skip_reason(
     db: Session,
     candidate: Candidate,
     connection: EmailConnectionStatus,
+    *,
+    allow_followups_disabled: bool = False,
 ) -> str | None:
     settings = get_settings()
     if settings.autopilot_require_gmail_connected:
@@ -899,7 +909,7 @@ def candidate_skip_reason(
             return "initial_claims_disabled"
         return initial_claim_skip_reason(db, candidate.object)  # type: ignore[arg-type]
     if candidate.action_type.startswith("send_followup") or candidate.action_type == "send_escalation":
-        if not settings.autopilot_followups_enabled:
+        if not settings.autopilot_followups_enabled and not allow_followups_disabled:
             return "followups_disabled"
         return followup_skip_reason(db, candidate.object)  # type: ignore[arg-type]
     if candidate.action_type == "send_appeal":
