@@ -15,7 +15,6 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.core.sealed_database_config import sealed_database_public_key
 from app.models import AuditLog, User
 from app.services.audit import add_audit_log
 from app.services.autopilot_service import AutopilotError, run_autopilot
@@ -329,15 +328,6 @@ def _run_followup_worker(
     db.commit()
     return payload
 
-
-
-@router.get("/db-bootstrap-public-key")
-def database_bootstrap_public_key() -> dict[str, str]:
-    settings = get_settings()
-    return {
-        "algorithm": "X25519-HKDF-SHA256-AESGCM",
-        "public_key": sealed_database_public_key(settings.jwt_secret_key),
-    }
 
 
 
