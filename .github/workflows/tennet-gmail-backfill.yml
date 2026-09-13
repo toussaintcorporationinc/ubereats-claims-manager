@@ -32,6 +32,14 @@ jobs:
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=tennet-runtime")"
           runtime_token="$(python -c 'import json,sys; print(json.load(sys.stdin)["value"])' <<<"$oidc_json")"
           echo "::add-mask::$runtime_token"
+          python - "$runtime_token" <<'PY'
+          import base64, json, sys
+          payload = sys.argv[1].split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+          safe = {k: claims.get(k) for k in ("iss", "aud", "repository", "ref", "workflow_ref")}
+          print("TENNET_OIDC_SAFE_CLAIMS=" + json.dumps(safe, sort_keys=True))
+          PY
           echo "TENNET_RUNTIME_TOKEN=$runtime_token" >> "$GITHUB_ENV"
 
       - name: Backfill one Gmail day safely
