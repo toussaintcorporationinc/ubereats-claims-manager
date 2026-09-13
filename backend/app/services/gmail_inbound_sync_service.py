@@ -179,6 +179,9 @@ class GmailInboundSyncService:
         analyze_responses: bool = True,
         apply_reviews: bool = True,
         reprocess_existing_limit: int | None = None,
+        query_override: str | None = None,
+        full_history: bool = False,
+        include_starred_discovery: bool = True,
     ) -> GmailInboundSyncResult:
         sync_state = self.get_or_create_sync_state(db, account)
         sync_state.status = "running"
@@ -190,7 +193,12 @@ class GmailInboundSyncService:
             entity_id=sync_state.id,
             action="gmail_inbound_sync.started",
             user_id=user.id,
-            new_value={"lookback_days": lookback_days, "max_messages": max_messages},
+            new_value={
+                "lookback_days": lookback_days,
+                "max_messages": max_messages,
+                "query_override": query_override,
+                "full_history": full_history,
+            },
         )
         db.flush()
         # Do not hold the sync-state row lock while Gmail/OpenAI network calls run.
@@ -198,30 +206,62 @@ class GmailInboundSyncService:
         # every following sync attempt behind one long external request.
         db.commit()
 
-        query = f"newer_than:{lookback_days}d"
+        query = query_override or f"newer_than:{lookback_days}d"
         result = GmailInboundSyncResult(status="success")
         created_message_ids: set[int] = set()
         try:
             order_identifier_index = self.build_order_identifier_index(db, user)
             settings = get_settings()
             starred_max_messages = max(0, settings.gmail_starred_max_messages_per_sync)
-            payloads = merge_unique_payloads(
-                self.fetch_payloads(db, user, account, query=query, max_messages=max_messages),
-                self.fetch_starred_payloads_for_queries(
+
+            if full_history:
+                sync_all_for_account = getattr(self.provider, "sync_all_inbound_replies_for_account", None)
+                if callable(sync_all_for_account):
+                    primary_payloads = sync_all_for_account(
+                        db,
+                        account,
+                        query=query,
+                        page_size=min(max(settings.gmail_starred_page_size, 1), 500),
+                        max_pages=0,
+                    )
+                else:
+                    primary_payloads = self.fetch_payloads(
+                        db,
+                        user,
+                        account,
+                        query=query,
+                        max_messages=max_messages,
+                    )
+            else:
+                primary_payloads = self.fetch_payloads(
                     db,
                     user,
                     account,
-                    queries=GMAIL_STARRED_WITH_ATTACHMENT_QUERIES,
-                    fallback_max_messages=starred_max_messages,
-                ),
-                self.fetch_starred_payloads_for_queries(
-                    db,
-                    user,
-                    account,
-                    queries=GMAIL_STARRED_URGENT_QUERIES,
-                    fallback_max_messages=starred_max_messages,
-                ),
-            )
+                    query=query,
+                    max_messages=max_messages,
+                )
+
+            payload_groups: list[list[InboundEmailPayload]] = [primary_payloads]
+            if include_starred_discovery:
+                payload_groups.extend(
+                    [
+                        self.fetch_starred_payloads_for_queries(
+                            db,
+                            user,
+                            account,
+                            queries=GMAIL_STARRED_WITH_ATTACHMENT_QUERIES,
+                            fallback_max_messages=starred_max_messages,
+                        ),
+                        self.fetch_starred_payloads_for_queries(
+                            db,
+                            user,
+                            account,
+                            queries=GMAIL_STARRED_URGENT_QUERIES,
+                            fallback_max_messages=starred_max_messages,
+                        ),
+                    ]
+                )
+            payloads = merge_unique_payloads(*payload_groups)
             for payload in payloads:
                 if not payload.provider_message_id:
                     result.errors.append("Skipped Gmail message without provider_message_id")
