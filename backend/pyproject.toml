@@ -14,7 +14,7 @@ dependencies = [
   "psycopg[binary]",
   "pydantic-settings",
   "alembic",
-  "PyJWT",
+  "PyJWT[crypto]",
   "python-multipart",
   "openpyxl",
   "qrcode",
