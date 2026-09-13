@@ -23,6 +23,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Inspect available TENNET production secrets
+        env:
+          DATABASE_URL_1: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_2: ${{ secrets.DATABASE_URL_PRODUCTION }}
+          DATABASE_URL_3: ${{ secrets.TENNET_DATABASE_URL }}
+          DATABASE_URL_4: ${{ secrets.POSTGRES_URL }}
+          DATABASE_URL_5: ${{ secrets.NEON_DATABASE_URL }}
+          SECRET_KEY_VALUE: ${{ secrets.SECRET_KEY }}
+          GMAIL_CLIENT_ID_VALUE: ${{ secrets.GMAIL_OAUTH_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET_VALUE: ${{ secrets.GMAIL_OAUTH_CLIENT_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in DATABASE_URL_1 DATABASE_URL_2 DATABASE_URL_3 DATABASE_URL_4 DATABASE_URL_5 SECRET_KEY_VALUE GMAIL_CLIENT_ID_VALUE GMAIL_CLIENT_SECRET_VALUE; do
+            if [[ -n "${!name:-}" ]]; then
+              echo "$name=PRESENT"
+            else
+              echo "$name=MISSING"
+            fi
+          done
+
       - name: Get short-lived GitHub OIDC token
         shell: bash
         run: |
