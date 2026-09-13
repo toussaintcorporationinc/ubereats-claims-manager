@@ -10,7 +10,7 @@ import jwt
 from jwt import PyJWKClient
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -181,7 +181,7 @@ def _run_gmail_backfill(
     _require_runtime_authorization(authorization)
 
     owner = None
-    last_db_error: OperationalError | None = None
+    last_db_error: SQLAlchemyError | None = None
     for attempt in range(3):
         try:
             owner = db.scalar(
@@ -191,7 +191,7 @@ def _run_gmail_backfill(
             )
             last_db_error = None
             break
-        except OperationalError as exc:
+        except SQLAlchemyError as exc:
             last_db_error = exc
             db.rollback()
             if attempt < 2:
