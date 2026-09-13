@@ -324,7 +324,7 @@ def _run_followup_worker(
             restaurant_id=None,
             dry_run=False,
             provider=GmailEmailProvider(trusted_runtime=True),
-            max_candidates=10,
+            max_candidates=4,
             trusted_runtime_followups=True,
         )
     except AutopilotError as exc:
