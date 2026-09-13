@@ -790,20 +790,26 @@ def followup_candidates(
             return []
         statement = statement.where(ClaimOrder.restaurant_id.in_(restaurant_ids))
     if limit is not None and limit > 0:
-        statement = statement.limit(limit)
+        statement = statement.limit(max(limit * 50, limit))
     tasks = db.scalars(statement).all()
+    eligible_tasks: list[FollowUpTask] = []
     for task in tasks:
         repair_order_identity_for_autopilot(db, user, task.order, allow_ai=False)
+        if latest_verified_followup_email_thread(db, task.order) is None:
+            continue
+        eligible_tasks.append(task)
+        if limit is not None and limit > 0 and len(eligible_tasks) >= limit:
+            break
     return [
         Candidate(
             case_type="followup_task",
             case_id=task.id,
             restaurant_id=task.order.restaurant_id,
             action_type=FOLLOWUP_ACTION_BY_TASK[task.task_type],
-            reason="followup_due",
+            reason="followup_due_verified_thread",
             object=task,
         )
-        for task in tasks
+        for task in eligible_tasks
     ]
 
 
