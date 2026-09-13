@@ -15,6 +15,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.models import AuditLog, User
 from app.services.audit import add_audit_log
+from app.services.autopilot_service import AutopilotError, run_autopilot
 from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncService
 from app.services.gmail_inbound_sync_service import GmailInboundSyncService
@@ -32,6 +33,7 @@ GITHUB_OIDC_REPOSITORY = "toussaintcorporationinc/ubereats-claims-manager"
 GITHUB_OIDC_ALLOWED_WORKFLOW_REFS = {
     f"{GITHUB_OIDC_REPOSITORY}/.github/workflows/tennet-gmail-sync.yml@refs/heads/main",
     f"{GITHUB_OIDC_REPOSITORY}/.github/workflows/tennet-gmail-backfill.yml@refs/heads/main",
+    f"{GITHUB_OIDC_REPOSITORY}/.github/workflows/tennet-followup-worker.yml@refs/heads/main",
 }
 
 
@@ -240,6 +242,59 @@ def _run_gmail_backfill(
     )
     db.commit()
     return payload
+
+
+
+def _run_followup_worker(
+    authorization: str | None,
+    db: Session,
+) -> dict[str, object]:
+    _require_runtime_authorization(authorization)
+
+    owner = db.scalar(
+        select(User)
+        .where(User.active.is_(True), User.role == "owner")
+        .order_by(User.id)
+    )
+    if owner is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No active TENNET owner is configured",
+        )
+
+    try:
+        result = run_autopilot(
+            db,
+            owner,
+            mode="followups",
+            restaurant_id=None,
+            dry_run=False,
+            provider=GmailEmailProvider(),
+            max_candidates=10,
+        )
+    except AutopilotError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    payload = {
+        "status": result.run.status,
+        "run_id": result.run.id,
+        "total_candidates": result.run.total_candidates,
+        "sent_count": result.run.sent_count,
+        "skipped_count": result.run.skipped_count,
+        "failed_count": result.run.failed_count,
+        "error_message": result.run.error_message,
+    }
+    db.commit()
+    return payload
+
+
+@router.api_route("/followup-worker", methods=["GET", "POST"])
+def run_followup_worker(
+    authorization: Annotated[str | None, Header()] = None,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return _run_followup_worker(authorization, db)
 
 
 @router.api_route("/gmail-sync", methods=["GET", "POST"])
