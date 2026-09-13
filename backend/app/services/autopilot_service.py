@@ -269,6 +269,7 @@ def run_autopilot(
     restaurant_id: int | None,
     dry_run: bool,
     provider: EmailProvider,
+    max_candidates: int | None = None,
 ) -> AutopilotExecutionResult:
     if user.role == "staff":
         raise AutopilotError("Staff cannot run AutoPilot", 403)
@@ -311,7 +312,11 @@ def run_autopilot(
         user,
         mode,
         restaurant_id,
-        max_candidates=settings.autopilot_max_candidates_per_run,
+        max_candidates=(
+            max_candidates
+            if max_candidates is not None
+            else settings.autopilot_max_candidates_per_run
+        ),
     ):
         action = create_candidate_action(db, run, candidate)
         actions.append(action)
@@ -886,7 +891,7 @@ def candidate_skip_reason(
         if not settings.autopilot_initial_claims_enabled:
             return "initial_claims_disabled"
         return initial_claim_skip_reason(db, candidate.object)  # type: ignore[arg-type]
-    if candidate.action_type.startswith("send_followup"):
+    if candidate.action_type.startswith("send_followup") or candidate.action_type == "send_escalation":
         if not settings.autopilot_followups_enabled:
             return "followups_disabled"
         return followup_skip_reason(db, candidate.object)  # type: ignore[arg-type]
@@ -1461,7 +1466,7 @@ def send_candidate(
 ) -> None:
     if candidate.action_type == "send_initial_claim":
         send_initial_claim(db, user, candidate.object, action, provider)  # type: ignore[arg-type]
-    elif candidate.action_type.startswith("send_followup"):
+    elif candidate.action_type.startswith("send_followup") or candidate.action_type == "send_escalation":
         send_followup(db, user, candidate.object, action, provider)  # type: ignore[arg-type]
     elif candidate.action_type == "send_appeal":
         send_appeal(db, user, candidate.object, action, provider)  # type: ignore[arg-type]
