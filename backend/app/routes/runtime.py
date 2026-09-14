@@ -22,6 +22,7 @@ from app.services.email_provider import EmailProviderError
 from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncService
 from app.services.gmail_inbound_sync_service import GmailInboundSyncService
+from app.services.runtime_settings_service import get_runtime_bool_setting
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,21 @@ def _run_gmail_sync(
     db: Session,
 ) -> dict[str, object]:
     _require_runtime_authorization(authorization)
-    result = GmailInboundAutoSyncService(settings=get_settings()).sync_due_accounts(db)
+    settings = get_settings()
+    runtime_enabled = get_runtime_bool_setting(db, "gmail_automation_enabled", False)
+    if runtime_enabled:
+        settings = settings.model_copy(
+            update={
+                "email_provider_enabled": True,
+                "gmail_inbound_sync_enabled": True,
+                "gmail_inbound_auto_sync_enabled": True,
+                "gmail_inbound_auto_sync_run_autopilot": True,
+            }
+        )
+    result = GmailInboundAutoSyncService(
+        provider=GmailEmailProvider(trusted_runtime=runtime_enabled),
+        settings=settings,
+    ).sync_due_accounts(db)
     db.commit()
     return asdict(result)
 
