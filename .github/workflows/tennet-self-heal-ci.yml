@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - 'backend/app/services/autopilot_service.py'
+      - 'backend/app/services/gmail_email_provider.py'
       - 'backend/app/routes/runtime.py'
       - 'backend/tests/test_autopilot.py'
       - '.github/workflows/tennet-self-heal-ci.yml'
@@ -42,4 +43,6 @@ jobs:
           pytest -q \
             tests/test_autopilot.py::test_followup_self_heal_requeues_legacy_gmail_quota_failure \
             tests/test_autopilot.py::test_followup_self_heal_completes_task_when_gmail_send_is_already_confirmed \
-            tests/test_autopilot.py::test_followup_self_heal_recovers_missing_gmail_thread_from_exact_order_id
+            tests/test_autopilot.py::test_followup_self_heal_recovers_missing_gmail_thread_from_exact_order_id \
+            tests/test_autopilot.py::test_followup_self_heal_resets_quota_failure_when_remote_draft_was_never_created \
+            tests/test_autopilot.py::test_followup_self_heal_confirms_stale_send_requested_from_real_gmail_history
