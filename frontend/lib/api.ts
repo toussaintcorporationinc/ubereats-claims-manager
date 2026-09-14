@@ -406,6 +406,22 @@ export type GmailOAuthStartResponse = {
   authorization_url: string;
 };
 
+export type GmailOAuthConfig = {
+  configured: boolean;
+  client_id: string | null;
+  client_secret_configured: boolean;
+  redirect_uri: string;
+  client_id_source: string;
+  client_secret_source: string;
+  redirect_uri_source: string;
+};
+
+export type GmailOAuthConfigUpdate = {
+  client_id: string;
+  client_secret?: string | null;
+  redirect_uri?: string | null;
+};
+
 export type GmailDraftCreatePayload = {
   to_email?: string | null;
   include_evidence: boolean;
@@ -2667,6 +2683,12 @@ export const api = {
   getResendStatus: () => request<GmailConnectionStatus>("/v1/email/resend/status"),
   getGmailAccounts: () => request<EmailAccount[]>("/v1/email/gmail/accounts"),
   getGmailRestaurantMappings: () => request<GmailRestaurantMapping[]>("/v1/email/gmail/restaurant-mappings"),
+  getGmailOAuthConfig: () => request<GmailOAuthConfig>("/v1/email/gmail/oauth/config"),
+  updateGmailOAuthConfig: (payload: GmailOAuthConfigUpdate) =>
+    request<GmailOAuthConfig>("/v1/email/gmail/oauth/config", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
   updateGmailRestaurantMapping: (restaurantId: number, emailAccountId: number | null) =>
     request<GmailRestaurantMapping>(`/v1/email/gmail/restaurant-mappings/${restaurantId}`, {
       method: "PUT",
