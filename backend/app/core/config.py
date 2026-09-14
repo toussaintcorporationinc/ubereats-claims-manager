@@ -29,6 +29,10 @@ class Settings(BaseSettings):
         "https://www.googleapis.com/auth/gmail.readonly"
     )
     default_uber_eats_support_email: str = "restaurantsfrance@uber.com"
+    uber_oauth_redirect_uri: str | None = None
+    uber_public_base_url: str | None = None
+    uber_client_scopes: str = "eats.store eats.order eats.store.orders.read eats.report"
+    uber_provisioning_scope: str = "eats.pos_provisioning"
     email_provider_enabled: bool = False
     email_max_attachment_total_mb: int = 20
     resend_enabled: bool = False
