@@ -1,4 +1,5 @@
 name: TENNET followup worker
+# Forced token refresh check
 
 on:
   schedule:
