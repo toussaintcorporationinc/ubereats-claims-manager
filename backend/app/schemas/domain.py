@@ -1394,8 +1394,21 @@ class UberStatusRead(BaseModel):
     status: UberIntegrationStatus
     official_api_enabled: bool = False
     approval_required: bool = True
+    credentials_configured: bool = False
+    oauth_ready: bool = False
+    oauth_redirect_uri: str | None = None
+    webhook_url: str | None = None
     scopes: str | None = None
     store_mappings_count: int = 0
+
+
+class UberCredentialsConfigure(BaseModel):
+    client_id: str = Field(min_length=1)
+    client_secret: str = Field(min_length=1)
+
+
+class UberOAuthStartResponse(BaseModel):
+    authorization_url: str
 
 
 class UberStoreMappingCreate(BaseModel):
