@@ -20,7 +20,9 @@ from app.models import (
     ClaimOrder,
     ClaimResponseReview,
     EmailAccount,
+    EmailAccountRestaurantMapping,
     EmailDraft,
+    EmailThread,
     EvidenceFile,
     EmailProviderDraft,
     FollowUpTask,
@@ -37,6 +39,7 @@ from app.services.autopilot_service import (
     gmail_account_send_pacing_active,
     gmail_account_sent_last_24_hours_count,
     iter_candidates,
+    repair_followup_queue,
     resume_next_prepared_provider_draft,
 )
 from app.services.autopilot_identity_repair_service import find_or_create_order_from_starred_text
@@ -49,6 +52,8 @@ class FakeAutopilotGmailProvider:
     def __init__(self) -> None:
         self.thread_payloads: dict[str, list[InboundEmailPayload]] = {}
         self.sent_draft_ids: list[int] = []
+        self.message_refs: list[dict[str, str]] = []
+        self.message_payloads: dict[str, InboundEmailPayload] = {}
 
     def get_connection_status(self, db: Session, user: User) -> EmailConnectionStatus:
         if not get_settings().email_provider_enabled:
@@ -116,6 +121,28 @@ class FakeAutopilotGmailProvider:
         include_attachments: bool = False,
     ) -> list[InboundEmailPayload]:
         return self.thread_payloads.get(thread_id, [])
+
+
+    def list_message_refs_for_account(
+        self,
+        db: Session,
+        account: EmailAccount,
+        *,
+        query: str,
+        max_results: int,
+    ) -> list[dict[str, str]]:
+        return self.message_refs[:max_results]
+
+    def get_message_for_account_payload(
+        self,
+        db: Session,
+        account: EmailAccount,
+        message_id: str,
+        *,
+        include_attachments: bool = True,
+        enrich_starred: bool = True,
+    ) -> InboundEmailPayload:
+        return self.message_payloads[message_id]
 
 
 @pytest.fixture()
@@ -1696,3 +1723,208 @@ def test_autopilot_emergency_resume_releases_stop(
         )
         is not None
     )
+
+
+def test_followup_self_heal_requeues_legacy_gmail_quota_failure(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = create_restaurant(client, "Self Heal Quota")
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+    account = add_gmail_account(db_session)
+    order = ClaimOrder(
+        restaurant_id=restaurant["id"],
+        uber_order_number="HEAL-Q-001",
+        customer_name="Client Quota",
+        order_date=date(2026, 9, 1),
+        order_amount=Decimal("24.90"),
+        currency="EUR",
+        status="sent",
+        first_email_sent_at=utc_now() - timedelta(days=5),
+    )
+    db_session.add(order)
+    db_session.flush()
+    draft = EmailDraft(
+        order_id=order.id,
+        draft_type="followup_1",
+        subject="Re: commande HEAL-Q-001",
+        body="Relance HEAL-Q-001",
+        status="created",
+    )
+    db_session.add(draft)
+    db_session.flush()
+    provider_draft = EmailProviderDraft(
+        email_draft_id=draft.id,
+        email_account_id=account.id,
+        provider="gmail",
+        provider_draft_id="gmail-draft-heal-q-001",
+        provider_thread_id="gmail-thread-heal-q-001",
+        to_email="restaurantsfrance@uber.com",
+        subject=draft.subject,
+        status="failed",
+        created_by_user_id=owner.id,
+        last_error="PERMISSION_DENIED - Quota exceeded for quota metric 'Total Query Cost'",
+    )
+    db_session.add(provider_draft)
+    db_session.flush()
+    task = FollowUpTask(
+        order_id=order.id,
+        task_type="followup_1",
+        status="provider_draft_created",
+        due_at=utc_now() - timedelta(hours=1),
+        generated_email_draft_id=draft.id,
+        generated_provider_draft_id=provider_draft.id,
+        created_by_user_id=owner.id,
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    result = repair_followup_queue(db_session, owner)
+
+    db_session.refresh(provider_draft)
+    db_session.refresh(task)
+    assert result.requeued_quota_drafts == 1
+    assert provider_draft.status == "provider_draft_created"
+    assert task.status == "provider_draft_created"
+
+
+def test_followup_self_heal_completes_task_when_gmail_send_is_already_confirmed(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = create_restaurant(client, "Self Heal Sent")
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+    account = add_gmail_account(db_session)
+    order = ClaimOrder(
+        restaurant_id=restaurant["id"],
+        uber_order_number="HEAL-S-001",
+        customer_name="Client Sent",
+        order_date=date(2026, 9, 1),
+        order_amount=Decimal("29.90"),
+        currency="EUR",
+        status="sent",
+        first_email_sent_at=utc_now() - timedelta(days=5),
+    )
+    db_session.add(order)
+    db_session.flush()
+    draft = EmailDraft(
+        order_id=order.id,
+        draft_type="followup_1",
+        subject="Re: commande HEAL-S-001",
+        body="Relance HEAL-S-001",
+        status="created",
+    )
+    db_session.add(draft)
+    db_session.flush()
+    provider_draft = EmailProviderDraft(
+        email_draft_id=draft.id,
+        email_account_id=account.id,
+        provider="gmail",
+        provider_draft_id="gmail-draft-heal-s-001",
+        provider_thread_id="gmail-thread-heal-s-001",
+        provider_message_id="gmail-message-heal-s-001",
+        to_email="restaurantsfrance@uber.com",
+        subject=draft.subject,
+        status="sent",
+        created_by_user_id=owner.id,
+        sent_by_user_id=owner.id,
+        sent_at=utc_now() - timedelta(minutes=2),
+    )
+    db_session.add(provider_draft)
+    db_session.flush()
+    task = FollowUpTask(
+        order_id=order.id,
+        task_type="followup_1",
+        status="provider_draft_created",
+        due_at=utc_now() - timedelta(hours=1),
+        generated_email_draft_id=draft.id,
+        generated_provider_draft_id=provider_draft.id,
+        created_by_user_id=owner.id,
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    result = repair_followup_queue(db_session, owner)
+
+    db_session.refresh(task)
+    db_session.refresh(order)
+    assert result.completed_sent_tasks == 1
+    assert task.status == "completed"
+    assert order.retry_count == 1
+    assert order.status == "followup_1_sent"
+
+
+def test_followup_self_heal_recovers_missing_gmail_thread_from_exact_order_id(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+) -> None:
+    restaurant = create_restaurant(client, "Self Heal Thread")
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+    account = add_gmail_account(db_session)
+    db_session.add(
+        EmailAccountRestaurantMapping(
+            restaurant_id=restaurant["id"],
+            email_account_id=account.id,
+            created_by_user_id=owner.id,
+        )
+    )
+    order = ClaimOrder(
+        restaurant_id=restaurant["id"],
+        uber_order_number="HEAL-T-001",
+        customer_name="Client Thread",
+        order_date=date(2026, 9, 1),
+        order_amount=Decimal("34.90"),
+        currency="EUR",
+        status="sent",
+        first_email_sent_at=utc_now() - timedelta(days=5),
+    )
+    db_session.add(order)
+    db_session.flush()
+    task = FollowUpTask(
+        order_id=order.id,
+        task_type="followup_1",
+        status="pending",
+        due_at=utc_now() - timedelta(hours=1),
+        created_by_user_id=owner.id,
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    fake_gmail_provider.message_refs = [{"id": "sent-heal-t-001", "threadId": "thread-heal-t-001"}]
+    fake_gmail_provider.message_payloads["sent-heal-t-001"] = InboundEmailPayload(
+        provider_message_id="sent-heal-t-001",
+        provider_thread_id="thread-heal-t-001",
+        gmail_history_id="history-heal-t-001",
+        from_email=account.email_address,
+        to_email="restaurantsfrance@uber.com",
+        subject="Contestation commande HEAL-T-001",
+        snippet="Commande HEAL-T-001",
+        body_text="Bonjour, contestation concernant la commande HEAL-T-001.",
+        received_at=utc_now() - timedelta(days=5),
+        raw_headers={},
+        provider_labels=["SENT"],
+        attachments=[],
+    )
+
+    result = repair_followup_queue(
+        db_session,
+        owner,
+        fake_gmail_provider,
+        max_remote_thread_repairs=4,
+    )
+
+    thread = db_session.scalar(
+        select(EmailThread).where(
+            EmailThread.order_id == order.id,
+            EmailThread.provider == "gmail",
+            EmailThread.direction == "outbound",
+            EmailThread.thread_id == "thread-heal-t-001",
+        )
+    )
+    assert result.repaired_thread_links == 1
+    assert thread is not None
+    assert "HEAL-T-001" in (thread.subject or "")
