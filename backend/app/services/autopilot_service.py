@@ -392,6 +392,7 @@ def repair_followup_queue(
                 new_provider_status = provider_draft.status
                 requeued_quota_drafts += 1
             else:
+                task.generated_provider_draft = None
                 task.generated_provider_draft_id = None
                 task.status = "draft_created" if task.generated_email_draft_id is not None else "pending"
                 task.updated_at = now
