@@ -8,13 +8,6 @@ on:
     - cron: '*/6 * * * *'
     - cron: '3-59/6 * * * *'
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'backend/app/routes/runtime.py'
-      - 'backend/app/services/autopilot_service.py'
-      - 'backend/app/services/email_draft_service.py'
-      - '.github/workflows/tennet-followup-worker.yml'
 
 permissions:
   contents: read
