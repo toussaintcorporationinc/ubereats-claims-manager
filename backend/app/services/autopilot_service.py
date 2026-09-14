@@ -2447,11 +2447,27 @@ def build_starred_thread_reply_body(
     if verified_facts:
         argument = "Les informations verifiees du dossier etablissent que " + " et ".join(verified_facts) + "."
     else:
-        argument = "Votre dernier message ne permet pas de verifier le motif individualise ni le calcul applique a cette commande."
+        argument = (
+            "Votre dernier message ne permet pas de verifier le motif individualise, le calcul applique "
+            "ni l'element du dossier qui justifierait le refus."
+        )
+
+    available_evidence = [
+        evidence.evidence_type
+        for evidence in order.evidence_files
+        if evidence.deleted_at is None
+    ]
+    if available_evidence:
+        argument += (
+            "\n\nLe dossier contient deja des justificatifs exploitables : "
+            + ", ".join(dict.fromkeys(available_evidence))
+            + ". Merci de les prendre en compte dans la nouvelle revue."
+        )
     if workflow.appeal_attempt_count >= 2:
         argument += (
-            "\n\nLe dossier a deja ete relance sans regularisation claire. "
-            "Merci de transmettre la demande a un niveau de traitement superieur si necessaire."
+            "\n\nLe dossier a deja ete relance sans regularisation ni justification individualisee suffisante. "
+            "Merci de le transmettre a un niveau de traitement superieur et de communiquer la base precise "
+            "de toute decision negative."
         )
     paragraphs = [
         "Bonjour,",
