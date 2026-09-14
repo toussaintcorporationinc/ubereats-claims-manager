@@ -11,6 +11,9 @@ on:
       - 'backend/app/services/customer_refund_autopilot_service.py'
       - 'backend/app/services/uber_reporting_import_service.py'
       - 'backend/app/routes/runtime.py'
+      - 'backend/app/routes/uber.py'
+      - 'backend/app/services/uber_connector_service.py'
+      - 'backend/tests/test_uber_live_connector.py'
       - 'backend/tests/test_autopilot.py'
       - '.github/workflows/tennet-self-heal-ci.yml'
 
@@ -50,4 +53,6 @@ jobs:
             tests/test_autopilot.py::test_followup_self_heal_confirms_stale_send_requested_from_real_gmail_history \
             tests/test_autopilot.py::test_autopilot_appeal_requires_verified_gmail_thread \
             tests/test_autopilot.py::test_autopilot_sends_appeal_from_verified_unstarred_uber_reply \
-            tests/test_autopilot.py::test_customer_refund_autopilot_sends_ready_dispute
+            tests/test_autopilot.py::test_customer_refund_autopilot_sends_ready_dispute \
+            tests/test_uber_live_connector.py::test_uber_connector_credentials_and_signature \
+            tests/test_uber_live_connector.py::test_uber_oauth_url_is_passive_setup_ready
