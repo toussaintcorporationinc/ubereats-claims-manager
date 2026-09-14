@@ -1,13 +1,18 @@
 Bonjour,
 
-Je me permets de vous relancer concernant {order_identity_phrase} pour le restaurant {restaurant_name}.
+Je vous relance concernant {order_identity_phrase} pour le restaurant {restaurant_name}.
 
 Montant concerne : {order_amount} {currency}
 
 Pieces jointes :
 {evidence_list}
 
-Merci de revoir ce dossier et de nous confirmer la suite donnee a la demande.
+Merci de reprendre l'examen du dossier et de nous confirmer l'une des trois issues suivantes :
+- regularisation/paiement du montant concerne ;
+- piece ou information precise encore necessaire ;
+- motif individualise du refus avec l'element du dossier qui le justifie.
+
+Notre objectif est de pouvoir traiter ce dossier sur des faits precis, sans nouvelle ouverture inutile.
 
 Cordialement,
 {signature}
