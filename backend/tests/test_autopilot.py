@@ -30,6 +30,7 @@ from app.models import (
     InboundEmailMessage,
     RefusalAnalysis,
     Restaurant,
+    UberCustomerRefundDispute,
     User,
 )
 from app.models.domain import utc_now
@@ -43,6 +44,7 @@ from app.services.autopilot_service import (
     resume_next_prepared_provider_draft,
 )
 from app.services.autopilot_identity_repair_service import find_or_create_order_from_starred_text
+from app.services.customer_refund_autopilot_service import run_customer_refund_autopilot
 from app.services.email_provider import EmailConnectionStatus, EmailSendResult, InboundEmailPayload
 
 
@@ -1792,6 +1794,70 @@ def test_autopilot_emergency_resume_releases_stop(
         )
         is not None
     )
+
+
+def test_customer_refund_autopilot_sends_ready_dispute(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client, "Refund Autopilot")
+    ready = create_ready_order(client, restaurant["id"], "REFUND-AUTO-001")
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    assert order is not None
+    receipt_response = client.post(
+        f"/v1/orders/{order.id}/evidence",
+        json={
+            "evidence_type": "receipt",
+            "original_filename": "receipt-refund.png",
+            "storage_path": "storage/evidence/receipt-refund.png",
+            "mime_type": "image/png",
+            "file_size": 1024,
+        },
+    )
+    assert receipt_response.status_code == 201
+    account = add_gmail_account(db_session)
+    dispute = UberCustomerRefundDispute(
+        restaurant_id=restaurant["id"],
+        uber_store_id="store-refund-auto",
+        uber_order_id="REFUND-AUTO-001",
+        display_id="REFUND-AUTO-001",
+        claim_order_id=order.id,
+        dispute_type="customer_refund",
+        reason="refund_without_sufficient_proof",
+        status="evidence_ready",
+        customer_refund_amount=Decimal("24.90"),
+        order_amount=Decimal("24.90"),
+        currency="EUR",
+        deducted_at=date(2026, 9, 10),
+        order_date=date(2026, 9, 10),
+        evidence_required=True,
+        evidence_status="complete",
+        created_by_user_id=1,
+    )
+    db_session.add(dispute)
+    db_session.commit()
+
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+    result = run_customer_refund_autopilot(
+        db_session,
+        owner,
+        fake_gmail_provider,
+        max_candidates=4,
+    )
+
+    db_session.refresh(dispute)
+    assert result.sent_count == 1
+    assert result.failed_count == 0
+    assert dispute.status == "sent"
+    assert dispute.dispute_email_draft_id is not None
+    assert dispute.provider_draft_id is not None
+    provider_draft = db_session.get(EmailProviderDraft, dispute.provider_draft_id)
+    assert provider_draft is not None
+    assert provider_draft.status == "sent"
+    assert provider_draft.email_account_id == account.id
 
 
 def test_followup_self_heal_requeues_legacy_gmail_quota_failure(
