@@ -45,4 +45,6 @@ jobs:
             tests/test_autopilot.py::test_followup_self_heal_completes_task_when_gmail_send_is_already_confirmed \
             tests/test_autopilot.py::test_followup_self_heal_recovers_missing_gmail_thread_from_exact_order_id \
             tests/test_autopilot.py::test_followup_self_heal_resets_quota_failure_when_remote_draft_was_never_created \
-            tests/test_autopilot.py::test_followup_self_heal_confirms_stale_send_requested_from_real_gmail_history
+            tests/test_autopilot.py::test_followup_self_heal_confirms_stale_send_requested_from_real_gmail_history \
+            tests/test_autopilot.py::test_autopilot_appeal_requires_verified_gmail_thread \
+            tests/test_autopilot.py::test_autopilot_sends_appeal_from_verified_unstarred_uber_reply
