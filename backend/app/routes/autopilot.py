@@ -40,7 +40,7 @@ def get_autopilot_status(
     provider: EmailProvider = Depends(get_gmail_provider),
 ) -> AutopilotStatusResponse:
     connection = provider.get_connection_status(db, current_user)
-    snapshot = settings_snapshot()
+    snapshot = settings_snapshot(db)
     sent_count = sent_today_count(db)
     daily_limit = int(snapshot["daily_send_limit"])
     return AutopilotStatusResponse(
