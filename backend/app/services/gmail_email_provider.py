@@ -154,7 +154,6 @@ class GmailEmailProvider:
 
     def handle_oauth_callback(self, db: Session, state: str, code: str) -> EmailAccount:
         settings = get_settings()
-        self.ensure_enabled_and_configured(require_secret=True)
         user_id = self.decode_oauth_state(state)
         user = db.get(User, user_id)
         if user is None or not user.active:
