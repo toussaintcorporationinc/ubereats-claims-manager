@@ -163,7 +163,7 @@ export default function EmailSettingsPage() {
     try {
       const result = await api.syncInboundGmail({
         lookback_days: 30,
-        max_messages: 1000,
+        max_messages: 500,
         analyze_responses: true,
         apply_reviews: true,
         run_autopilot_after_sync: true,
