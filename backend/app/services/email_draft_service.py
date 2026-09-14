@@ -158,6 +158,9 @@ def ensure_draft_type_exists(db: Session, order: ClaimOrder, draft_type: str) ->
 
 def ensure_base_order_data(db: Session, order: ClaimOrder) -> None:
     missing_items, blocking_reasons = get_claim_validation_gaps(db, order)
+    # Follow-up emails are replies on an already verified Gmail thread.
+    # Amount/currency are optional in the follow-up templates and must not
+    # block collection when the claim identity is otherwise known.
     base_blocking_reasons = [
         reason
         for reason in blocking_reasons
@@ -165,8 +168,6 @@ def ensure_base_order_data(db: Session, order: ClaimOrder) -> None:
         in {
             "missing_restaurant",
             "missing_uber_order_number",
-            "missing_order_amount",
-            "missing_currency",
         }
     ]
     if base_blocking_reasons:
