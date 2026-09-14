@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from alembic import op
-import sqlalchemy as sa
 
 
 revision: str = "0033_runtime_settings"
@@ -20,27 +19,25 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "runtime_settings",
-        sa.Column("key", sa.String(length=120), primary_key=True),
-        sa.Column("value_plain", sa.Text(), nullable=True),
-        sa.Column("value_encrypted", sa.Text(), nullable=True),
-        sa.Column("updated_by_user_id", sa.Integer(), nullable=True),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            nullable=False,
-            server_default=sa.text("CURRENT_TIMESTAMP"),
-        ),
+    op.execute(
+        """
+        CREATE TABLE IF NOT EXISTS runtime_settings (
+            key VARCHAR(120) PRIMARY KEY,
+            value_plain TEXT NULL,
+            value_encrypted TEXT NULL,
+            updated_by_user_id INTEGER NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
     )
-    op.create_index(
-        "ix_runtime_settings_updated_at",
-        "runtime_settings",
-        ["updated_at"],
-        unique=False,
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS ix_runtime_settings_updated_at
+        ON runtime_settings(updated_at)
+        """
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_runtime_settings_updated_at", table_name="runtime_settings")
-    op.drop_table("runtime_settings")
+    op.execute("DROP INDEX IF EXISTS ix_runtime_settings_updated_at")
+    op.execute("DROP TABLE IF EXISTS runtime_settings")
