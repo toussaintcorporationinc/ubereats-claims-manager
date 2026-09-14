@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from app.core.config import get_settings
+from app.services.tennet_mission import mission_prompt
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 MAX_IMAGE_BYTES = 8 * 1024 * 1024
@@ -41,6 +42,18 @@ class AIGmailClassification:
     notes: str
 
 
+@dataclass(frozen=True)
+class AIRecoveryStrategy:
+    recommended_next_action: str
+    required_evidence_types: list[str]
+    refusal_category: str
+    strongest_verified_facts: list[str]
+    counterargument: str
+    escalation_reason: str | None
+    confidence: Decimal
+    notes: str
+
+
 class OpenAIStructuredAnalysisService:
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -64,6 +77,8 @@ class OpenAIStructuredAnalysisService:
             return None
         schema = proof_schema()
         prompt = (
+            mission_prompt()
+            + "\n\nTACHE ACTUELLE\n"
             "Tu analyses une preuve terrain TENNET pour Uber Eats. "
             "La preuve principale est une photo/PDF d'un ticket de caisse agrafe sur la commande. "
             "Extrais uniquement les informations visibles dans le texte ou l'image fournie. "
@@ -113,6 +128,8 @@ class OpenAIStructuredAnalysisService:
         schema = gmail_schema()
         context = order_context or {}
         prompt = (
+            mission_prompt()
+            + "\n\nTACHE ACTUELLE\n"
             "Tu analyses une reponse email Uber Eats pour TENNET. "
             "Objectif: classer la reponse sans inventer de paiement ni de refus. "
             "Si Gmail contient STARRED, cela signifie que l'utilisateur marque le mail comme refus urgent a relancer, "
@@ -155,6 +172,8 @@ class OpenAIStructuredAnalysisService:
         schema = proof_schema()
         context = order_context or {}
         prompt = (
+            mission_prompt()
+            + "\n\nTACHE ACTUELLE\n"
             "Tu aides TENNET a reparer l'identite d'un dossier Uber Eats avant relance Gmail. "
             "Le texte peut contenir des emails envoyes par le restaurant, des reponses Uber, des extraits de ticket "
             "ou des notes historiques. Extrais uniquement les informations explicitement presentes: nom client, "
@@ -188,6 +207,62 @@ class OpenAIStructuredAnalysisService:
             confidence=parse_decimal(result.get("confidence")) or Decimal("0"),
             missing_fields=[str(item) for item in result.get("missing_fields", []) if str(item).strip()],
             notes=(string_or_none(result.get("notes")) or "")[:1000],
+        )
+
+    def analyze_recovery_strategy(
+        self,
+        *,
+        refusal_text: str,
+        order_context: dict[str, Any],
+        refusal_count: int,
+        attempt_count: int,
+        available_evidence: list[str],
+    ) -> AIRecoveryStrategy | None:
+        if not self.gmail_enabled():
+            return None
+        schema = recovery_strategy_schema()
+        prompt = (
+            mission_prompt()
+            + "\n\nTACHE ACTUELLE\n"
+            "Analyse ce refus Uber Eats comme un expert en recouvrement de litiges. "
+            "Choisis la prochaine action qui maximise les chances de recuperation legitime sans inventer de faits. "
+            "Ne repete pas mecaniquement un argument deja refuse: identifie l'objection exacte, la faiblesse du refus, "
+            "la meilleure preuve disponible et le niveau d'escalade adapte. "
+            "Si le refus est vague, exige le motif individualise, le calcul applique et la piece/regle invoquee. "
+            "Si une preuve precise manque reellement, demande ou fournis cette preuve plutot que d'insister a vide. "
+            "Si plusieurs refus se repetent sans justification individualisee, privilegie l'escalade.\n"
+            f"Nombre de refus: {refusal_count}\n"
+            f"Nombre de tentatives deja envoyees: {attempt_count}\n"
+            f"Contexte dossier verifie: {json.dumps(order_context, ensure_ascii=True, default=str)}\n"
+            f"Preuves disponibles: {available_evidence}\n"
+            f"Texte du refus / historique:\n{refusal_text[:12000]}"
+        )
+        result = self._request_json(
+            model=self.settings.openai_gmail_model or self.settings.openai_evidence_model or "gpt-4o-mini",
+            schema_name="tennet_recovery_strategy",
+            schema=schema,
+            prompt=prompt,
+        )
+        if not result:
+            return None
+        return AIRecoveryStrategy(
+            recommended_next_action=string_or_none(result.get("recommended_next_action"))
+            or "challenge_generic_refusal",
+            required_evidence_types=[
+                str(item)
+                for item in result.get("required_evidence_types", [])
+                if str(item).strip()
+            ],
+            refusal_category=string_or_none(result.get("refusal_category")) or "generic",
+            strongest_verified_facts=[
+                str(item)[:300]
+                for item in result.get("strongest_verified_facts", [])
+                if str(item).strip()
+            ][:8],
+            counterargument=(string_or_none(result.get("counterargument")) or "")[:1500],
+            escalation_reason=string_or_none(result.get("escalation_reason")),
+            confidence=parse_decimal(result.get("confidence")) or Decimal("0"),
+            notes=(string_or_none(result.get("notes")) or "")[:1500],
         )
 
     def _request_json(
@@ -316,6 +391,64 @@ def gmail_schema() -> dict[str, Any]:
             "notes": {"type": "string"},
         },
         "required": ["review_type", "confidence", "reason", "detected_amount", "evidence_requested", "notes"],
+    }
+
+
+def recovery_strategy_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "recommended_next_action": {
+                "type": "string",
+                "enum": [
+                    "provide_missing_evidence",
+                    "clarify_order_prepared",
+                    "clarify_delivery_proof",
+                    "challenge_generic_refusal",
+                    "request_escalation",
+                    "payment_verification",
+                    "manual_review",
+                ],
+            },
+            "required_evidence_types": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": [
+                        "receipt",
+                        "cancellation_proof",
+                        "preparation_proof",
+                        "waste_photo",
+                        "uber_screenshot",
+                        "delivery_proof",
+                        "packaging_photo",
+                        "sealed_bag_photo",
+                        "courier_statement",
+                        "gps_or_route_proof",
+                        "customer_contact_proof",
+                        "order_details_screenshot",
+                        "other",
+                    ],
+                },
+            },
+            "refusal_category": {"type": "string"},
+            "strongest_verified_facts": {"type": "array", "items": {"type": "string"}},
+            "counterargument": {"type": "string"},
+            "escalation_reason": {"type": ["string", "null"]},
+            "confidence": {"type": "number"},
+            "notes": {"type": "string"},
+        },
+        "required": [
+            "recommended_next_action",
+            "required_evidence_types",
+            "refusal_category",
+            "strongest_verified_facts",
+            "counterargument",
+            "escalation_reason",
+            "confidence",
+            "notes",
+        ],
     }
 
 
