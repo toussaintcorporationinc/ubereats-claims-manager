@@ -983,7 +983,7 @@ def followup_skip_reason(db: Session, task: FollowUpTask) -> str | None:
     order = task.order
     if order.status in FINAL_CLAIM_STATUSES:
         return "final_status"
-    identity_reason = order_identity_skip_reason(order)
+    identity_reason = followup_identity_skip_reason(order)
     if identity_reason is not None:
         return identity_reason
     signature_reason = restaurant_signature_skip_reason(order.restaurant)
@@ -1126,6 +1126,19 @@ def order_identity_skip_reason(order: ClaimOrder) -> str | None:
         return "missing_customer_name"
     if order.order_date is None:
         return "missing_order_date"
+    if order.restaurant is None or not str(order.restaurant.name or "").strip():
+        return "missing_restaurant_name"
+    return None
+
+
+def followup_identity_skip_reason(order: ClaimOrder) -> str | None:
+    """Verified Gmail followups only require stable order identity.
+
+    Customer name and order date remain useful context when available, but
+    they must not block a reply on an already verified Gmail thread.
+    """
+    if not clean_order_identifier(order.uber_order_number):
+        return "missing_uber_order_number"
     if order.restaurant is None or not str(order.restaurant.name or "").strip():
         return "missing_restaurant_name"
     return None
