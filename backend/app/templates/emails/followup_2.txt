@@ -1,13 +1,18 @@
 Bonjour,
 
-Je reviens vers vous concernant {order_identity_phrase} pour le restaurant {restaurant_name}, toujours en attente de reponse.
+Je reviens vers vous concernant {order_identity_phrase} pour le restaurant {restaurant_name}, toujours sans resolution explicite.
 
 Montant concerne : {order_amount} {currency}
 
 Pieces jointes :
 {evidence_list}
 
-Merci de revoir ce dossier et de nous indiquer si un paiement est prevu ou si un element supplementaire est necessaire.
+Merci de proceder a une nouvelle verification et de nous indiquer clairement :
+- si la regularisation est accordee, le montant et la suite de traitement ;
+- si un element manque, la piece exacte attendue ;
+- si le refus est maintenu, le motif precis, le calcul applique et l'element du dossier sur lequel il repose.
+
+Une reponse individualisee nous permettra de resoudre ce dossier sans multiplier les relances.
 
 Cordialement,
 {signature}
