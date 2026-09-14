@@ -1033,7 +1033,7 @@ def followup_skip_reason(db: Session, task: FollowUpTask) -> str | None:
     identity_reason = followup_identity_skip_reason(order)
     if identity_reason is not None:
         return identity_reason
-    signature_reason = restaurant_signature_skip_reason(order.restaurant)
+    signature_reason = followup_restaurant_signature_skip_reason(order.restaurant)
     if signature_reason is not None:
         return signature_reason
     positive_signal_reason = positive_payment_signal_skip_reason(db, order.id)
@@ -1188,6 +1188,31 @@ def followup_identity_skip_reason(order: ClaimOrder) -> str | None:
         return "missing_uber_order_number"
     if order.restaurant is None or not str(order.restaurant.name or "").strip():
         return "missing_restaurant_name"
+    return None
+
+
+def followup_restaurant_signature_skip_reason(restaurant: Restaurant | None) -> str | None:
+    """A verified Gmail reply does not require address/phone metadata.
+
+    The restaurant name, mapped sender mailbox and merchant/thread identity are
+    sufficient to reply safely on an existing Uber support conversation.
+    """
+    if restaurant is None:
+        return "missing_restaurant"
+    for value in (
+        restaurant.name,
+        restaurant.address,
+        restaurant.phone_number,
+        restaurant.sender_email,
+    ):
+        if value and "tennet" in str(value).casefold():
+            return "restaurant_signature_contains_internal_brand"
+    if not str(restaurant.name or "").strip():
+        return "missing_restaurant_name"
+    if not str(restaurant.sender_email or "").strip():
+        return "missing_restaurant_sender_email"
+    if not str(restaurant.uber_merchant_id or "").strip():
+        return "missing_uber_merchant_id"
     return None
 
 
