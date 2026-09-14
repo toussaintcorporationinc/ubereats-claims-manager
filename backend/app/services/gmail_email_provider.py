@@ -227,7 +227,7 @@ class GmailEmailProvider:
         to_email: str,
         include_evidence: bool,
     ) -> EmailProviderDraft:
-        self.ensure_enabled_and_configured(require_secret=True)
+        self.ensure_runtime_configured(db, require_secret=True)
         account = self.get_account_for_draft(db, user.id, email_draft)
         if account is None:
             raise EmailProviderError("Gmail account is not connected", 409)
@@ -249,7 +249,7 @@ class GmailEmailProvider:
         include_evidence: bool,
         account: EmailAccount,
     ) -> EmailProviderDraft:
-        self.ensure_enabled_and_configured(require_secret=True)
+        self.ensure_runtime_configured(db, require_secret=True)
         if account.user_id != user.id or account.provider != self.provider or account.disconnected_at is not None:
             raise EmailProviderError("Gmail account is not connected", 409)
         return self._create_draft_for_account(
@@ -272,7 +272,7 @@ class GmailEmailProvider:
         thread_id: str,
         reply_message: InboundEmailMessage,
     ) -> EmailProviderDraft:
-        self.ensure_enabled_and_configured(require_secret=True)
+        self.ensure_runtime_configured(db, require_secret=True)
         if account.user_id != user.id or account.provider != self.provider or account.disconnected_at is not None:
             raise EmailProviderError("Gmail account is not connected", 409)
         if not thread_id or reply_message.provider_thread_id != thread_id:
@@ -363,7 +363,7 @@ class GmailEmailProvider:
         user: User,
         provider_draft: EmailProviderDraft,
     ) -> EmailSendResult:
-        self.ensure_enabled_and_configured(require_secret=True)
+        self.ensure_runtime_configured(db, require_secret=True)
         account = self.get_account_for_provider_draft(db, user.id, provider_draft)
         if account is None:
             raise EmailProviderError("Gmail account is not connected", 409)
@@ -426,7 +426,7 @@ class GmailEmailProvider:
             raise GmailSendSafetyError(GMAIL_SEND_PACING_REASON)
 
     def list_messages(self, db: Session, user: User, query: str, max_results: int) -> list[str]:
-        self.ensure_enabled_and_configured(require_secret=True)
+        self.ensure_runtime_configured(db, require_secret=True)
         account = self.get_active_account(db, user.id)
         if account is None:
             raise EmailProviderError("Gmail account is not connected", 409)
@@ -526,7 +526,7 @@ class GmailEmailProvider:
         return message_ids
 
     def get_message(self, db: Session, user: User, message_id: str) -> InboundEmailPayload:
-        self.ensure_enabled_and_configured(require_secret=True)
+        self.ensure_runtime_configured(db, require_secret=True)
         account = self.get_active_account(db, user.id)
         if account is None:
             raise EmailProviderError("Gmail account is not connected", 409)
@@ -741,7 +741,7 @@ class GmailEmailProvider:
         return messages
 
     def get_thread(self, db: Session, user: User, thread_id: str) -> dict[str, Any]:
-        self.ensure_enabled_and_configured(require_secret=True)
+        self.ensure_runtime_configured(db, require_secret=True)
         account = self.get_active_account(db, user.id)
         if account is None:
             raise EmailProviderError("Gmail account is not connected", 409)
@@ -1148,6 +1148,21 @@ class GmailEmailProvider:
                 subject=provider_draft.subject,
             )
         return None
+
+    def ensure_runtime_configured(self, db: Session, *, require_secret: bool) -> None:
+        oauth_config = get_gmail_oauth_runtime_config(db)
+        self.ensure_enabled_and_configured(
+            require_secret=require_secret,
+            client_id=oauth_config.client_id,
+            oauth_secret=oauth_config.client_secret,
+            redirect_uri=oauth_config.redirect_uri,
+            allow_disabled_provider=(
+                self.trusted_runtime
+                or oauth_config.client_id_source == "database"
+                or oauth_config.client_secret_source == "database"
+                or oauth_config.redirect_uri_source == "database"
+            ),
+        )
 
     def ensure_enabled_and_configured(
         self,
