@@ -30,6 +30,7 @@ from app.models import (
 from app.models.domain import utc_now
 from app.services.appeal_draft_service import AppealDraftError, create_appeal_email_draft
 from app.services.audit import add_audit_log
+from app.services.openai_structured_analysis_service import OpenAIStructuredAnalysisService
 from app.services.refusal_policy_service import (
     analyze_refusal_text,
     appeal_type_for_policy,
@@ -330,21 +331,84 @@ def create_refusal_analysis(
     if refusal_reason is None and notes is None:
         refusal_reason, notes, inbound_message_id, review_id, refusal_source = latest_refusal_context(db, workflow)
     result = analyze_refusal_text(refusal_reason, notes, refusal_count=max(workflow.refusal_count, 1))
+    chosen_action = result.recommended_next_action
+    chosen_evidence = list(result.required_evidence_types)
+    chosen_confidence = result.confidence
+    chosen_reason = result.reason
+    strategy_source = "policy"
+    ai_strategy = None
+
+    # Hard safety/escalation thresholds stay authoritative. For ordinary refusals,
+    # TENNET's recovery strategist can select a stronger dossier-specific action.
+    if chosen_action not in {"manual_review", "request_escalation"}:
+        order = workflow.claim_order
+        if order is None and workflow.customer_refund_dispute is not None:
+            order = workflow.customer_refund_dispute.claim_order
+        if order is None and workflow.reconciliation_result is not None:
+            order = workflow.reconciliation_result.claim_order
+        if order is not None:
+            restaurant = order.restaurant
+            order_context = {
+                "order_number": order.uber_order_number,
+                "internal_reference": order.internal_reference,
+                "restaurant": restaurant.name if restaurant else None,
+                "uber_merchant_id": restaurant.uber_merchant_id if restaurant else None,
+                "customer_name": order.customer_name,
+                "order_date": order.order_date,
+                "order_amount": order.order_amount,
+                "currency": order.currency,
+                "accepted_by_restaurant": order.accepted_by_restaurant,
+                "prepared_before_cancellation": order.prepared_before_cancellation,
+                "loss_type": order.loss_type,
+                "order_status": order.status,
+                "retry_count": order.retry_count,
+                "recovered_amount": order.recovered_amount,
+            }
+            available_evidence = [
+                evidence.evidence_type
+                for evidence in order.evidence_files
+                if evidence.deleted_at is None
+            ]
+            refusal_text = " ".join([refusal_reason or "", notes or ""]).strip()
+            ai_strategy = OpenAIStructuredAnalysisService().analyze_recovery_strategy(
+                refusal_text=refusal_text,
+                order_context=order_context,
+                refusal_count=max(workflow.refusal_count, 1),
+                attempt_count=workflow.appeal_attempt_count,
+                available_evidence=available_evidence,
+            )
+            if ai_strategy is not None and ai_strategy.confidence >= Decimal("0.65"):
+                allowed_actions = {
+                    "provide_missing_evidence",
+                    "clarify_order_prepared",
+                    "clarify_delivery_proof",
+                    "challenge_generic_refusal",
+                    "request_escalation",
+                    "payment_verification",
+                    "manual_review",
+                }
+                if ai_strategy.recommended_next_action in allowed_actions:
+                    chosen_action = ai_strategy.recommended_next_action
+                    chosen_evidence = list(dict.fromkeys(ai_strategy.required_evidence_types))
+                    chosen_confidence = ai_strategy.confidence
+                    chosen_reason = f"ai:{ai_strategy.refusal_category}"[:255]
+                    strategy_source = "ai_recovery_strategist"
+
     analysis = RefusalAnalysis(
         workflow_id=workflow.id,
         inbound_message_id=inbound_message_id,
         review_id=review_id,
         refusal_source=refusal_source,
-        refusal_reason=result.reason,
+        refusal_reason=chosen_reason,
         refusal_text_excerpt=excerpt(" ".join([refusal_reason or "", notes or ""]).strip()),
-        recommended_next_action=result.recommended_next_action,
-        required_evidence_types_json=result.required_evidence_types,
-        confidence=result.confidence,
+        recommended_next_action=chosen_action,
+        required_evidence_types_json=chosen_evidence,
+        confidence=chosen_confidence,
     )
     db.add(analysis)
-    workflow.next_action_type = next_action_type_for_policy(result.recommended_next_action)
+    workflow.next_action_type = next_action_type_for_policy(chosen_action)
     workflow.next_action_at = utc_now()
-    workflow.status = status_for_policy_action(result.recommended_next_action)
+    workflow.status = status_for_policy_action(chosen_action)
     workflow.updated_at = utc_now()
     db.flush()
     add_audit_log(
@@ -357,6 +421,12 @@ def create_refusal_analysis(
             "workflow_id": workflow.id,
             "recommended_next_action": analysis.recommended_next_action,
             "required_evidence_types": analysis.required_evidence_types_json,
+            "strategy_source": strategy_source,
+            "strategy_confidence": str(chosen_confidence),
+            "ai_counterargument": ai_strategy.counterargument if ai_strategy is not None else None,
+            "ai_strongest_verified_facts": ai_strategy.strongest_verified_facts if ai_strategy is not None else [],
+            "ai_escalation_reason": ai_strategy.escalation_reason if ai_strategy is not None else None,
+            "ai_notes": ai_strategy.notes if ai_strategy is not None else None,
         },
     )
     return analysis
