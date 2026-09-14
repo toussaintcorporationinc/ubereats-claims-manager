@@ -24,6 +24,7 @@ from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncService
 from app.services.gmail_inbound_sync_service import GmailInboundSyncService
 from app.services.runtime_settings_service import get_runtime_bool_setting
+from app.services.uber_connector_service import UberConnectorError, UberConnectorService
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ GITHUB_OIDC_ALLOWED_WORKFLOW_REFS = {
     f"{GITHUB_OIDC_REPOSITORY}/.github/workflows/tennet-gmail-sync.yml@refs/heads/main",
     f"{GITHUB_OIDC_REPOSITORY}/.github/workflows/tennet-gmail-backfill.yml@refs/heads/main",
     f"{GITHUB_OIDC_REPOSITORY}/.github/workflows/tennet-followup-worker.yml@refs/heads/main",
+    f"{GITHUB_OIDC_REPOSITORY}/.github/workflows/tennet-uber-worker.yml@refs/heads/main",
 }
 
 
@@ -476,6 +478,35 @@ def _run_followup_worker(
     return payload
 
 
+
+
+@router.api_route("/uber-worker", methods=["GET", "POST"])
+def run_uber_worker(
+    authorization: Annotated[str | None, Header()] = None,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    _require_runtime_authorization(authorization)
+    try:
+        result = UberConnectorService().poll_cancellations(db)
+    except UberConnectorError as exc:
+        if exc.status_code in {409, 502}:
+            return {
+                "status": "blocked",
+                "stores_checked": 0,
+                "cancellations_seen": 0,
+                "snapshots_created": 0,
+                "snapshots_updated": 0,
+                "error_message": exc.message,
+            }
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return {
+        "status": "completed",
+        "stores_checked": result.stores_checked,
+        "cancellations_seen": result.cancellations_seen,
+        "snapshots_created": result.snapshots_created,
+        "snapshots_updated": result.snapshots_updated,
+        "errors": list(result.errors),
+    }
 
 
 @router.api_route("/followup-worker", methods=["GET", "POST"])
