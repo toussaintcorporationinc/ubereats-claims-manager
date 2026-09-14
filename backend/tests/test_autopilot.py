@@ -54,6 +54,7 @@ class FakeAutopilotGmailProvider:
         self.sent_draft_ids: list[int] = []
         self.message_refs: list[dict[str, str]] = []
         self.message_payloads: dict[str, InboundEmailPayload] = {}
+        self.remote_draft_ids: set[str] = set()
 
     def get_connection_status(self, db: Session, user: User) -> EmailConnectionStatus:
         if not get_settings().email_provider_enabled:
@@ -143,6 +144,17 @@ class FakeAutopilotGmailProvider:
         enrich_starred: bool = True,
     ) -> InboundEmailPayload:
         return self.message_payloads[message_id]
+
+
+    def get_draft_for_account_payload(
+        self,
+        db: Session,
+        account: EmailAccount,
+        draft_id: str,
+    ) -> dict:
+        if draft_id not in self.remote_draft_ids:
+            raise RuntimeError("remote draft not found")
+        return {"id": draft_id}
 
 
 @pytest.fixture()
@@ -1928,3 +1940,154 @@ def test_followup_self_heal_recovers_missing_gmail_thread_from_exact_order_id(
     assert result.repaired_thread_links == 1
     assert thread is not None
     assert "HEAL-T-001" in (thread.subject or "")
+
+
+def test_followup_self_heal_resets_quota_failure_when_remote_draft_was_never_created(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    restaurant = create_restaurant(client, "Self Heal Draft Creation")
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+    account = add_gmail_account(db_session)
+    order = ClaimOrder(
+        restaurant_id=restaurant["id"],
+        uber_order_number="HEAL-C-001",
+        customer_name="Client Creation",
+        order_date=date(2026, 9, 1),
+        order_amount=Decimal("22.90"),
+        currency="EUR",
+        status="sent",
+        first_email_sent_at=utc_now() - timedelta(days=5),
+    )
+    db_session.add(order)
+    db_session.flush()
+    draft = EmailDraft(
+        order_id=order.id,
+        draft_type="followup_1",
+        subject="Re: commande HEAL-C-001",
+        body="Relance HEAL-C-001",
+        status="created",
+    )
+    db_session.add(draft)
+    db_session.flush()
+    provider_draft = EmailProviderDraft(
+        email_draft_id=draft.id,
+        email_account_id=account.id,
+        provider="gmail",
+        provider_draft_id=None,
+        to_email="restaurantsfrance@uber.com",
+        subject=draft.subject,
+        status="failed",
+        created_by_user_id=owner.id,
+        last_error="Quota exceeded for quota metric 'Total Query Cost'",
+    )
+    db_session.add(provider_draft)
+    db_session.flush()
+    task = FollowUpTask(
+        order_id=order.id,
+        task_type="followup_1",
+        status="draft_created",
+        due_at=utc_now() - timedelta(hours=1),
+        generated_email_draft_id=draft.id,
+        generated_provider_draft_id=provider_draft.id,
+        created_by_user_id=owner.id,
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    result = repair_followup_queue(db_session, owner)
+
+    db_session.refresh(task)
+    assert result.reset_quota_draft_creations == 1
+    assert task.status == "draft_created"
+    assert task.generated_provider_draft_id is None
+
+
+def test_followup_self_heal_confirms_stale_send_requested_from_real_gmail_history(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+) -> None:
+    restaurant = create_restaurant(client, "Self Heal Stale Send")
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+    account = add_gmail_account(db_session)
+    order = ClaimOrder(
+        restaurant_id=restaurant["id"],
+        uber_order_number="HEAL-R-001",
+        customer_name="Client Remote",
+        order_date=date(2026, 9, 1),
+        order_amount=Decimal("31.90"),
+        currency="EUR",
+        status="sent",
+        first_email_sent_at=utc_now() - timedelta(days=5),
+    )
+    db_session.add(order)
+    db_session.flush()
+    draft = EmailDraft(
+        order_id=order.id,
+        draft_type="followup_1",
+        subject="Re: commande HEAL-R-001",
+        body="Relance HEAL-R-001",
+        status="created",
+    )
+    db_session.add(draft)
+    db_session.flush()
+    send_requested_at = utc_now() - timedelta(minutes=25)
+    provider_draft = EmailProviderDraft(
+        email_draft_id=draft.id,
+        email_account_id=account.id,
+        provider="gmail",
+        provider_draft_id="gmail-draft-heal-r-001",
+        provider_thread_id="thread-heal-r-001",
+        to_email="restaurantsfrance@uber.com",
+        subject=draft.subject,
+        status="send_requested",
+        created_by_user_id=owner.id,
+        updated_at=send_requested_at,
+    )
+    db_session.add(provider_draft)
+    db_session.flush()
+    task = FollowUpTask(
+        order_id=order.id,
+        task_type="followup_1",
+        status="provider_draft_created",
+        due_at=utc_now() - timedelta(hours=1),
+        generated_email_draft_id=draft.id,
+        generated_provider_draft_id=provider_draft.id,
+        created_by_user_id=owner.id,
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    fake_gmail_provider.message_refs = [{"id": "sent-heal-r-001", "threadId": "thread-heal-r-001"}]
+    fake_gmail_provider.message_payloads["sent-heal-r-001"] = InboundEmailPayload(
+        provider_message_id="sent-heal-r-001",
+        provider_thread_id="thread-heal-r-001",
+        gmail_history_id="history-heal-r-001",
+        from_email=account.email_address,
+        to_email="restaurantsfrance@uber.com",
+        subject="Re: commande HEAL-R-001",
+        snippet="Relance HEAL-R-001",
+        body_text="Relance HEAL-R-001",
+        received_at=send_requested_at + timedelta(minutes=1),
+        raw_headers={},
+        provider_labels=["SENT"],
+        attachments=[],
+    )
+
+    result = repair_followup_queue(
+        db_session,
+        owner,
+        fake_gmail_provider,
+        stale_send_requested_minutes=15,
+    )
+
+    db_session.refresh(provider_draft)
+    db_session.refresh(task)
+    assert result.confirmed_stale_sends == 1
+    assert result.unresolved_send_requested == 0
+    assert provider_draft.status == "sent"
+    assert provider_draft.provider_message_id == "sent-heal-r-001"
+    assert task.status == "completed"
