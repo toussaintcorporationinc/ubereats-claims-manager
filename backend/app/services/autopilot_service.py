@@ -215,6 +215,37 @@ def gmail_account_send_pacing_active(
     )
 
 
+def candidate_gmail_account_id(db: Session, candidate: "Candidate") -> int | None:
+    if isinstance(candidate.object, FollowUpTask):
+        provider_draft = candidate.object.generated_provider_draft
+        if provider_draft is not None and provider_draft.email_account_id is not None:
+            return provider_draft.email_account_id
+    return db.scalar(
+        select(EmailAccountRestaurantMapping.email_account_id)
+        .join(EmailAccount, EmailAccount.id == EmailAccountRestaurantMapping.email_account_id)
+        .where(
+            EmailAccountRestaurantMapping.restaurant_id == candidate.restaurant_id,
+            EmailAccount.provider == "gmail",
+            EmailAccount.disconnected_at.is_(None),
+        )
+        .order_by(EmailAccount.id.desc())
+        .limit(1)
+    )
+
+
+def finalize_terminal_followup_skip(candidate: "Candidate", reason: str) -> None:
+    if not isinstance(candidate.object, FollowUpTask):
+        return
+    if reason not in {
+        "gmail_thread_order_identity_mismatch",
+        "positive_gmail_thread_history_detected",
+    }:
+        return
+    candidate.object.status = "skipped"
+    candidate.object.skip_reason = reason
+    candidate.object.updated_at = utc_now()
+
+
 def create_emergency_stop(db: Session, user: User) -> AutopilotRun:
     run = AutopilotRun(
         started_by_user_id=user.id,
@@ -320,6 +351,8 @@ def run_autopilot(
     per_restaurant_sent: dict[int, int] = {}
     errors: list[str] = []
     quota_pause_reason: str | None = None
+    gmail_quota_blocked_accounts: set[int] = set()
+    remote_preflight_attempts_by_account: dict[int, int] = {}
 
     for candidate in iter_candidates(
         db,
@@ -332,6 +365,19 @@ def run_autopilot(
             else settings.autopilot_max_candidates_per_run
         ),
     ):
+        candidate_account_id = candidate_gmail_account_id(db, candidate)
+        if not dry_run and candidate_account_id is not None:
+            if candidate_account_id in gmail_quota_blocked_accounts:
+                continue
+            gmail_limit = settings.autopilot_per_gmail_account_daily_limit
+            if gmail_limit > 0:
+                if gmail_account_sent_last_24_hours_count(db, candidate_account_id) >= gmail_limit:
+                    continue
+                if gmail_account_send_pacing_active(db, candidate_account_id, gmail_limit):
+                    continue
+            if remote_preflight_attempts_by_account.get(candidate_account_id, 0) >= 3:
+                continue
+
         action = create_candidate_action(db, run, candidate)
         actions.append(action)
 
@@ -352,10 +398,18 @@ def run_autopilot(
                 current_restaurant_sent=per_restaurant_sent.get(candidate.restaurant_id, 0),
             )
         if skip_reason is None and not dry_run:
+            if candidate_account_id is not None:
+                remote_preflight_attempts_by_account[candidate_account_id] = (
+                    remote_preflight_attempts_by_account.get(candidate_account_id, 0) + 1
+                )
             skip_reason = remote_thread_safety_skip_reason(db, candidate, provider)
 
         if skip_reason is not None:
             mark_skipped(action, skip_reason, dry_run=dry_run)
+            finalize_terminal_followup_skip(candidate, skip_reason)
+            if skip_reason.startswith("gmail_quota_retry_after:") and candidate_account_id is not None:
+                gmail_quota_blocked_accounts.add(candidate_account_id)
+                quota_pause_reason = quota_pause_reason or skip_reason
             continue
         if dry_run:
             action.status = "candidate"
@@ -370,9 +424,9 @@ def run_autopilot(
         except AutopilotError as exc:
             if exc.message in GMAIL_SEND_SAFETY_REASONS:
                 mark_skipped(action, exc.message, dry_run=False)
-                if exc.message == GMAIL_SEND_DAILY_LIMIT_REASON:
-                    quota_pause_reason = exc.message
-                    break
+                if exc.message == GMAIL_SEND_DAILY_LIMIT_REASON and candidate_account_id is not None:
+                    gmail_quota_blocked_accounts.add(candidate_account_id)
+                    quota_pause_reason = quota_pause_reason or exc.message
                 continue
             action.status = "failed"
             action.skipped_reason = exc.message
@@ -384,9 +438,12 @@ def run_autopilot(
                 safety_seconds=settings.gmail_quota_retry_safety_seconds,
             )
             if retry_after is not None:
-                quota_pause_reason = f"gmail_quota_retry_after:{retry_after.isoformat()}"
-                mark_skipped(action, quota_pause_reason, dry_run=False)
-                break
+                account_quota_reason = f"gmail_quota_retry_after:{retry_after.isoformat()}"
+                quota_pause_reason = quota_pause_reason or account_quota_reason
+                mark_skipped(action, account_quota_reason, dry_run=False)
+                if candidate_account_id is not None:
+                    gmail_quota_blocked_accounts.add(candidate_account_id)
+                continue
             action.status = "failed"
             action.skipped_reason = str(exc)
             action.updated_at = utc_now()
@@ -1457,6 +1514,12 @@ def remote_thread_safety_skip_reason(
     except Exception as exc:  # noqa: BLE001 - an unreadable thread must never be sent to blindly.
         if gmail_thread_history_not_found(exc):
             return "gmail_reply_thread_required"
+        retry_after = parse_gmail_retry_after(
+            str(getattr(exc, "message", exc)),
+            safety_seconds=get_settings().gmail_quota_retry_safety_seconds,
+        )
+        if retry_after is not None:
+            return f"gmail_quota_retry_after:{retry_after.isoformat()}"
         return "gmail_thread_history_preflight_failed"
 
     sender_filter = get_settings().gmail_support_sender_filter.strip().casefold()
