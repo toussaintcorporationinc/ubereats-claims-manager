@@ -822,8 +822,55 @@ def followup_candidates(
         if followup_skip_reason(db, task) is not None:
             continue
         eligible_tasks.append(task)
-        if limit is not None and limit > 0 and len(eligible_tasks) >= limit:
-            break
+
+    # Fair-share the queue across Gmail accounts so one restaurant/account
+    # cannot monopolize a worker cycle while another connected mailbox sits idle.
+    if limit is not None and limit > 0 and len(eligible_tasks) > limit:
+        restaurant_ids_for_tasks = {task.order.restaurant_id for task in eligible_tasks}
+        mapping_rows = db.execute(
+            select(
+                EmailAccountRestaurantMapping.restaurant_id,
+                EmailAccountRestaurantMapping.email_account_id,
+            ).where(
+                EmailAccountRestaurantMapping.restaurant_id.in_(restaurant_ids_for_tasks)
+            )
+        ).all()
+        account_by_restaurant = {
+            restaurant_id: email_account_id
+            for restaurant_id, email_account_id in mapping_rows
+        }
+        buckets: dict[tuple[str, int], list[FollowUpTask]] = {}
+        bucket_order: list[tuple[str, int]] = []
+        for task in eligible_tasks:
+            restaurant_key = task.order.restaurant_id
+            email_account_id = account_by_restaurant.get(restaurant_key)
+            bucket_key = (
+                ("account", email_account_id)
+                if email_account_id is not None
+                else ("restaurant", restaurant_key)
+            )
+            if bucket_key not in buckets:
+                buckets[bucket_key] = []
+                bucket_order.append(bucket_key)
+            buckets[bucket_key].append(task)
+
+        selected_tasks: list[FollowUpTask] = []
+        while len(selected_tasks) < limit:
+            added = False
+            for bucket_key in bucket_order:
+                bucket = buckets[bucket_key]
+                if not bucket:
+                    continue
+                selected_tasks.append(bucket.pop(0))
+                added = True
+                if len(selected_tasks) >= limit:
+                    break
+            if not added:
+                break
+        eligible_tasks = selected_tasks
+    elif limit is not None and limit > 0:
+        eligible_tasks = eligible_tasks[:limit]
+
     return [
         Candidate(
             case_type="followup_task",
