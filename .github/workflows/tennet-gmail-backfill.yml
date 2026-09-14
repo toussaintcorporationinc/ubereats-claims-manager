@@ -1,14 +1,7 @@
 name: TENNET Gmail history backfill
 
 on:
-  schedule:
-    - cron: "*/10 * * * *"
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'backend/app/routes/runtime.py'
-      - '.github/workflows/tennet-gmail-backfill.yml'
 
 permissions:
   contents: read
