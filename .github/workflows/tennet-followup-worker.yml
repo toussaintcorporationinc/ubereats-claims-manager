@@ -3,12 +3,17 @@ name: TENNET followup worker
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    # Two six-minute schedules staggered by three minutes give TENNET
+    # an effective ~3 minute follow-up cycle while respecting Gmail pacing.
+    - cron: '*/6 * * * *'
+    - cron: '3-59/6 * * * *'
   workflow_dispatch:
   push:
     branches: [main]
     paths:
       - 'backend/app/routes/runtime.py'
+      - 'backend/app/services/autopilot_service.py'
+      - 'backend/app/services/email_draft_service.py'
       - '.github/workflows/tennet-followup-worker.yml'
 
 permissions:
