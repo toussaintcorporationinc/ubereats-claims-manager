@@ -766,6 +766,10 @@ def gmail_inbound_status(
     provider: EmailProvider = Depends(get_gmail_provider),
 ) -> GmailInboundStatusResponse:
     settings = get_settings()
+    runtime_gmail_enabled = get_runtime_bool_setting(db, "gmail_automation_enabled", False)
+    email_enabled = settings.email_provider_enabled or runtime_gmail_enabled
+    inbound_enabled = settings.gmail_inbound_sync_enabled or runtime_gmail_enabled
+    auto_sync_enabled = settings.gmail_inbound_auto_sync_enabled or runtime_gmail_enabled
     connection_status = provider.get_connection_status(db, current_user)
     connected_accounts = get_connected_gmail_accounts(db, current_user)
     account_ids = [account.id for account in connected_accounts]
@@ -787,11 +791,11 @@ def gmail_inbound_status(
     continuous_enabled = settings.gmail_inbound_auto_sync_continuous_enabled
     next_sync_at = (
         base_time + timedelta(seconds=interval_seconds)
-        if base_time and settings.gmail_inbound_auto_sync_enabled and not continuous_enabled
+        if base_time and auto_sync_enabled and not continuous_enabled
         else None
     )
     now = utc_now()
-    seconds_until_next_sync = 0 if settings.gmail_inbound_auto_sync_enabled and continuous_enabled else None
+    seconds_until_next_sync = 0 if auto_sync_enabled and continuous_enabled else None
     if next_sync_at is not None:
         seconds_until_next_sync = max(0, int((next_sync_at - now).total_seconds()))
 
@@ -824,7 +828,7 @@ def gmail_inbound_status(
         else 0
     )
     overdue = (
-        settings.gmail_inbound_auto_sync_enabled
+        auto_sync_enabled
         and (
             (
                 next_sync_at is not None
@@ -837,13 +841,13 @@ def gmail_inbound_status(
             )
         )
     )
-    if not settings.email_provider_enabled or not settings.gmail_inbound_sync_enabled:
+    if not email_enabled or not inbound_enabled:
         worker_state = "disabled"
         worker_message = "Lecture Gmail desactivee sur cet environnement."
     elif not connection_status.connected or not connected_accounts:
         worker_state = "attention"
         worker_message = "Aucun compte Gmail connecte."
-    elif not settings.gmail_inbound_auto_sync_enabled:
+    elif not auto_sync_enabled:
         worker_state = "attention"
         worker_message = "Sync Gmail automatique desactivee."
     elif quota_blocked:
@@ -860,13 +864,13 @@ def gmail_inbound_status(
         worker_message = "TENNET surveille Gmail automatiquement."
 
     return GmailInboundStatusResponse(
-        enabled=settings.email_provider_enabled and settings.gmail_inbound_sync_enabled,
+        enabled=email_enabled and inbound_enabled,
         connected=connection_status.connected,
-        auto_sync_enabled=settings.gmail_inbound_auto_sync_enabled,
+        auto_sync_enabled=auto_sync_enabled,
         auto_sync_continuous_enabled=continuous_enabled,
         auto_sync_interval_seconds=(
             None
-            if settings.gmail_inbound_auto_sync_enabled and continuous_enabled
+            if auto_sync_enabled and continuous_enabled
             else settings.gmail_inbound_auto_sync_interval_seconds
         ),
         auto_sync_run_autopilot=settings.gmail_inbound_auto_sync_run_autopilot,
@@ -1589,9 +1593,10 @@ def sync_gmail_inbound(
     provider: EmailProvider = Depends(get_gmail_provider),
 ) -> GmailInboundSyncResponse:
     settings = get_settings()
-    if not settings.email_provider_enabled:
+    runtime_gmail_enabled = get_runtime_bool_setting(db, "gmail_automation_enabled", False)
+    if not settings.email_provider_enabled and not runtime_gmail_enabled:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Email provider is disabled")
-    if not settings.gmail_inbound_sync_enabled:
+    if not settings.gmail_inbound_sync_enabled and not runtime_gmail_enabled:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Gmail inbound sync is disabled")
 
     connection_status = provider.get_connection_status(db, current_user)
