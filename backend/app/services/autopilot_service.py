@@ -1468,10 +1468,10 @@ def appeal_candidates(
 
 
 def appeal_action_type(workflow: AppealWorkflow) -> str:
-    if workflow.next_action_type == "request_more_evidence":
-        return "request_more_evidence"
     if workflow.next_action_type == "manual_review":
         return "manual_review"
+    # Evidence replies are still appeals. appeal_skip_reason() decides whether
+    # the required evidence is actually present before anything can be sent.
     return "send_appeal"
 
 
@@ -1626,15 +1626,35 @@ def appeal_skip_reason(db: Session, workflow: AppealWorkflow) -> str | None:
     if cooldown_active(workflow.last_appeal_sent_at, settings.autopilot_cooldown_hours):
         return "cooldown_active"
     analysis = latest_analysis(db, workflow)
-    if analysis is not None and analysis.recommended_next_action in {"provide_missing_evidence", "manual_review"}:
-        starred_override = (
-            analysis.recommended_next_action == "manual_review"
-            and workflow.claim_order is not None
+    if analysis is not None and analysis.recommended_next_action == "provide_missing_evidence":
+        order = workflow.claim_order
+        if order is None and workflow.customer_refund_dispute is not None:
+            order = workflow.customer_refund_dispute.claim_order
+        if order is None and workflow.reconciliation_result is not None:
+            order = workflow.reconciliation_result.claim_order
+        if order is None:
+            return "missing_claim_order"
+        required = {
+            str(item).strip()
+            for item in (analysis.required_evidence_types_json or [])
+            if str(item).strip()
+        }
+        available = {
+            str(evidence.evidence_type).strip()
+            for evidence in order.evidence_files
+            if evidence.deleted_at is None
+        }
+        missing = sorted(required - available)
+        if missing:
+            return "missing_required_evidence:" + ",".join(missing)
+    if analysis is not None and analysis.recommended_next_action == "manual_review":
+        verified_override = (
+            workflow.claim_order is not None
             and order_identity_skip_reason(workflow.claim_order) is None
             and latest_verified_appeal_inbound_message(db, workflow.claim_order.id) is not None
         )
-        if not starred_override:
-            return "manual_review_or_evidence_needed"
+        if not verified_override:
+            return "manual_review_required"
     latest_attempt = latest_attempt_with_draft(db, workflow)
     if (
         latest_attempt is not None
