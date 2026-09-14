@@ -64,6 +64,7 @@ from app.services.email_provider import (
 )
 from app.services.followup_policy_service import complete_task_for_sent_provider_draft
 from app.services.gmail_quota import parse_gmail_retry_after
+from app.services.runtime_settings_service import get_runtime_bool_setting
 from app.services.gmail_send_safety_service import (
     GMAIL_SEND_DAILY_LIMIT_REASON,
     GMAIL_SEND_SAFETY_REASONS,
@@ -125,12 +126,17 @@ def today_utc_start() -> datetime:
     return datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
 
 
-def settings_snapshot() -> dict[str, object]:
+def settings_snapshot(db: Session | None = None) -> dict[str, object]:
     settings = get_settings()
+    runtime_followups_enabled = (
+        get_runtime_bool_setting(db, "followup_automation_enabled", False)
+        if db is not None
+        else False
+    )
     return {
-        "enabled": settings.autopilot_enabled,
+        "enabled": settings.autopilot_enabled or runtime_followups_enabled,
         "initial_claims_enabled": settings.autopilot_initial_claims_enabled,
-        "followups_enabled": settings.autopilot_followups_enabled,
+        "followups_enabled": settings.autopilot_followups_enabled or runtime_followups_enabled,
         "appeals_enabled": settings.autopilot_appeals_enabled,
         "daily_send_limit": settings.autopilot_daily_send_limit,
         "per_gmail_account_daily_limit": settings.autopilot_per_gmail_account_daily_limit,
@@ -281,8 +287,12 @@ def run_autopilot(
         raise AutopilotError("Restaurant access denied", 403)
 
     settings = get_settings()
+    runtime_followups_enabled = (
+        mode == "followups"
+        and get_runtime_bool_setting(db, "followup_automation_enabled", False)
+    )
     if not dry_run:
-        if not settings.autopilot_enabled and not (
+        if not settings.autopilot_enabled and not runtime_followups_enabled and not (
             trusted_runtime_followups and mode == "followups"
         ):
             raise AutopilotError("autopilot_disabled", 409)
@@ -329,7 +339,10 @@ def run_autopilot(
             db,
             candidate,
             connection,
-            allow_followups_disabled=trusted_runtime_followups and mode == "followups",
+            allow_followups_disabled=(
+                (trusted_runtime_followups and mode == "followups")
+                or runtime_followups_enabled
+            ),
         )
         if skip_reason is None and not dry_run:
             skip_reason = limit_skip_reason(
@@ -424,9 +437,10 @@ def resume_next_prepared_provider_draft(
     """Resume one safe Gmail draft for an account after the pacing window opens."""
 
     settings = get_settings()
+    runtime_followups_enabled = get_runtime_bool_setting(db, "followup_automation_enabled", False)
     if user.role == "staff" or account.user_id != user.id or account.disconnected_at is not None:
         return PreparedDraftResumeResult(status="skipped", skipped_count=1, reason="gmail_account_not_connected")
-    if not settings.autopilot_enabled or autopilot_is_emergency_stopped(db):
+    if (not settings.autopilot_enabled and not runtime_followups_enabled) or autopilot_is_emergency_stopped(db):
         return PreparedDraftResumeResult(status="skipped", skipped_count=1, reason="autopilot_disabled")
 
     pending_drafts = list(
