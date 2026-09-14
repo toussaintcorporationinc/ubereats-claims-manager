@@ -38,6 +38,15 @@ from app.services.file_storage_service import ensure_evidence_storage
 from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncScheduler
 from app.services.local_storage import ensure_local_storage
 from app.services.order_import_service import ensure_import_storage
+from app.services.uber_connector_service import UberConnectorService
+
+
+# Backward-compatible bridge for the first registered Uber webhook route.
+# The route predates handle_webhook_event() and still calls process_webhook().
+# Keep both code paths identical until the duplicate route definitions are
+# consolidated in a dedicated cleanup.
+if not hasattr(UberConnectorService, "process_webhook"):
+    UberConnectorService.process_webhook = UberConnectorService.handle_webhook_event  # type: ignore[attr-defined]
 
 
 @asynccontextmanager
