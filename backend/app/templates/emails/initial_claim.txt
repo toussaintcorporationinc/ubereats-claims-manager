@@ -10,7 +10,7 @@ Cette annulation genere une perte pour le restaurant et du gaspillage alimentair
 Pieces jointes :
 {evidence_list}
 
-Merci de verifier ce dossier et de regulariser le paiement si les elements transmis confirment la preparation de la commande.
+Merci de verifier les elements transmis et de regulariser le paiement si la preparation de la commande est confirmee. Si un element precis manque pour statuer, merci de nous indiquer exactement la piece ou l'information attendue afin que le dossier puisse etre complete sans nouvelle ouverture.
 
 Cordialement,
 {signature}
