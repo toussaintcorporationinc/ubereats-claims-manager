@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     gmail_watched_threads_read_batch_per_cycle: int = 20
     gmail_watched_threads_process_new_messages: bool = True
     gmail_support_sender_filter: str = "uber.com"
+    uber_oauth_redirect_uri: str | None = None
+    uber_webhook_url: str | None = None
     followup_1_delay_days: int = 2
     followup_2_delay_days: int = 5
     escalation_delay_days: int = 10
