@@ -721,6 +721,22 @@ class GmailOAuthStartResponse(BaseModel):
     authorization_url: str
 
 
+class GmailOAuthConfigRead(BaseModel):
+    configured: bool
+    client_id: str | None = None
+    client_secret_configured: bool = False
+    redirect_uri: str
+    client_id_source: str
+    client_secret_source: str
+    redirect_uri_source: str
+
+
+class GmailOAuthConfigUpdate(BaseModel):
+    client_id: str
+    client_secret: str | None = None
+    redirect_uri: str | None = None
+
+
 class GmailRestaurantMappingRead(BaseModel):
     id: int | None
     restaurant_id: int
