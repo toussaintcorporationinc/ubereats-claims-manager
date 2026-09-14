@@ -17,7 +17,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.models import AuditLog, User
 from app.services.audit import add_audit_log
-from app.services.autopilot_service import AutopilotError, run_autopilot
+from app.services.autopilot_service import AutopilotError, repair_followup_queue, run_autopilot
 from app.services.email_provider import EmailProviderError
 from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncService
@@ -337,6 +337,15 @@ def _run_followup_worker(
             detail="No active TENNET owner is configured",
         )
 
+    provider = GmailEmailProvider(trusted_runtime=True)
+    repair = repair_followup_queue(
+        db,
+        owner,
+        provider,
+        max_items=500,
+        max_remote_thread_repairs=4,
+    )
+
     try:
         result = run_autopilot(
             db,
@@ -344,7 +353,7 @@ def _run_followup_worker(
             mode="followups",
             restaurant_id=None,
             dry_run=False,
-            provider=GmailEmailProvider(trusted_runtime=True),
+            provider=provider,
             max_candidates=4,
             trusted_runtime_followups=True,
         )
@@ -375,6 +384,7 @@ def _run_followup_worker(
         "skipped_count": result.run.skipped_count,
         "failed_count": result.run.failed_count,
         "error_message": result.run.error_message,
+        "self_heal": asdict(repair),
     }
     db.commit()
     return payload
