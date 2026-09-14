@@ -344,6 +344,21 @@ def _run_followup_worker(
         )
     except AutopilotError as exc:
         db.rollback()
+        if exc.message in {
+            "gmail_account_not_connected",
+            "email_provider_disabled",
+            "gmail_oauth_not_configured",
+            "gmail_oauth_client_secret_not_configured",
+        }:
+            return {
+                "status": "blocked",
+                "run_id": None,
+                "total_candidates": 0,
+                "sent_count": 0,
+                "skipped_count": 0,
+                "failed_count": 0,
+                "error_message": exc.message,
+            }
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     payload = {
