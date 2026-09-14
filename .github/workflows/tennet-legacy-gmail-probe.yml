@@ -1,0 +1,36 @@
+name: TENNET legacy Gmail probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/tennet-legacy-gmail-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe legacy TENNET Gmail runtime
+        env:
+          TENNET_CRON_SECRET: ${{ secrets.TENNET_CRON_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${TENNET_CRON_SECRET:-}" ]]; then
+            echo "TENNET_CRON_SECRET_PRESENT=false"
+            exit 2
+          fi
+          echo "TENNET_CRON_SECRET_PRESENT=true"
+          status="$(curl --silent --show-error --request POST             --header "Authorization: Bearer ${TENNET_CRON_SECRET}"             --header "Accept: application/json"             --output response.json             --write-out "%{http_code}"             "https://thetennet.com/api/v1/runtime/gmail-sync")"
+          cat response.json
+          echo
+          echo "HTTP_STATUS=$status"
+          case "$status" in
+            2*) ;;
+            *) exit 1 ;;
+          esac
