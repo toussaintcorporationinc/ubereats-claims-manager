@@ -129,11 +129,19 @@ class GmailEmailProvider:
         oauth_config = get_gmail_oauth_runtime_config(db) if db is not None else None
         client_id = oauth_config.client_id if oauth_config is not None else settings.gmail_oauth_client_id
         redirect_uri = oauth_config.redirect_uri if oauth_config is not None else settings.gmail_oauth_redirect_uri
+        allow_disabled_provider = bool(
+            oauth_config is not None
+            and (
+                oauth_config.client_id_source == "database"
+                or oauth_config.client_secret_source == "database"
+                or oauth_config.redirect_uri_source == "database"
+            )
+        )
         self.ensure_enabled_and_configured(
             require_secret=False,
             client_id=client_id,
             redirect_uri=redirect_uri,
-            allow_disabled_provider=True,
+            allow_disabled_provider=allow_disabled_provider,
         )
         requested_scopes = gmail_scopes_with_modify(settings.gmail_scopes)
         state = create_access_token(
@@ -166,7 +174,11 @@ class GmailEmailProvider:
             client_id=oauth_config.client_id,
             oauth_secret=oauth_config.client_secret,
             redirect_uri=oauth_config.redirect_uri,
-            allow_disabled_provider=True,
+            allow_disabled_provider=(
+                oauth_config.client_id_source == "database"
+                or oauth_config.client_secret_source == "database"
+                or oauth_config.redirect_uri_source == "database"
+            ),
         )
         token_payload = self.exchange_code_for_tokens(
             code,
