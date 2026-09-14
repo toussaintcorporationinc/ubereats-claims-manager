@@ -1356,7 +1356,7 @@ def test_autopilot_replies_to_new_starred_response_even_when_cooldown_active(
     assert workflow.appeal_attempt_count == 2
 
 
-def test_autopilot_appeal_requires_starred_gmail_thread(
+def test_autopilot_appeal_requires_verified_gmail_thread(
     client: TestClient,
     db_session: Session,
     fake_gmail_provider: FakeAutopilotGmailProvider,
@@ -1386,7 +1386,64 @@ def test_autopilot_appeal_requires_starred_gmail_thread(
     assert response.status_code == 201
     payload = response.json()
     assert payload["run"]["sent_count"] == 0
-    assert payload["actions"][0]["skipped_reason"] == "starred_gmail_thread_required"
+    assert payload["actions"][0]["skipped_reason"] == "gmail_reply_thread_required"
+
+
+def test_autopilot_sends_appeal_from_verified_unstarred_uber_reply(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client, "Unstarred Appeal")
+    ready = create_ready_order(client, restaurant["id"], "AUTO-UNSTARRED-APPEAL")
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    assert order is not None
+    order.status = "refused"
+    workflow = AppealWorkflow(
+        case_type="claim_order",
+        case_id=order.id,
+        restaurant_id=order.restaurant_id,
+        claim_order_id=order.id,
+        status="appeal_needed",
+        refusal_count=1,
+        next_action_type="create_appeal_draft",
+        next_action_at=utc_now() - timedelta(hours=1),
+    )
+    db_session.add(workflow)
+    db_session.commit()
+    account = add_gmail_account(db_session)
+    db_session.add(
+        InboundEmailMessage(
+            email_account_id=account.id,
+            order_id=order.id,
+            provider="gmail",
+            provider_message_id="uber-refusal-unstarred",
+            provider_thread_id="thread-unstarred-appeal",
+            from_email="restaurantsfrance@uber.com",
+            to_email=account.email_address,
+            subject="Re: commande AUTO-UNSTARRED-APPEAL",
+            body_text="Votre demande est refusee pour la commande AUTO-UNSTARRED-APPEAL.",
+            provider_labels_json=["INBOX"],
+            match_status="linked",
+            match_reason="thread_id_match",
+            review_status="reviewed",
+            received_at=utc_now() - timedelta(minutes=5),
+        )
+    )
+    db_session.commit()
+
+    response = client.post(
+        "/v1/autopilot/run",
+        json={"mode": "appeals", "restaurant_id": restaurant["id"], "dry_run": False},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["run"]["sent_count"] == 1
+    assert payload["actions"][0]["skipped_reason"] is None
+    db_session.refresh(workflow)
+    assert workflow.appeal_attempt_count == 1
 
 
 def test_autopilot_blocks_appeal_linked_to_another_order_thread(
