@@ -1921,6 +1921,10 @@ export type UberStatus = {
   status: UberIntegrationStatus;
   official_api_enabled: boolean;
   approval_required: boolean;
+  credentials_configured: boolean;
+  oauth_ready: boolean;
+  oauth_redirect_uri: string | null;
+  webhook_url: string | null;
   scopes: string | null;
   store_mappings_count: number;
 };
@@ -3084,6 +3088,10 @@ export const api = {
     } = {},
   ) => request<AutopilotActionsResponse>(`/v1/autopilot/actions${buildQuery(filters)}`),
   getUberStatus: () => request<UberStatus>("/v1/uber/status"),
+  configureUberCredentials: (payload: { client_id: string; client_secret: string }) =>
+    postJson<UberStatus, { client_id: string; client_secret: string }>("/v1/uber/credentials", payload),
+  startUberOAuth: () => request<{ authorization_url: string }>("/v1/uber/oauth/start"),
+  disconnectUber: () => request<void>("/v1/uber/disconnect", { method: "POST" }),
   getUberStoreMappings: () => request<UberStoreMapping[]>("/v1/uber/store-mappings"),
   createUberStoreMapping: (payload: UberStoreMappingCreatePayload) =>
     postJson<UberStoreMapping, UberStoreMappingCreatePayload>("/v1/uber/store-mappings", payload),
