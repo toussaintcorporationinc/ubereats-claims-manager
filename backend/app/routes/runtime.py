@@ -138,6 +138,12 @@ def _run_gmail_sync(
                 "gmail_inbound_sync_enabled": True,
                 "gmail_inbound_auto_sync_enabled": True,
                 "gmail_inbound_auto_sync_run_autopilot": True,
+                # Reserve Gmail per-user query quota for verified follow-up sends.
+                # Reading stays continuous, but each pass is deliberately bounded.
+                "gmail_watched_threads_batch_per_cycle": 20,
+                "gmail_watched_threads_read_batch_per_cycle": 20,
+                "gmail_starred_page_size": 100,
+                "gmail_inbound_auto_sync_run_workspace_machine": False,
             }
         )
     result = GmailInboundAutoSyncService(
