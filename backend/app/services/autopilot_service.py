@@ -288,12 +288,12 @@ def run_autopilot(
 
     settings = get_settings()
     runtime_followups_enabled = (
-        mode == "followups"
+        mode in {"followups", "all"}
         and get_runtime_bool_setting(db, "followup_automation_enabled", False)
     )
     if not dry_run:
         if not settings.autopilot_enabled and not runtime_followups_enabled and not (
-            trusted_runtime_followups and mode == "followups"
+            trusted_runtime_followups and mode in {"followups", "all"}
         ):
             raise AutopilotError("autopilot_disabled", 409)
         if autopilot_is_emergency_stopped(db):
@@ -340,7 +340,7 @@ def run_autopilot(
             candidate,
             connection,
             allow_followups_disabled=(
-                (trusted_runtime_followups and mode == "followups")
+                (trusted_runtime_followups and mode in {"followups", "all"})
                 or runtime_followups_enabled
             ),
         )
