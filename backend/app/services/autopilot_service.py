@@ -767,6 +767,7 @@ def run_autopilot(
     provider: EmailProvider,
     max_candidates: int | None = None,
     trusted_runtime_followups: bool = False,
+    trusted_runtime_appeals: bool = False,
 ) -> AutopilotExecutionResult:
     if user.role == "staff":
         raise AutopilotError("Staff cannot run AutoPilot", 403)
@@ -781,8 +782,11 @@ def run_autopilot(
         and get_runtime_bool_setting(db, "followup_automation_enabled", False)
     )
     if not dry_run:
-        if not settings.autopilot_enabled and not runtime_followups_enabled and not (
-            trusted_runtime_followups and mode in {"followups", "all"}
+        if (
+            not settings.autopilot_enabled
+            and not runtime_followups_enabled
+            and not (trusted_runtime_followups and mode in {"followups", "all"})
+            and not (trusted_runtime_appeals and mode in {"appeals", "all"})
         ):
             raise AutopilotError("autopilot_disabled", 409)
         if autopilot_is_emergency_stopped(db):
@@ -850,6 +854,9 @@ def run_autopilot(
             allow_followups_disabled=(
                 (trusted_runtime_followups and mode in {"followups", "all"})
                 or runtime_followups_enabled
+            ),
+            allow_appeals_disabled=(
+                trusted_runtime_appeals and mode in {"appeals", "all"}
             ),
         )
         if skip_reason is None and not dry_run:
@@ -1110,12 +1117,19 @@ def prepared_reply_thread_skip_reason(
     order = candidate_order(candidate)
     if order is None:
         return "missing_claim_order"
-    starred_message = latest_starred_linked_inbound_message(db, order.id)
-    if starred_message is None or not starred_message.provider_thread_id:
-        return "starred_gmail_thread_required"
+    if candidate.action_type == "send_appeal":
+        reply_message = latest_verified_appeal_inbound_message(db, order.id)
+        if reply_message is None or not reply_message.provider_thread_id:
+            return "gmail_reply_thread_required"
+        expected_thread_id = reply_message.provider_thread_id
+    else:
+        followup_thread = latest_verified_followup_email_thread(db, order)
+        if followup_thread is None or not followup_thread.thread_id:
+            return "gmail_reply_thread_required"
+        expected_thread_id = followup_thread.thread_id
     if not provider_draft.provider_thread_id:
         return "gmail_reply_thread_required"
-    if provider_draft.provider_thread_id != starred_message.provider_thread_id:
+    if provider_draft.provider_thread_id != expected_thread_id:
         return "gmail_reply_thread_changed"
     return None
 
@@ -1482,6 +1496,7 @@ def candidate_skip_reason(
     connection: EmailConnectionStatus,
     *,
     allow_followups_disabled: bool = False,
+    allow_appeals_disabled: bool = False,
 ) -> str | None:
     settings = get_settings()
     if settings.autopilot_require_gmail_connected:
@@ -1503,7 +1518,7 @@ def candidate_skip_reason(
             return "followups_disabled"
         return followup_skip_reason(db, candidate.object)  # type: ignore[arg-type]
     if candidate.action_type == "send_appeal":
-        if not settings.autopilot_appeals_enabled:
+        if not settings.autopilot_appeals_enabled and not allow_appeals_disabled:
             return "appeals_disabled"
         return appeal_skip_reason(db, candidate.object)  # type: ignore[arg-type]
     if candidate.action_type == "request_more_evidence":
@@ -1586,14 +1601,14 @@ def appeal_skip_reason(db: Session, workflow: AppealWorkflow) -> str | None:
     if workflow.claim_order is not None and workflow.claim_order.status in {"accepted", "payment_confirmed"}:
         return "claim_order_resolved"
     if workflow.claim_order is not None:
-        starred_message = latest_starred_linked_inbound_message(db, workflow.claim_order.id)
-        if starred_message is not None:
+        reply_message = latest_verified_appeal_inbound_message(db, workflow.claim_order.id)
+        if reply_message is not None:
             thread_identity_reason = local_thread_identity_skip_reason(db, workflow.claim_order)
             if thread_identity_reason is not None:
                 return thread_identity_reason
-            starred_reason = starred_thread_reply_skip_reason(db, workflow)
-            if starred_reason is not None:
-                return starred_reason
+            reply_reason = starred_thread_reply_skip_reason(db, workflow)
+            if reply_reason is not None:
+                return reply_reason
             return None
         identity_reason = order_identity_skip_reason(workflow.claim_order)
         if identity_reason is not None:
@@ -1616,7 +1631,7 @@ def appeal_skip_reason(db: Session, workflow: AppealWorkflow) -> str | None:
             analysis.recommended_next_action == "manual_review"
             and workflow.claim_order is not None
             and order_identity_skip_reason(workflow.claim_order) is None
-            and latest_starred_linked_inbound_message(db, workflow.claim_order.id) is not None
+            and latest_verified_appeal_inbound_message(db, workflow.claim_order.id) is not None
         )
         if not starred_override:
             return "manual_review_or_evidence_needed"
@@ -1628,8 +1643,8 @@ def appeal_skip_reason(db: Session, workflow: AppealWorkflow) -> str | None:
         and not latest_attempt.new_evidence_summary
     ):
         return "same_template_without_new_argument"
-    if workflow.claim_order is not None and latest_starred_linked_inbound_message(db, workflow.claim_order.id) is None:
-        return "starred_gmail_thread_required"
+    if workflow.claim_order is not None and latest_verified_appeal_inbound_message(db, workflow.claim_order.id) is None:
+        return "gmail_reply_thread_required"
     return None
 
 
@@ -1652,10 +1667,10 @@ def starred_thread_reply_skip_reason(db: Session, workflow: AppealWorkflow) -> s
         return "max_appeal_attempts_reached"
     if not settings.autopilot_refusal_retry_enabled:
         return "refusal_retry_disabled"
-    starred_message = latest_starred_linked_inbound_message(db, order.id)
+    reply_message = latest_verified_appeal_inbound_message(db, order.id)
     if cooldown_active(workflow.last_appeal_sent_at, settings.autopilot_cooldown_hours) and not (
-        starred_message is not None
-        and message_is_newer_than(starred_message.received_at, workflow.last_appeal_sent_at)
+        reply_message is not None
+        and message_is_newer_than(reply_message.received_at, workflow.last_appeal_sent_at)
     ):
         return "cooldown_active"
     return None
@@ -1761,6 +1776,37 @@ def restaurant_signature_skip_reason(restaurant: Restaurant | None) -> str | Non
     for key, value in public_fields.items():
         if not str(value or "").strip():
             return f"missing_{key}"
+    return None
+
+
+def latest_verified_appeal_inbound_message(db: Session, order_id: int) -> InboundEmailMessage | None:
+    """Return the newest linked Uber reply that is safe to answer automatically."""
+    order = db.get(ClaimOrder, order_id)
+    if order is None:
+        return None
+    sender_filter = get_settings().gmail_support_sender_filter.strip().casefold()
+    messages = db.scalars(
+        select(InboundEmailMessage)
+        .where(
+            InboundEmailMessage.order_id == order_id,
+            InboundEmailMessage.provider == "gmail",
+            InboundEmailMessage.provider_thread_id.is_not(None),
+        )
+        .order_by(InboundEmailMessage.received_at.desc().nullslast(), InboundEmailMessage.id.desc())
+        .limit(100)
+    ).all()
+    for message in messages:
+        from_email = str(message.from_email or "").strip().casefold()
+        if sender_filter and sender_filter not in from_email:
+            continue
+        response_identifier = current_response_order_number(message)
+        if response_identifier and not order_identifiers_equivalent(
+            response_identifier,
+            order.uber_order_number,
+            order.internal_reference,
+        ):
+            continue
+        return message
     return None
 
 
@@ -1892,10 +1938,10 @@ def positive_payment_signal_skip_reason(db: Session, order_id: int) -> str | Non
 
 
 def local_thread_identity_skip_reason(db: Session, order: ClaimOrder) -> str | None:
-    starred_message = latest_starred_linked_inbound_message(db, order.id)
-    if starred_message is None or not starred_message.provider_thread_id:
+    reply_message = latest_verified_appeal_inbound_message(db, order.id)
+    if reply_message is None or not reply_message.provider_thread_id:
         return None
-    account = db.get(EmailAccount, starred_message.email_account_id)
+    account = db.get(EmailAccount, reply_message.email_account_id)
     if account is None:
         return "gmail_thread_identity_preflight_failed"
     thread_messages = db.scalars(
@@ -1903,7 +1949,7 @@ def local_thread_identity_skip_reason(db: Session, order: ClaimOrder) -> str | N
         .where(
             InboundEmailMessage.email_account_id == account.id,
             InboundEmailMessage.provider == "gmail",
-            InboundEmailMessage.provider_thread_id == starred_message.provider_thread_id,
+            InboundEmailMessage.provider_thread_id == reply_message.provider_thread_id,
         )
         .order_by(
             InboundEmailMessage.received_at.asc().nulls_last(),
@@ -1957,11 +2003,11 @@ def remote_thread_safety_skip_reason(
             .limit(1)
         )
     else:
-        starred_message = latest_starred_linked_inbound_message(db, order.id)
-        if starred_message is None or not starred_message.provider_thread_id:
-            return None
-        thread_id = starred_message.provider_thread_id
-        account = db.get(EmailAccount, starred_message.email_account_id)
+        reply_message = latest_verified_appeal_inbound_message(db, order.id)
+        if reply_message is None or not reply_message.provider_thread_id:
+            return "gmail_reply_thread_required"
+        thread_id = reply_message.provider_thread_id
+        account = db.get(EmailAccount, reply_message.email_account_id)
 
     if account is None or not thread_id:
         return "gmail_thread_history_preflight_failed"
@@ -2276,17 +2322,17 @@ def send_appeal(
     action: AutopilotAction,
     provider: EmailProvider,
 ) -> None:
-    starred_message = None
+    reply_message = None
     if workflow.claim_order_id is not None:
-        starred_message = latest_starred_linked_inbound_message(db, workflow.claim_order_id)
+        reply_message = latest_verified_appeal_inbound_message(db, workflow.claim_order_id)
     attempt = latest_attempt_with_draft(db, workflow)
-    if starred_message is not None and attempt_is_already_sent(attempt):
-        attempt = create_starred_thread_reply_attempt(db, workflow=workflow, starred_message=starred_message, user=user)
+    if reply_message is not None and attempt_is_already_sent(attempt):
+        attempt = create_starred_thread_reply_attempt(db, workflow=workflow, starred_message=reply_message, user=user)
         action.status = "draft_created"
         action.email_draft_id = attempt.email_draft_id
         db.flush()
-    elif starred_message is not None and (attempt is None or attempt.email_draft is None):
-        attempt = create_starred_thread_reply_attempt(db, workflow=workflow, starred_message=starred_message, user=user)
+    elif reply_message is not None and (attempt is None or attempt.email_draft is None):
+        attempt = create_starred_thread_reply_attempt(db, workflow=workflow, starred_message=reply_message, user=user)
         action.status = "draft_created"
         action.email_draft_id = attempt.email_draft_id
         db.flush()
