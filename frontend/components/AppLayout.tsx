@@ -16,6 +16,7 @@ const navigation: NavItem[] = [
   { href: "/remboursements", label: "Remboursement", group: "main", ownerOrManagerOnly: true },
   { href: "/annulations", label: "Annulation", group: "main", ownerOrManagerOnly: true },
   { href: "/relance-gmail", label: "Relance Gmail", group: "main", ownerOrManagerOnly: true },
+  { href: "/settings/email", label: "Parametres Gmail", group: "main", ownerOrManagerOnly: true },
   { href: "/finance", label: "Finance", group: "main", ownerOrManagerOnly: true },
   { href: "/smart-import", label: "Depot avance", group: "work", ownerOrManagerOnly: true },
   { href: "/evidence-tasks", label: "Preuves", group: "main" },
@@ -32,7 +33,6 @@ const navigation: NavItem[] = [
   { href: "/inbox", label: "Reponses Uber", group: "follow", ownerOrManagerOnly: true },
   { href: "/autopilot", label: "AutoPilot", group: "admin", ownerOrManagerOnly: true },
   { href: "/reports", label: "Rapports", group: "admin", ownerOrManagerOnly: true },
-  { href: "/settings/email", label: "Email", group: "admin", ownerOrManagerOnly: true },
   { href: "/users", label: "Utilisateurs", group: "admin", ownerOnly: true },
 ];
 
