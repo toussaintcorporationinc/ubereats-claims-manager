@@ -18,12 +18,12 @@ import {
 
 type RunMode = Exclude<AutopilotMode, "emergency_stop">;
 
-const modes: RunMode[] = ["all", "initial_claims", "followups", "appeals"];
+const modes: RunMode[] = ["followups", "all", "initial_claims", "appeals"];
 
 export default function AutopilotPage() {
   const [status, setStatus] = useState<AutopilotStatusResponse | null>(null);
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
-  const [mode, setMode] = useState<RunMode>("all");
+  const [mode, setMode] = useState<RunMode>("followups");
   const [restaurantId, setRestaurantId] = useState("");
   const [lastRun, setLastRun] = useState<AutopilotRunDetail | null>(null);
   const [loading, setLoading] = useState(true);
