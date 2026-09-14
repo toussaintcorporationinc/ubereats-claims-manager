@@ -247,11 +247,24 @@ class GmailInboundAutoSyncService:
     def account_is_due(self, sync_state: GmailSyncState, now: datetime) -> bool:
         last_sync_at = normalize_datetime(sync_state.last_sync_at) if sync_state.last_sync_at is not None else None
         interval_seconds = self.effective_interval_seconds()
-        retry_after = parse_gmail_retry_after(
-            sync_state.last_error,
-            safety_seconds=self.settings.gmail_quota_retry_safety_seconds,
-            now=now,
-        )
+        retry_after = None
+        last_error = sync_state.last_error or ""
+        if "gmail_quota_retry_after:" in last_error.casefold() or "retry after" in last_error.casefold():
+            retry_after = parse_gmail_retry_after(
+                last_error,
+                safety_seconds=self.settings.gmail_quota_retry_safety_seconds,
+                now=now,
+            )
+        elif any(
+            marker in last_error.casefold()
+            for marker in ("quota exceeded", "userratelimitexceeded", "ratelimitexceeded", "total query cost")
+        ):
+            quota_base = normalize_datetime(sync_state.updated_at or sync_state.last_sync_at) or now
+            retry_after = quota_base + timedelta(
+                seconds=90 + max(self.settings.gmail_quota_retry_safety_seconds, 0)
+            )
+            if retry_after <= now:
+                retry_after = None
         if retry_after is not None:
             return False
         if sync_state.status == "running":
