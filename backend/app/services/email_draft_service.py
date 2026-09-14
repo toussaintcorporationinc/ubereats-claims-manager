@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import ClaimOrder, EmailDraft
+from app.models import ClaimOrder, EmailDraft, EmailThread
 from app.services.audit import add_audit_log
 from app.services.claim_validation_service import FINAL_CLAIM_STATUSES, get_claim_validation_gaps
 from app.services.restaurant_identity_service import canonical_restaurant_display_name
@@ -139,7 +139,43 @@ def ensure_followup_2_allowed(db: Session, order: ClaimOrder) -> None:
 
 def ensure_initial_draft_exists(db: Session, order: ClaimOrder) -> None:
     ensure_base_order_data(db, order)
-    ensure_draft_type_exists(db, order, "initial_claim")
+    existing_draft_id = db.scalar(
+        select(EmailDraft.id).where(
+            EmailDraft.order_id == order.id,
+            EmailDraft.draft_type == "initial_claim",
+        )
+    )
+    if existing_draft_id is not None:
+        return
+
+    raw_identifier = order.uber_order_number or order.internal_reference
+    identifier_key = "".join(
+        character for character in str(raw_identifier or "").upper() if character.isalnum()
+    )
+    if identifier_key:
+        threads = db.scalars(
+            select(EmailThread)
+            .where(
+                EmailThread.order_id == order.id,
+                EmailThread.provider == "gmail",
+                EmailThread.direction == "outbound",
+                EmailThread.thread_id.is_not(None),
+            )
+            .order_by(EmailThread.id.desc())
+            .limit(25)
+        ).all()
+        for thread in threads:
+            thread_text = f"{thread.subject or ''}\n{thread.body or ''}"
+            thread_key = "".join(
+                character for character in thread_text.upper() if character.isalnum()
+            )
+            if identifier_key in thread_key:
+                return
+
+    raise EmailDraftBusinessError(
+        "initial_claim draft is required before this draft type",
+        ["missing_initial_claim_draft"],
+    )
 
 
 def ensure_draft_type_exists(db: Session, order: ClaimOrder, draft_type: str) -> None:
