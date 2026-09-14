@@ -1,17 +1,17 @@
 name: TENNET followup worker
-# Forced token refresh check
 
 on:
-  schedule:
-    # Two six-minute schedules staggered by three minutes give TENNET
-    # an effective ~3 minute follow-up cycle while respecting Gmail pacing.
-    - cron: '*/6 * * * *'
-    - cron: '3-59/6 * * * *'
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/tennet-followup-worker.yml'
 
 permissions:
   contents: read
   id-token: write
+  actions: write
 
 concurrency:
   group: tennet-followup-worker
@@ -20,31 +20,54 @@ concurrency:
 jobs:
   followups:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 35
     steps:
-      - name: Get short-lived GitHub OIDC token
+      - name: Run TENNET followups every three minutes
         shell: bash
         run: |
-          set -euo pipefail
-          oidc_json="$(curl --fail-with-body --silent --show-error \
-            --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=tennet-runtime")"
-          runtime_token="$(python -c 'import json,sys; print(json.load(sys.stdin)["value"])' <<<"$oidc_json")"
-          echo "::add-mask::$runtime_token"
-          echo "TENNET_RUNTIME_TOKEN=$runtime_token" >> "$GITHUB_ENV"
+          set -u
 
-      - name: Run TENNET followup worker
+          for tick in $(seq 1 10); do
+            echo "TENNET followup tick ${tick}/10"
+
+            oidc_json="$(curl --fail-with-body --silent --show-error \
+              --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=tennet-runtime")" || {
+                echo "Unable to mint OIDC token for this tick" >&2
+                if [ "$tick" -lt 10 ]; then sleep 180; fi
+                continue
+              }
+
+            runtime_token="$(python -c 'import json,sys; print(json.load(sys.stdin)["value"])' <<<"$oidc_json")"
+            echo "::add-mask::$runtime_token"
+
+            status="$(curl --silent --show-error --request POST \
+              --header "Authorization: Bearer ${runtime_token}" \
+              --header "Accept: application/json" \
+              --output response.json \
+              --write-out "%{http_code}" \
+              "https://ubereats-claims-manager.vercel.app/api/v1/runtime/followup-worker" || true)"
+
+            cat response.json 2>/dev/null || true
+            echo
+            echo "TENNET runtime HTTP ${status}"
+
+            if [ "$tick" -lt 10 ]; then
+              sleep 180
+            fi
+          done
+
+      - name: Re-arm TENNET followup worker
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          status="$(curl --silent --show-error --request POST \
-            --header "Authorization: Bearer ${TENNET_RUNTIME_TOKEN}" \
-            --header "Accept: application/json" \
-            --output response.json \
-            --write-out "%{http_code}" \
-            "https://ubereats-claims-manager.vercel.app/api/v1/runtime/followup-worker")"
-          cat response.json
-          case "$status" in
-            2*) ;;
-            *) echo "TENNET followup worker returned HTTP $status" >&2; exit 1 ;;
-          esac
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/tennet-followup-worker.yml/dispatches" \
+            --data '{"ref":"main"}'
