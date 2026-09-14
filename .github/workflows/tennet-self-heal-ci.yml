@@ -55,4 +55,6 @@ jobs:
             tests/test_autopilot.py::test_autopilot_sends_appeal_from_verified_unstarred_uber_reply \
             tests/test_autopilot.py::test_customer_refund_autopilot_sends_ready_dispute \
             tests/test_uber_live_connector.py::test_uber_connector_credentials_and_signature \
-            tests/test_uber_live_connector.py::test_uber_oauth_url_is_passive_setup_ready
+            tests/test_uber_live_connector.py::test_uber_oauth_url_is_passive_setup_ready \
+            tests/test_uber_live_connector.py::test_uber_cancellation_webhook_captures_snapshot_and_provisional_claim \
+            tests/test_uber_live_connector.py::test_uber_poll_worker_is_safe_with_no_mapped_stores
