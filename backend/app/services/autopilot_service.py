@@ -352,6 +352,7 @@ def run_autopilot(
     errors: list[str] = []
     quota_pause_reason: str | None = None
     gmail_quota_blocked_accounts: set[int] = set()
+    gmail_sent_accounts_this_run: set[int] = set()
     remote_preflight_attempts_by_account: dict[int, int] = {}
 
     for candidate in iter_candidates(
@@ -367,7 +368,10 @@ def run_autopilot(
     ):
         candidate_account_id = candidate_gmail_account_id(db, candidate)
         if not dry_run and candidate_account_id is not None:
-            if candidate_account_id in gmail_quota_blocked_accounts:
+            if (
+                candidate_account_id in gmail_quota_blocked_accounts
+                or candidate_account_id in gmail_sent_accounts_this_run
+            ):
                 continue
             gmail_limit = settings.autopilot_per_gmail_account_daily_limit
             if gmail_limit > 0:
@@ -421,6 +425,8 @@ def run_autopilot(
             if action.status == "sent":
                 global_sent += 1
                 per_restaurant_sent[candidate.restaurant_id] = per_restaurant_sent.get(candidate.restaurant_id, 0) + 1
+                if candidate_account_id is not None:
+                    gmail_sent_accounts_this_run.add(candidate_account_id)
         except AutopilotError as exc:
             if exc.message in GMAIL_SEND_SAFETY_REASONS:
                 mark_skipped(action, exc.message, dry_run=False)
