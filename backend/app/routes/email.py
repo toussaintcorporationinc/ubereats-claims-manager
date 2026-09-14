@@ -85,6 +85,7 @@ from app.services.gmail_quota import parse_gmail_retry_after_from_errors, second
 from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
 from app.services.runtime_settings_service import (
     get_gmail_oauth_runtime_config,
+    get_runtime_bool_setting,
     save_gmail_oauth_runtime_config,
 )
 from app.services.gmail_send_safety_service import (
@@ -100,8 +101,9 @@ router = APIRouter(tags=["email"])
 FINAL_ORDER_STATUSES = {"accepted", "payment_confirmed", "refused", "closed"}
 
 
-def get_gmail_provider() -> EmailProvider:
-    return GmailEmailProvider()
+def get_gmail_provider(db: Session = Depends(get_db)) -> EmailProvider:
+    runtime_enabled = get_runtime_bool_setting(db, "gmail_automation_enabled", False)
+    return GmailEmailProvider(trusted_runtime=runtime_enabled)
 
 
 def get_resend_provider() -> ResendEmailProvider:
