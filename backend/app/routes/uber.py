@@ -1,13 +1,17 @@
 import json
+import json
 from datetime import date
+from urllib.parse import urlencode
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 from starlette.responses import RedirectResponse
+from starlette.responses import RedirectResponse
 
 from app.core.auth import ensure_can_access_restaurant, get_accessible_restaurant_ids, get_current_user, require_owner, require_owner_or_manager
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.models import (
     ClaimOrder,
@@ -33,6 +37,8 @@ from app.schemas.domain import (
     UberHistoricalReclassificationApplyRequest,
     UberHistoricalReclassificationRequest,
     UberHistoricalReclassificationResponse,
+    UberCredentialsConfigure,
+    UberOAuthStartResponse,
     UberReconciliationIgnoreRequest,
     UberReconciliationResultDetail,
     UberReconciliationResultsResponse,
@@ -165,6 +171,109 @@ async def uber_webhook(
     except (ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Uber webhook payload") from exc
     # Uber requires an empty HTTP 200 acknowledgement.
+    return Response(status_code=status.HTTP_200_OK)
+
+
+@router.post("/credentials", response_model=UberStatusRead)
+def configure_uber_credentials(
+    payload: UberCredentialsConfigure,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner),
+) -> dict[str, object]:
+    service = UberConnectorService()
+    try:
+        service.configure_credentials(
+            db,
+            current_user,
+            client_id=payload.client_id,
+            client_secret=payload.client_secret,
+        )
+    except UberConnectorError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return service.get_status(db, current_user)
+
+
+@router.get("/oauth/start", response_model=UberOAuthStartResponse)
+def start_uber_oauth(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner),
+) -> dict[str, str]:
+    service = UberConnectorService()
+    try:
+        return {"authorization_url": service.build_authorization_url(db, current_user)}
+    except UberConnectorError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.get("/oauth/callback", include_in_schema=False)
+def uber_oauth_callback(
+    code: str = Query(...),
+    state: str = Query(...),
+    db: Session = Depends(get_db),
+):
+    service = UberConnectorService()
+    try:
+        result = service.handle_oauth_callback(db, state=state, code=code)
+    except UberConnectorError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+    settings = get_settings()
+    frontend = (settings.frontend_url or "").strip().rstrip("/")
+    query = urlencode(
+        {
+            "uber_oauth": "success",
+            "stores": str(result.get("discovered_store_count") or 0),
+            "official_api_enabled": "1" if result.get("official_api_enabled") else "0",
+        }
+    )
+    if frontend:
+        return RedirectResponse(url=f"{frontend}/uber?{query}", status_code=302)
+    return RedirectResponse(url=f"/uber?{query}", status_code=302)
+
+
+@router.post("/disconnect", status_code=status.HTTP_204_NO_CONTENT)
+def disconnect_uber(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner),
+) -> Response:
+    UberConnectorService().disconnect(db, current_user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/live-stores")
+def list_live_uber_stores(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+) -> dict[str, object]:
+    service = UberConnectorService()
+    try:
+        stores = service.list_stores(db)
+    except UberConnectorError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    return {"stores": stores, "count": len(stores)}
+
+
+@router.post("/webhook", include_in_schema=False)
+async def uber_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Response:
+    body = await request.body()
+    signature = request.headers.get("X-Uber-Signature")
+    service = UberConnectorService()
+    if not service.verify_webhook_signature(db, body, signature):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Uber webhook signature")
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Uber webhook payload") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Uber webhook payload")
+    try:
+        service.handle_webhook_event(db, payload)
+    except UberConnectorError as exc:
+        db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     return Response(status_code=status.HTTP_200_OK)
 
 
