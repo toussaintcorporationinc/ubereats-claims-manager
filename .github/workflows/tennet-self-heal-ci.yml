@@ -1,0 +1,45 @@
+name: TENNET self-heal CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/app/services/autopilot_service.py'
+      - 'backend/app/routes/runtime.py'
+      - 'backend/tests/test_autopilot.py'
+      - '.github/workflows/tennet-self-heal-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tennet-self-heal-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  self-heal-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install backend test dependencies
+        run: python -m pip install -e '.[dev]'
+
+      - name: Run TENNET self-heal regression tests
+        run: |
+          pytest -q \
+            tests/test_autopilot.py::test_followup_self_heal_requeues_legacy_gmail_quota_failure \
+            tests/test_autopilot.py::test_followup_self_heal_completes_task_when_gmail_send_is_already_confirmed \
+            tests/test_autopilot.py::test_followup_self_heal_recovers_missing_gmail_thread_from_exact_order_id
