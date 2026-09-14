@@ -18,6 +18,7 @@ from app.core.database import get_db
 from app.models import AuditLog, User
 from app.services.audit import add_audit_log
 from app.services.autopilot_service import AutopilotError, repair_followup_queue, run_autopilot
+from app.services.customer_refund_autopilot_service import run_customer_refund_autopilot
 from app.services.email_provider import EmailProviderError
 from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncService
@@ -346,30 +347,44 @@ def _run_followup_worker(
         max_remote_thread_repairs=4,
     )
 
+    followup_result = None
+    appeal_result = None
+    refund_result = None
+    lane_order = ["followups", "appeals", "refunds"]
+    lane_offset = int(time.time() // 180) % len(lane_order)
+    lane_order = lane_order[lane_offset:] + lane_order[:lane_offset]
+
     try:
-        followup_result = run_autopilot(
-            db,
-            owner,
-            mode="followups",
-            restaurant_id=None,
-            dry_run=False,
-            provider=provider,
-            max_candidates=4,
-            trusted_runtime_followups=True,
-        )
-        # Appeals are a second pass so a refusal received by Gmail can be
-        # analyzed, countered and escalated automatically without weakening
-        # follow-up pacing or anti-duplicate checks.
-        appeal_result = run_autopilot(
-            db,
-            owner,
-            mode="appeals",
-            restaurant_id=None,
-            dry_run=False,
-            provider=provider,
-            max_candidates=4,
-            trusted_runtime_appeals=True,
-        )
+        for lane in lane_order:
+            if lane == "followups":
+                followup_result = run_autopilot(
+                    db,
+                    owner,
+                    mode="followups",
+                    restaurant_id=None,
+                    dry_run=False,
+                    provider=provider,
+                    max_candidates=4,
+                    trusted_runtime_followups=True,
+                )
+            elif lane == "appeals":
+                appeal_result = run_autopilot(
+                    db,
+                    owner,
+                    mode="appeals",
+                    restaurant_id=None,
+                    dry_run=False,
+                    provider=provider,
+                    max_candidates=4,
+                    trusted_runtime_appeals=True,
+                )
+            else:
+                refund_result = run_customer_refund_autopilot(
+                    db,
+                    owner,
+                    provider,
+                    max_candidates=4,
+                )
     except AutopilotError as exc:
         db.rollback()
         if exc.message in {
@@ -386,48 +401,75 @@ def _run_followup_worker(
                 "skipped_count": 0,
                 "failed_count": 0,
                 "error_message": exc.message,
-                "appeals": {
-                    "status": "blocked",
-                    "run_id": None,
-                    "total_candidates": 0,
-                    "sent_count": 0,
-                    "skipped_count": 0,
-                    "failed_count": 0,
-                    "error_message": exc.message,
-                },
+                "lane_order": lane_order,
             }
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
+    followup_payload = {
+        "status": followup_result.run.status if followup_result is not None else "not_run",
+        "run_id": followup_result.run.id if followup_result is not None else None,
+        "total_candidates": followup_result.run.total_candidates if followup_result is not None else 0,
+        "sent_count": followup_result.run.sent_count if followup_result is not None else 0,
+        "skipped_count": followup_result.run.skipped_count if followup_result is not None else 0,
+        "failed_count": followup_result.run.failed_count if followup_result is not None else 0,
+        "error_message": followup_result.run.error_message if followup_result is not None else None,
+    }
+    appeal_payload = {
+        "status": appeal_result.run.status if appeal_result is not None else "not_run",
+        "run_id": appeal_result.run.id if appeal_result is not None else None,
+        "total_candidates": appeal_result.run.total_candidates if appeal_result is not None else 0,
+        "sent_count": appeal_result.run.sent_count if appeal_result is not None else 0,
+        "skipped_count": appeal_result.run.skipped_count if appeal_result is not None else 0,
+        "failed_count": appeal_result.run.failed_count if appeal_result is not None else 0,
+        "error_message": appeal_result.run.error_message if appeal_result is not None else None,
+    }
+    refund_payload = asdict(refund_result) if refund_result is not None else {
+        "candidates": 0,
+        "sent_count": 0,
+        "skipped_count": 0,
+        "failed_count": 0,
+        "repaired_count": 0,
+        "errors": (),
+    }
+
+    total_candidates = (
+        int(followup_payload["total_candidates"])
+        + int(appeal_payload["total_candidates"])
+        + int(refund_payload["candidates"])
+    )
+    sent_count = (
+        int(followup_payload["sent_count"])
+        + int(appeal_payload["sent_count"])
+        + int(refund_payload["sent_count"])
+    )
+    skipped_count = (
+        int(followup_payload["skipped_count"])
+        + int(appeal_payload["skipped_count"])
+        + int(refund_payload["skipped_count"])
+    )
+    failed_count = (
+        int(followup_payload["failed_count"])
+        + int(appeal_payload["failed_count"])
+        + int(refund_payload["failed_count"])
+    )
+    error_message = (
+        followup_payload["error_message"]
+        or appeal_payload["error_message"]
+        or ("; ".join(refund_payload["errors"][:5]) if refund_payload["errors"] else None)
+    )
+
     payload = {
-        "status": (
-            "failed"
-            if followup_result.run.status == "failed" or appeal_result.run.status == "failed"
-            else "completed"
-        ),
-        "run_id": followup_result.run.id,
-        "total_candidates": followup_result.run.total_candidates + appeal_result.run.total_candidates,
-        "sent_count": followup_result.run.sent_count + appeal_result.run.sent_count,
-        "skipped_count": followup_result.run.skipped_count + appeal_result.run.skipped_count,
-        "failed_count": followup_result.run.failed_count + appeal_result.run.failed_count,
-        "error_message": followup_result.run.error_message or appeal_result.run.error_message,
-        "followups": {
-            "status": followup_result.run.status,
-            "run_id": followup_result.run.id,
-            "total_candidates": followup_result.run.total_candidates,
-            "sent_count": followup_result.run.sent_count,
-            "skipped_count": followup_result.run.skipped_count,
-            "failed_count": followup_result.run.failed_count,
-            "error_message": followup_result.run.error_message,
-        },
-        "appeals": {
-            "status": appeal_result.run.status,
-            "run_id": appeal_result.run.id,
-            "total_candidates": appeal_result.run.total_candidates,
-            "sent_count": appeal_result.run.sent_count,
-            "skipped_count": appeal_result.run.skipped_count,
-            "failed_count": appeal_result.run.failed_count,
-            "error_message": appeal_result.run.error_message,
-        },
+        "status": "failed" if failed_count else "completed",
+        "run_id": followup_payload["run_id"] or appeal_payload["run_id"],
+        "total_candidates": total_candidates,
+        "sent_count": sent_count,
+        "skipped_count": skipped_count,
+        "failed_count": failed_count,
+        "error_message": error_message,
+        "lane_order": lane_order,
+        "followups": followup_payload,
+        "appeals": appeal_payload,
+        "customer_refunds": refund_payload,
         "self_heal": asdict(repair),
     }
     db.commit()
