@@ -1,5 +1,5 @@
 from collections import Counter
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 from app.core.auth import can_access_restaurant
 from app.models import (
     Restaurant,
+    UberCustomerRefundDispute,
     UberFinancialTransaction,
     UberOrderSnapshot,
+    UberReconciliationResult,
     UberReportingImportBatch,
     UberReportingImportRow,
     UberStoreMapping,
@@ -334,6 +336,8 @@ def confirm_uber_reporting_batch(
     created_snapshots = 0
     created_transactions = 0
     imported_transactions: list[UberFinancialTransaction] = []
+    affected_restaurant_ids: set[int] = set()
+    affected_dates: list[date] = []
     for row in rows:
         if row.status not in {"valid", "warning"} or not row.normalized_data:
             skipped += 1
@@ -349,6 +353,9 @@ def confirm_uber_reporting_batch(
                 snapshot, created = create_or_update_snapshot(db, row.normalized_data)
                 row.created_snapshot_id = snapshot.id
                 created_snapshots += int(created)
+                affected_restaurant_ids.add(snapshot.restaurant_id)
+                if snapshot.placed_at is not None:
+                    affected_dates.append(snapshot.placed_at.date())
             elif row.normalized_data.get("row_kind") == "transaction":
                 if is_combined_report_item_adjustment_row(row.normalized_data):
                     row.status = "skipped"
@@ -360,6 +367,8 @@ def confirm_uber_reporting_batch(
                 created_transactions += int(created)
                 if transaction is not None:
                     imported_transactions.append(transaction)
+                    affected_restaurant_ids.add(transaction.restaurant_id)
+                    affected_dates.append(transaction.transaction_date)
                 if not created:
                     skipped += 1
             row.status = "created"
@@ -389,6 +398,13 @@ def confirm_uber_reporting_batch(
         },
     )
     db.commit()
+
+    recovery_summary = auto_open_recovery_cases_from_reporting(
+        db,
+        current_user,
+        restaurant_ids=affected_restaurant_ids,
+        affected_dates=affected_dates,
+    )
     return {
         "batch_id": batch.id,
         "status": batch.status,
@@ -396,8 +412,141 @@ def confirm_uber_reporting_batch(
         "created_transactions_count": created_transactions,
         "skipped_rows": skipped,
         "errors": errors,
+        "recovery": recovery_summary,
         **payment_counts,
     }
+
+
+def auto_open_recovery_cases_from_reporting(
+    db: Session,
+    current_user: User,
+    *,
+    restaurant_ids: set[int],
+    affected_dates: list[date],
+) -> dict[str, object]:
+    """Turn newly ingested Uber reporting into recovery cases automatically.
+
+    Only deterministic/non-ambiguous records are promoted to ClaimOrders.
+    Unknown refund reasons and manual-review reconciliation results remain
+    visible for review and are never auto-sent.
+    """
+    if not restaurant_ids:
+        return {
+            "refund_disputes_detected": 0,
+            "refund_claim_orders_created": 0,
+            "cancellation_claim_orders_created": 0,
+            "errors": [],
+        }
+
+    from app.services.customer_refund_detection_service import detect_customer_refund_disputes
+    from app.services.customer_refund_dispute_service import create_claim_order_from_dispute
+    from app.services.uber_reconciliation_service import UberReconciliationService
+
+    if affected_dates:
+        date_from = min(affected_dates)
+        date_to = max(affected_dates)
+    else:
+        date_to = date.today()
+        date_from = date_to - timedelta(days=30)
+
+    detected = 0
+    refund_orders = 0
+    cancellation_orders = 0
+    recovery_errors: list[str] = []
+    reconciliation_service = UberReconciliationService()
+
+    for restaurant_id in sorted(restaurant_ids):
+        try:
+            detection = detect_customer_refund_disputes(
+                db,
+                current_user,
+                restaurant_id=restaurant_id,
+                date_from=date_from,
+                date_to=date_to,
+            )
+            detected += detection.detected_count
+            recovery_errors.extend(detection.errors[:20])
+        except Exception as exc:  # noqa: BLE001 - one restaurant must not block the rest.
+            db.rollback()
+            recovery_errors.append(f"refund-detect restaurant {restaurant_id}: {exc}")
+
+        disputes = db.scalars(
+            select(UberCustomerRefundDispute)
+            .where(
+                UberCustomerRefundDispute.restaurant_id == restaurant_id,
+                UberCustomerRefundDispute.claim_order_id.is_(None),
+                UberCustomerRefundDispute.dispute_type != "unknown",
+                UberCustomerRefundDispute.status.notin_(("ignored", "manual_review")),
+                UberCustomerRefundDispute.deducted_at >= date_from,
+                UberCustomerRefundDispute.deducted_at <= date_to,
+            )
+            .order_by(UberCustomerRefundDispute.id)
+        ).all()
+        for dispute in disputes:
+            try:
+                create_claim_order_from_dispute(db, current_user, dispute)
+                refund_orders += 1
+            except HTTPException as exc:
+                if exc.status_code != status.HTTP_409_CONFLICT:
+                    recovery_errors.append(f"refund-claim {dispute.id}: {exc.detail}")
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                recovery_errors.append(f"refund-claim {dispute.id}: {exc}")
+
+        try:
+            reconciliation = reconciliation_service.run_reconciliation(
+                db,
+                current_user,
+                restaurant_id=restaurant_id,
+                date_from=date_from,
+                date_to=date_to,
+                dry_run=False,
+            )
+            run_id = int(reconciliation["run_id"])
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            recovery_errors.append(f"reconciliation restaurant {restaurant_id}: {exc}")
+            continue
+
+        results = db.scalars(
+            select(UberReconciliationResult)
+            .where(
+                UberReconciliationResult.run_id == run_id,
+                UberReconciliationResult.claim_order_id.is_(None),
+                UberReconciliationResult.status.in_(("not_compensated", "partially_compensated", "needs_evidence")),
+                UberReconciliationResult.confidence_score >= Decimal("0.80"),
+            )
+            .order_by(UberReconciliationResult.id)
+        ).all()
+        for result in results:
+            try:
+                reconciliation_service.create_claim_order_from_result(db, current_user, result.id)
+                cancellation_orders += 1
+            except HTTPException as exc:
+                if exc.status_code != status.HTTP_409_CONFLICT:
+                    recovery_errors.append(f"cancellation-claim {result.id}: {exc.detail}")
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                recovery_errors.append(f"cancellation-claim {result.id}: {exc}")
+
+    summary = {
+        "refund_disputes_detected": detected,
+        "refund_claim_orders_created": refund_orders,
+        "cancellation_claim_orders_created": cancellation_orders,
+        "date_from": date_from.isoformat(),
+        "date_to": date_to.isoformat(),
+        "errors": recovery_errors[:50],
+    }
+    add_audit_log(
+        db,
+        entity_type="uber_reporting_import_batch",
+        entity_id=0,
+        action="uber_reporting.auto_open_recovery_cases",
+        user_id=current_user.id,
+        new_value=summary,
+    )
+    db.commit()
+    return summary
 
 
 async def import_uber_reporting_file(db: Session, current_user: User, file: UploadFile) -> dict[str, object]:
