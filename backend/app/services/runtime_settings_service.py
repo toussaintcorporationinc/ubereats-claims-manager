@@ -146,3 +146,32 @@ def _upsert_plain(db: Session, key: str, value: str, user_id: int) -> None:
         ),
         {"key": key, "value_plain": value, "user_id": user_id},
     )
+
+
+def get_runtime_bool_setting(db: Session, key: str, default: bool = False) -> bool:
+    value = _plain_value(db, key)
+    if value is None:
+        return default
+    return value.strip().casefold() in {"1", "true", "yes", "on", "enabled"}
+
+
+def save_runtime_bool_setting(db: Session, key: str, value: bool, user_id: int | None = None) -> None:
+    db.execute(
+        text(
+            """
+            INSERT INTO runtime_settings(key, value_plain, value_encrypted, updated_by_user_id, updated_at)
+            VALUES (:key, :value_plain, NULL, :user_id, NOW())
+            ON CONFLICT (key) DO UPDATE SET
+                value_plain = EXCLUDED.value_plain,
+                value_encrypted = NULL,
+                updated_by_user_id = EXCLUDED.updated_by_user_id,
+                updated_at = NOW()
+            """
+        ),
+        {
+            "key": key,
+            "value_plain": "true" if value else "false",
+            "user_id": user_id,
+        },
+    )
+    db.flush()
