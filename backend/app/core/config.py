@@ -29,7 +29,7 @@ class Settings(BaseSettings):
         "https://www.googleapis.com/auth/gmail.readonly"
     )
     default_uber_eats_support_email: str = "restaurantsfrance@uber.com"
-    email_provider_enabled: bool = True
+    email_provider_enabled: bool = False
     email_max_attachment_total_mb: int = 20
     resend_enabled: bool = False
     resend_api_key: str | None = None
@@ -37,14 +37,14 @@ class Settings(BaseSettings):
     resend_reply_to: str | None = None
     resend_domain: str = "mail.thetennet.com"
     resend_api_url: str = "https://api.resend.com/emails"
-    gmail_inbound_sync_enabled: bool = True
+    gmail_inbound_sync_enabled: bool = False
     gmail_inbound_sync_lookback_days: int = 30
     gmail_inbound_max_messages_per_sync: int = 1000
     gmail_starred_max_messages_per_sync: int = 50000
     gmail_starred_full_history_enabled: bool = True
     gmail_starred_page_size: int = 500
     gmail_starred_max_pages_per_sync: int = 0
-    gmail_inbound_auto_sync_enabled: bool = True
+    gmail_inbound_auto_sync_enabled: bool = False
     gmail_inbound_auto_sync_continuous_enabled: bool = True
     gmail_inbound_auto_sync_interval_seconds: int = 30
     gmail_inbound_auto_sync_idle_sleep_seconds: int = 1
@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     escalation_delay_days: int = 10
     manual_review_after_days: int = 15
     max_followups_per_order: int = 3
-    followup_automatic_send_enabled: bool = True
+    followup_automatic_send_enabled: bool = False
     export_max_rows: int = 10000
     report_default_lookback_days: int = 90
     uber_reconciliation_default_lookback_days: int = 180
@@ -101,9 +101,9 @@ class Settings(BaseSettings):
     appeal_max_attempts_before_manual_review: int = 6
     appeal_require_new_argument_after_refusal: bool = True
     appeal_allow_same_template_resend: bool = False
-    autopilot_enabled: bool = True
+    autopilot_enabled: bool = False
     autopilot_initial_claims_enabled: bool = False
-    autopilot_followups_enabled: bool = True
+    autopilot_followups_enabled: bool = False
     autopilot_appeals_enabled: bool = False
     autopilot_daily_send_limit: int = 5000
     autopilot_per_gmail_account_daily_limit: int = 500
