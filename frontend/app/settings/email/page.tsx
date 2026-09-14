@@ -5,17 +5,24 @@ import { useEffect, useState } from "react";
 import ApiError from "@/components/ApiError";
 import LoadingState from "@/components/LoadingState";
 import StatusBadge from "@/components/StatusBadge";
+import { useAuth } from "@/lib/auth";
 import {
   api,
   formatDate,
   type EmailAccount,
   type GmailConnectionStatus,
   type GmailInboundStatus,
+  type GmailOAuthConfig,
   type GmailRestaurantMapping,
 } from "@/lib/api";
 
 export default function EmailSettingsPage() {
+  const { user } = useAuth();
   const [status, setStatus] = useState<GmailConnectionStatus | null>(null);
+  const [oauthConfig, setOauthConfig] = useState<GmailOAuthConfig | null>(null);
+  const [oauthClientId, setOauthClientId] = useState("");
+  const [oauthClientSecret, setOauthClientSecret] = useState("");
+  const [oauthRedirectUri, setOauthRedirectUri] = useState("");
   const [inboundStatus, setInboundStatus] = useState<GmailInboundStatus | null>(null);
   const [accounts, setAccounts] = useState<EmailAccount[]>([]);
   const [mappings, setMappings] = useState<GmailRestaurantMapping[]>([]);
@@ -24,6 +31,7 @@ export default function EmailSettingsPage() {
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [savingRestaurantId, setSavingRestaurantId] = useState<number | null>(null);
+  const [savingOauth, setSavingOauth] = useState(false);
   const [manualAction, setManualAction] = useState<"sync" | "analyze" | null>(null);
   const [manualMessage, setManualMessage] = useState<string | null>(null);
 
@@ -31,16 +39,28 @@ export default function EmailSettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [gmailStatus, gmailInboundStatus, gmailAccounts, gmailMappings] = await Promise.all([
+      const [gmailStatus, gmailInboundStatus, gmailAccounts, gmailMappings, gmailOauthConfig] = await Promise.all([
         api.getGmailStatus(),
         api.getInboundStatus(),
         api.getGmailAccounts(),
         api.getGmailRestaurantMappings(),
+        api.getGmailOAuthConfig(),
       ]);
       setStatus(gmailStatus);
       setInboundStatus(gmailInboundStatus);
       setAccounts(gmailAccounts);
       setMappings(gmailMappings);
+      setOauthConfig(gmailOauthConfig);
+      setOauthClientId(gmailOauthConfig.client_id ?? "");
+      const productionRedirect =
+        typeof window !== "undefined"
+          ? `${window.location.origin}/api/v1/email/gmail/oauth/callback`
+          : gmailOauthConfig.redirect_uri;
+      setOauthRedirectUri(
+        !gmailOauthConfig.redirect_uri || gmailOauthConfig.redirect_uri.includes("localhost")
+          ? productionRedirect
+          : gmailOauthConfig.redirect_uri,
+      );
     } catch (apiError) {
       setError(apiError);
     } finally {
@@ -53,6 +73,10 @@ export default function EmailSettingsPage() {
   }, []);
 
   async function handleConnect() {
+    if (!oauthConfig?.configured) {
+      setManualMessage("Configure d'abord Google OAuth dans le bloc ci-dessous.");
+      return;
+    }
     setConnecting(true);
     setManualMessage(null);
     setError(null);
@@ -62,6 +86,40 @@ export default function EmailSettingsPage() {
     } catch (apiError) {
       setError(apiError);
       setConnecting(false);
+    }
+  }
+
+  async function handleSaveOauth() {
+    if (!oauthClientId.trim()) {
+      setManualMessage("Le Client ID Google OAuth est obligatoire.");
+      return;
+    }
+    if (!oauthRedirectUri.trim()) {
+      setManualMessage("L'URI de redirection Google OAuth est obligatoire.");
+      return;
+    }
+    setSavingOauth(true);
+    setManualMessage(null);
+    setError(null);
+    try {
+      const updated = await api.updateGmailOAuthConfig({
+        client_id: oauthClientId.trim(),
+        client_secret: oauthClientSecret.trim() || null,
+        redirect_uri: oauthRedirectUri.trim(),
+      });
+      setOauthConfig(updated);
+      setOauthClientId(updated.client_id ?? "");
+      setOauthClientSecret("");
+      setOauthRedirectUri(updated.redirect_uri);
+      setManualMessage(
+        updated.configured
+          ? "Configuration Google OAuth enregistree. Tu peux maintenant connecter ou reconnecter Gmail."
+          : "Client ID enregistre. Il manque encore le Client Secret Google OAuth.",
+      );
+    } catch (apiError) {
+      setError(apiError);
+    } finally {
+      setSavingOauth(false);
     }
   }
 
@@ -176,6 +234,73 @@ export default function EmailSettingsPage() {
 
       <section className="tool-panel">
         <div className="section-heading">
+          <h2>Configuration Google OAuth</h2>
+          <StatusBadge status={oauthConfig?.configured ? "active" : "attention"} />
+        </div>
+        <p className="muted">
+          Cette configuration appartient maintenant a TENNET. Elle ne depend plus d'une variable Vercel cachee.
+          Le Client Secret est chiffre et n'est jamais reaffiche apres enregistrement.
+        </p>
+        <div className="detail-grid">
+          <DetailItem label="Client ID" value={oauthConfig?.client_id ? "configure" : "manquant"} />
+          <DetailItem
+            label="Client Secret"
+            value={oauthConfig?.client_secret_configured ? "configure" : "manquant"}
+          />
+          <DetailItem label="Redirect URI" value={oauthRedirectUri || "-"} />
+        </div>
+        {user?.role === "owner" ? (
+          <>
+            <div className="filters">
+              <div className="field">
+                <label htmlFor="gmail_oauth_client_id">Google OAuth Client ID</label>
+                <input
+                  id="gmail_oauth_client_id"
+                  value={oauthClientId}
+                  onChange={(event) => setOauthClientId(event.target.value)}
+                  placeholder="...apps.googleusercontent.com"
+                  autoComplete="off"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="gmail_oauth_client_secret">Google OAuth Client Secret</label>
+                <input
+                  id="gmail_oauth_client_secret"
+                  type="password"
+                  value={oauthClientSecret}
+                  onChange={(event) => setOauthClientSecret(event.target.value)}
+                  placeholder={oauthConfig?.client_secret_configured ? "Laisser vide pour conserver le secret actuel" : "Client Secret Google"}
+                  autoComplete="new-password"
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="gmail_oauth_redirect_uri">URI de redirection autorisee</label>
+                <input
+                  id="gmail_oauth_redirect_uri"
+                  value={oauthRedirectUri}
+                  onChange={(event) => setOauthRedirectUri(event.target.value)}
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+            <div className="actions">
+              <button
+                type="button"
+                className="button"
+                disabled={savingOauth}
+                onClick={() => void handleSaveOauth()}
+              >
+                {savingOauth ? "Enregistrement..." : "Enregistrer Google OAuth"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <p className="muted">Seul le proprietaire TENNET peut modifier la configuration Google OAuth.</p>
+        )}
+      </section>
+
+      <section className="tool-panel">
+        <div className="section-heading">
           <h2>Connexion Gmail</h2>
           <StatusBadge status={!status?.enabled ? "disabled" : status.connected ? "active" : "inactive"} />
         </div>
@@ -192,7 +317,12 @@ export default function EmailSettingsPage() {
           <p className="muted">Le provider email est desactive dans la configuration serveur.</p>
         ) : (
           <div className="actions">
-            <button type="button" className="button" onClick={handleConnect} disabled={connecting}>
+            <button
+              type="button"
+              className="button"
+              onClick={handleConnect}
+              disabled={connecting || !oauthConfig?.configured}
+            >
               {connecting
                 ? "Ouverture de Google..."
                 : reconnectRequired
@@ -213,7 +343,7 @@ export default function EmailSettingsPage() {
         )}
         <p className="muted">
           Tu peux connecter plusieurs boites Gmail l'une apres l'autre. TENNET conserve chaque compte et tu choisis ensuite
-          quel Gmail gere quel restaurant.
+          quel Gmail gere quel restaurant. Si le bouton est desactive, termine d'abord la configuration Google OAuth ci-dessus.
         </p>
       </section>
 
