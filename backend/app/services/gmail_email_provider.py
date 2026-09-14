@@ -865,6 +865,19 @@ class GmailEmailProvider:
             headers={"Authorization": f"Bearer {access_token}"},
         )
 
+    def get_draft_for_account_payload(
+        self,
+        db: Session,
+        account: EmailAccount,
+        draft_id: str,
+    ) -> dict[str, Any]:
+        """Read a real Gmail draft so stale send requests can be reconciled safely."""
+        access_token = self.access_token_for_external_call(db, account)
+        return self.get_json(
+            f"{GMAIL_DRAFTS_URL}/{quote(draft_id, safe='')}?format=metadata",
+            {"Authorization": f"Bearer {access_token}"},
+        )
+
     def ensure_access_token(self, db: Session, account: EmailAccount) -> str:
         access_token = self.token_cipher.decrypt(account.access_token_encrypted)
         if not access_token:
