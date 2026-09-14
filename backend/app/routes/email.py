@@ -1620,6 +1620,28 @@ def sync_gmail_inbound(
         )
     except EmailProviderError as exc:
         db.commit()
+        retry_after = parse_gmail_retry_after(
+            exc.message,
+            safety_seconds=settings.gmail_quota_retry_safety_seconds,
+        )
+        if retry_after is not None:
+            return GmailInboundSyncResponse(
+                status="failed",
+                synced_messages=0,
+                linked_messages=0,
+                unlinked_messages=0,
+                ignored_messages=0,
+                analyzed_messages=0,
+                applied_reviews=0,
+                manual_review_messages=0,
+                negative_responses_detected=0,
+                identity_repaired_messages=0,
+                autopilot_run_id=None,
+                autopilot_sent_count=0,
+                autopilot_skipped_count=0,
+                autopilot_failed_count=0,
+                errors=[f"gmail_quota_retry_after:{retry_after.isoformat()}"],
+            )
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     db.commit()
     return GmailInboundSyncResponse(**result.__dict__)
