@@ -16,7 +16,7 @@ const navigation: NavItem[] = [
   { href: "/remboursements", label: "Remboursement", group: "main", ownerOrManagerOnly: true },
   { href: "/annulations", label: "Annulation", group: "main", ownerOrManagerOnly: true },
   { href: "/relance-gmail", label: "Relance Gmail", group: "main", ownerOrManagerOnly: true },
-  { href: "/settings/email", label: "Parametres Gmail", group: "main", ownerOrManagerOnly: true },
+  { href: "/settings", label: "Parametres", group: "main", ownerOrManagerOnly: true },
   { href: "/finance", label: "Finance", group: "main", ownerOrManagerOnly: true },
   { href: "/smart-import", label: "Depot avance", group: "work", ownerOrManagerOnly: true },
   { href: "/evidence-tasks", label: "Preuves", group: "main" },
