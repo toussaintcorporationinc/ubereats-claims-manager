@@ -124,7 +124,10 @@ class PreparedDraftResumeResult:
 @dataclass(frozen=True)
 class FollowupQueueRepairResult:
     requeued_quota_drafts: int = 0
+    reset_quota_draft_creations: int = 0
     completed_sent_tasks: int = 0
+    confirmed_stale_sends: int = 0
+    requeued_stale_send_requests: int = 0
     aligned_task_states: int = 0
     repaired_thread_links: int = 0
     unresolved_send_requested: int = 0
@@ -156,6 +159,7 @@ def repair_followup_queue(
     *,
     max_items: int = 500,
     max_remote_thread_repairs: int = 4,
+    max_remote_send_repairs: int = 2,
     stale_send_requested_minutes: int = 15,
 ) -> FollowupQueueRepairResult:
     """Reconcile recoverable follow-up states before the worker scans candidates.
@@ -188,12 +192,16 @@ def repair_followup_queue(
     )
 
     requeued_quota_drafts = 0
+    reset_quota_draft_creations = 0
     completed_sent_tasks = 0
+    confirmed_stale_sends = 0
+    requeued_stale_send_requests = 0
     aligned_task_states = 0
     repaired_thread_links = 0
     unresolved_send_requested = 0
     quota_deferred_thread_repairs = 0
     remote_repairs_attempted = 0
+    remote_send_repairs_attempted = 0
     blocked_remote_accounts: set[int] = set()
     now = utc_now()
     stale_cutoff = now - timedelta(minutes=max(1, stale_send_requested_minutes))
@@ -211,7 +219,160 @@ def repair_followup_queue(
             updated_at = provider_draft.updated_at or provider_draft.created_at
             if updated_at.tzinfo is None:
                 updated_at = updated_at.replace(tzinfo=timezone.utc)
-            if updated_at <= stale_cutoff:
+            if updated_at > stale_cutoff:
+                continue
+
+            reconciled = False
+            if (
+                provider is not None
+                and provider_draft.provider == "gmail"
+                and provider_draft.email_account_id is not None
+                and remote_send_repairs_attempted < max_remote_send_repairs
+            ):
+                account = db.get(EmailAccount, provider_draft.email_account_id)
+                list_refs = getattr(provider, "list_message_refs_for_account", None)
+                get_payload = getattr(provider, "get_message_for_account_payload", None)
+                get_remote_draft = getattr(provider, "get_draft_for_account_payload", None)
+                if (
+                    account is not None
+                    and account.user_id == user.id
+                    and account.disconnected_at is None
+                    and callable(list_refs)
+                    and callable(get_payload)
+                ):
+                    remote_send_repairs_attempted += 1
+                    raw_identifier = task.order.uber_order_number or task.order.internal_reference
+                    normalized_identifier = "".join(
+                        character for character in str(raw_identifier or "").upper() if character.isalnum()
+                    )
+                    try:
+                        refs = list(
+                            list_refs(
+                                db,
+                                account,
+                                query=f'in:sent "{raw_identifier}"',
+                                max_results=10,
+                            )
+                        )
+                        earliest_possible_send = updated_at - timedelta(minutes=5)
+                        for ref in refs:
+                            message_id = str(ref.get("id") or "") if isinstance(ref, dict) else str(ref or "")
+                            if not message_id:
+                                continue
+                            payload = get_payload(
+                                db,
+                                account,
+                                message_id,
+                                include_attachments=False,
+                                enrich_starred=False,
+                            )
+                            if (
+                                provider_draft.provider_thread_id
+                                and payload.provider_thread_id != provider_draft.provider_thread_id
+                            ):
+                                continue
+                            payload_sent_at = payload.received_at
+                            if payload_sent_at is not None:
+                                if payload_sent_at.tzinfo is None:
+                                    payload_sent_at = payload_sent_at.replace(tzinfo=timezone.utc)
+                                if payload_sent_at < earliest_possible_send:
+                                    continue
+                            payload_text = (
+                                f"{payload.subject or ''}\n{payload.body_text or ''}\n{payload.snippet or ''}"
+                            )
+                            payload_key = "".join(
+                                character for character in payload_text.upper() if character.isalnum()
+                            )
+                            extracted_identifier = current_payload_response_order_number(payload)
+                            identity_matches = (
+                                order_identifiers_equivalent(
+                                    extracted_identifier,
+                                    task.order.uber_order_number,
+                                    task.order.internal_reference,
+                                )
+                                if extracted_identifier
+                                else bool(normalized_identifier and normalized_identifier in payload_key)
+                            )
+                            if not identity_matches:
+                                continue
+
+                            provider_draft.status = "sent"
+                            provider_draft.provider_message_id = payload.provider_message_id
+                            provider_draft.provider_thread_id = (
+                                payload.provider_thread_id or provider_draft.provider_thread_id
+                            )
+                            provider_draft.sent_at = payload_sent_at or now
+                            provider_draft.sent_by_user_id = user.id
+                            provider_draft.updated_at = now
+                            completed = complete_task_for_sent_provider_draft(db, user, provider_draft)
+                            add_audit_log(
+                                db,
+                                entity_type="email_provider_draft",
+                                entity_id=provider_draft.id,
+                                action="autopilot.self_heal_confirmed_remote_send",
+                                user_id=user.id,
+                                old_value={"status": "send_requested"},
+                                new_value={
+                                    "status": "sent",
+                                    "provider_message_id": provider_draft.provider_message_id,
+                                    "provider_thread_id": provider_draft.provider_thread_id,
+                                },
+                            )
+                            if completed is not None:
+                                completed_sent_tasks += 1
+                            confirmed_stale_sends += 1
+                            reconciled = True
+                            break
+
+                        if (
+                            not reconciled
+                            and provider_draft.provider_draft_id
+                            and callable(get_remote_draft)
+                        ):
+                            try:
+                                get_remote_draft(
+                                    db,
+                                    account,
+                                    provider_draft.provider_draft_id,
+                                )
+                            except Exception as exc:  # noqa: BLE001 - 404 remains ambiguous and must fail closed.
+                                retry_after = parse_gmail_retry_after(
+                                    str(getattr(exc, "message", exc)),
+                                    safety_seconds=get_settings().gmail_quota_retry_safety_seconds,
+                                )
+                                if retry_after is not None or gmail_provider_error_is_retryable(
+                                    str(getattr(exc, "message", exc))
+                                ):
+                                    blocked_remote_accounts.add(account.id)
+                                    quota_deferred_thread_repairs += 1
+                            else:
+                                provider_draft.status = "provider_draft_created"
+                                provider_draft.updated_at = now
+                                task.status = "provider_draft_created"
+                                task.updated_at = now
+                                add_audit_log(
+                                    db,
+                                    entity_type="email_provider_draft",
+                                    entity_id=provider_draft.id,
+                                    action="autopilot.self_heal_requeue_remote_draft",
+                                    user_id=user.id,
+                                    old_value={"status": "send_requested"},
+                                    new_value={"status": "provider_draft_created"},
+                                )
+                                requeued_stale_send_requests += 1
+                                reconciled = True
+                    except Exception as exc:  # noqa: BLE001 - remote reconciliation must fail closed.
+                        retry_after = parse_gmail_retry_after(
+                            str(getattr(exc, "message", exc)),
+                            safety_seconds=get_settings().gmail_quota_retry_safety_seconds,
+                        )
+                        if retry_after is not None or gmail_provider_error_is_retryable(
+                            str(getattr(exc, "message", exc))
+                        ):
+                            blocked_remote_accounts.add(account.id)
+                            quota_deferred_thread_repairs += 1
+
+            if not reconciled:
                 unresolved_send_requested += 1
             continue
 
@@ -219,15 +380,23 @@ def repair_followup_queue(
             provider_draft is not None
             and provider_draft.provider == "gmail"
             and provider_draft.status == "failed"
-            and provider_draft.provider_draft_id
             and gmail_provider_error_is_retryable(provider_draft.last_error or provider_draft.error_message)
         ):
             old_task_status = task.status
             old_draft_status = provider_draft.status
-            provider_draft.status = "provider_draft_created"
-            provider_draft.updated_at = now
-            task.status = "provider_draft_created"
-            task.updated_at = now
+            if provider_draft.provider_draft_id:
+                provider_draft.status = "provider_draft_created"
+                provider_draft.updated_at = now
+                task.status = "provider_draft_created"
+                task.updated_at = now
+                new_provider_status = provider_draft.status
+                requeued_quota_drafts += 1
+            else:
+                task.generated_provider_draft_id = None
+                task.status = "draft_created" if task.generated_email_draft_id is not None else "pending"
+                task.updated_at = now
+                new_provider_status = "detached_failed_draft"
+                reset_quota_draft_creations += 1
             add_audit_log(
                 db,
                 entity_type="email_provider_draft",
@@ -236,12 +405,11 @@ def repair_followup_queue(
                 user_id=user.id,
                 old_value={"status": old_draft_status, "task_status": old_task_status},
                 new_value={
-                    "status": provider_draft.status,
+                    "status": new_provider_status,
                     "task_status": task.status,
                     "reason": provider_draft.last_error or provider_draft.error_message,
                 },
             )
-            requeued_quota_drafts += 1
 
         if provider_draft is not None and provider_draft.status == "provider_draft_created":
             if task.status != "provider_draft_created":
@@ -399,7 +567,10 @@ def repair_followup_queue(
     db.flush()
     return FollowupQueueRepairResult(
         requeued_quota_drafts=requeued_quota_drafts,
+        reset_quota_draft_creations=reset_quota_draft_creations,
         completed_sent_tasks=completed_sent_tasks,
+        confirmed_stale_sends=confirmed_stale_sends,
+        requeued_stale_send_requests=requeued_stale_send_requests,
         aligned_task_states=aligned_task_states,
         repaired_thread_links=repaired_thread_links,
         unresolved_send_requested=unresolved_send_requested,
