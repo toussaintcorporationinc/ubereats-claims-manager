@@ -1,4 +1,5 @@
 name: TENNET Gmail sync
+# Manual post-settings verification
 
 on:
   schedule:
