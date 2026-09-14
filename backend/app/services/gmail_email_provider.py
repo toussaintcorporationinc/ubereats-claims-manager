@@ -41,6 +41,7 @@ from app.services.gmail_send_safety_service import (
     GmailSendSafetyError,
     minimum_gmail_send_interval_seconds,
 )
+from app.services.runtime_settings_service import get_gmail_oauth_runtime_config
 from app.services.token_cipher_service import TokenCipherError, TokenCipherService
 
 GMAIL_AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -123,9 +124,16 @@ class GmailEmailProvider:
             enabled=True,
         )
 
-    def build_authorization_url(self, user: User) -> str:
+    def build_authorization_url(self, user: User, db: Session | None = None) -> str:
         settings = get_settings()
-        self.ensure_enabled_and_configured(require_secret=False)
+        oauth_config = get_gmail_oauth_runtime_config(db) if db is not None else None
+        client_id = oauth_config.client_id if oauth_config is not None else settings.gmail_oauth_client_id
+        redirect_uri = oauth_config.redirect_uri if oauth_config is not None else settings.gmail_oauth_redirect_uri
+        self.ensure_enabled_and_configured(
+            require_secret=False,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+        )
         requested_scopes = gmail_scopes_with_modify(settings.gmail_scopes)
         state = create_access_token(
             str(user.id),
@@ -133,8 +141,8 @@ class GmailEmailProvider:
         )
         query = urlencode(
             {
-                "client_id": settings.gmail_oauth_client_id,
-                "redirect_uri": settings.gmail_oauth_redirect_uri,
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
                 "response_type": "code",
                 "scope": requested_scopes,
                 "access_type": "offline",
@@ -152,7 +160,19 @@ class GmailEmailProvider:
         if user is None or not user.active:
             raise EmailProviderError("OAuth state user is invalid", 400)
 
-        token_payload = self.exchange_code_for_tokens(code)
+        oauth_config = get_gmail_oauth_runtime_config(db)
+        self.ensure_enabled_and_configured(
+            require_secret=True,
+            client_id=oauth_config.client_id,
+            client_secret=oauth_config.client_secret,
+            redirect_uri=oauth_config.redirect_uri,
+        )
+        token_payload = self.exchange_code_for_tokens(
+            code,
+            client_id=oauth_config.client_id,
+            client_secret=oauth_config.client_secret,
+            redirect_uri=oauth_config.redirect_uri,
+        )
         access_token = token_payload.get("access_token")
         if not access_token:
             raise EmailProviderError("Gmail OAuth response did not include an access token", 502)
@@ -844,8 +864,13 @@ class GmailEmailProvider:
         if not refresh_token:
             return access_token
 
+        oauth_config = get_gmail_oauth_runtime_config(db)
         try:
-            token_payload = self.refresh_access_token(refresh_token)
+            token_payload = self.refresh_access_token(
+                refresh_token,
+                client_id=oauth_config.client_id,
+                client_secret=oauth_config.client_secret,
+            )
         except EmailProviderError as exc:
             if gmail_authorization_needs_reconnect(exc.message):
                 account.disconnected_at = utc_now()
@@ -877,27 +902,57 @@ class GmailEmailProvider:
         db.commit()
         return access_token
 
-    def exchange_code_for_tokens(self, code: str) -> dict:
+    def exchange_code_for_tokens(
+        self,
+        code: str,
+        *,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        redirect_uri: str | None = None,
+    ) -> dict:
         settings = get_settings()
+        effective_client_id = client_id or settings.gmail_oauth_client_id
+        effective_client_secret = client_secret or settings.gmail_oauth_client_secret
+        effective_redirect_uri = redirect_uri or settings.gmail_oauth_redirect_uri
+        self.ensure_enabled_and_configured(
+            require_secret=True,
+            client_id=effective_client_id,
+            client_secret=effective_client_secret,
+            redirect_uri=effective_redirect_uri,
+        )
         return self.post_form(
             GMAIL_TOKEN_URL,
             {
                 "code": code,
-                "client_id": settings.gmail_oauth_client_id or "",
-                "client_secret": settings.gmail_oauth_client_secret or "",
-                "redirect_uri": settings.gmail_oauth_redirect_uri,
+                "client_id": effective_client_id or "",
+                "client_secret": effective_client_secret or "",
+                "redirect_uri": effective_redirect_uri,
                 "grant_type": "authorization_code",
             },
         )
 
-    def refresh_access_token(self, refresh_token: str) -> dict:
+    def refresh_access_token(
+        self,
+        refresh_token: str,
+        *,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+    ) -> dict:
         settings = get_settings()
+        effective_client_id = client_id or settings.gmail_oauth_client_id
+        effective_client_secret = client_secret or settings.gmail_oauth_client_secret
+        self.ensure_enabled_and_configured(
+            require_secret=True,
+            client_id=effective_client_id,
+            client_secret=effective_client_secret,
+            redirect_uri=settings.gmail_oauth_redirect_uri,
+        )
         return self.post_form(
             GMAIL_TOKEN_URL,
             {
                 "refresh_token": refresh_token,
-                "client_id": settings.gmail_oauth_client_id or "",
-                "client_secret": settings.gmail_oauth_client_secret or "",
+                "client_id": effective_client_id or "",
+                "client_secret": effective_client_secret or "",
                 "grant_type": "refresh_token",
             },
         )
@@ -1078,14 +1133,24 @@ class GmailEmailProvider:
             )
         return None
 
-    def ensure_enabled_and_configured(self, *, require_secret: bool) -> None:
+    def ensure_enabled_and_configured(
+        self,
+        *,
+        require_secret: bool,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        redirect_uri: str | None = None,
+    ) -> None:
         settings = get_settings()
         if not settings.email_provider_enabled and not self.trusted_runtime:
             raise EmailProviderError("Email provider is disabled", 503)
-        if not settings.gmail_oauth_client_id or not settings.gmail_oauth_redirect_uri:
-            raise EmailProviderError("Gmail OAuth is not configured", 503)
-        if require_secret and not settings.gmail_oauth_client_secret:
-            raise EmailProviderError("Gmail OAuth client secret is not configured", 503)
+        effective_client_id = client_id or settings.gmail_oauth_client_id
+        effective_redirect_uri = redirect_uri or settings.gmail_oauth_redirect_uri
+        effective_client_secret = client_secret or settings.gmail_oauth_client_secret
+        if not effective_client_id or not effective_redirect_uri:
+            raise EmailProviderError("gmail_oauth_not_configured", 503)
+        if require_secret and not effective_client_secret:
+            raise EmailProviderError("gmail_oauth_client_secret_not_configured", 503)
 
     def extract_inbound_attachments(self, access_token: str, payload: dict[str, Any]) -> list[InboundEmailAttachment]:
         attachments: list[InboundEmailAttachment] = []
