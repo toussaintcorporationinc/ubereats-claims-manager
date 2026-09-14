@@ -434,6 +434,12 @@ def run_autopilot(
                     gmail_quota_blocked_accounts.add(candidate_account_id)
                     quota_pause_reason = quota_pause_reason or exc.message
                 continue
+            if exc.message.startswith("gmail_quota_retry_after:"):
+                mark_skipped(action, exc.message, dry_run=False)
+                if candidate_account_id is not None:
+                    gmail_quota_blocked_accounts.add(candidate_account_id)
+                quota_pause_reason = quota_pause_reason or exc.message
+                continue
             action.status = "failed"
             action.skipped_reason = exc.message
             action.updated_at = utc_now()
@@ -2046,6 +2052,28 @@ def send_provider_draft(
     try:
         send_result = provider.send_draft(db, user, provider_draft)
     except EmailProviderError as exc:
+        retry_after = parse_gmail_retry_after(
+            exc.message,
+            safety_seconds=get_settings().gmail_quota_retry_safety_seconds,
+        )
+        if retry_after is not None:
+            # Gmail quota/rate limits are temporary. Keep the draft retryable
+            # instead of poisoning the follow-up task with a permanent "failed" state.
+            provider_draft.status = old_status
+            provider_draft.last_error = exc.message
+            provider_draft.updated_at = utc_now()
+            retry_reason = f"gmail_quota_retry_after:{retry_after.isoformat()}"
+            add_audit_log(
+                db,
+                entity_type="email_provider_draft",
+                entity_id=provider_draft.id,
+                action="autopilot.send_gmail_draft_deferred",
+                user_id=user.id,
+                old_value={"status": "send_requested"},
+                new_value={"status": old_status, "reason": retry_reason},
+            )
+            raise AutopilotError(retry_reason, 409) from exc
+
         provider_draft.status = "failed"
         provider_draft.last_error = exc.message
         provider_draft.updated_at = utc_now()
