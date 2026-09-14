@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -25,6 +26,7 @@ from app.models import (
 )
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
+from app.services.restaurant_identity_service import canonical_restaurant_lookup_key
 from app.services.token_cipher_service import TokenCipherError, TokenCipherService
 
 UBER_AUTHORIZATION_URL = "https://auth.uber.com/oauth/v2/authorize"
@@ -39,6 +41,15 @@ class UberConnectorError(Exception):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+
+
+@dataclass(frozen=True)
+class UberPollResult:
+    stores_checked: int = 0
+    cancellations_seen: int = 0
+    snapshots_created: int = 0
+    snapshots_updated: int = 0
+    errors: tuple[str, ...] = ()
 
 
 class UberConnectorService:
@@ -189,6 +200,25 @@ class UberConnectorService:
         stores = self.list_stores_with_token(user_token)
         exact_mappings = self._sync_exact_store_mappings(db, user, stores)
 
+        # Register TENNET as a passive observer. Uber explicitly supports
+        # is_order_manager=false for apps that observe store/order activity
+        # without taking responsibility for accepting or rejecting orders.
+        passive_activations = 0
+        activation_errors: list[str] = []
+        for store in stores:
+            store_id = _optional_text(store.get("store_id") or store.get("id"))
+            if not store_id:
+                continue
+            try:
+                self._post_json(
+                    f"{UBER_API_BASE_URL}/v1/eats/stores/{store_id}/pos_data?is_order_manager=false",
+                    {},
+                    token=user_token,
+                )
+                passive_activations += 1
+            except UberConnectorError as exc:
+                activation_errors.append(f"{store_id}:{exc.message}")
+
         connected_store_count = 0
         try:
             app_token = self.client_credentials_token(db, force_refresh=True)
@@ -197,7 +227,11 @@ class UberConnectorService:
         except UberConnectorError:
             connected_store_count = 0
 
-        account.status = "connected" if connected_store_count > 0 else "pending_approval"
+        account.status = (
+            "connected"
+            if connected_store_count > 0 or passive_activations > 0
+            else "pending_approval"
+        )
         account.disconnected_at = None
         db.flush()
         add_audit_log(
@@ -209,6 +243,8 @@ class UberConnectorService:
             new_value={
                 "discovered_store_count": len(stores),
                 "exact_mappings_created_or_refreshed": exact_mappings,
+                "passive_store_activations": passive_activations,
+                "activation_errors": activation_errors[:20],
                 "client_credentials_visible_store_count": connected_store_count,
                 "status": account.status,
             },
@@ -219,6 +255,8 @@ class UberConnectorService:
             "discovered_stores": stores,
             "discovered_store_count": len(stores),
             "exact_mappings": exact_mappings,
+            "passive_store_activations": passive_activations,
+            "activation_errors": activation_errors,
             "official_api_enabled": account.status == "connected",
             "status": account.status,
         }
@@ -304,6 +342,86 @@ class UberConnectorService:
                 "Accept": "application/json",
             },
         )
+
+    def poll_cancellations(self, db: Session) -> UberPollResult:
+        """Fallback poller for the last two hours of canceled orders.
+
+        Webhooks remain the primary source. Polling protects TENNET against a
+        missed webhook and is intentionally read-only.
+        """
+        token = self.client_credentials_token(db)
+        mappings = list(
+            db.scalars(
+                select(UberStoreMapping)
+                .where(UberStoreMapping.active.is_(True))
+                .order_by(UberStoreMapping.id)
+            )
+        )
+        seen = created = updated = 0
+        errors: list[str] = []
+        for mapping in mappings:
+            try:
+                payload = self._get_json(
+                    f"{UBER_API_BASE_URL}/v1/eats/stores/{mapping.uber_store_id}/canceled-orders",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Accept": "application/json",
+                    },
+                )
+                orders = payload.get("orders")
+                if not isinstance(orders, list):
+                    continue
+                for item in orders:
+                    if not isinstance(item, dict):
+                        continue
+                    order_id = _optional_text(item.get("id"))
+                    if not order_id:
+                        continue
+                    seen += 1
+                    existing = db.scalar(
+                        select(UberOrderSnapshot).where(
+                            UberOrderSnapshot.restaurant_id == mapping.restaurant_id,
+                            UberOrderSnapshot.uber_order_id == order_id,
+                        )
+                    )
+                    try:
+                        full = self.get_order(db, order_id)
+                    except UberConnectorError:
+                        full = {
+                            **item,
+                            "id": order_id,
+                            "current_state": "CANCELED",
+                            "store": {"id": mapping.uber_store_id},
+                        }
+                    snapshot = self._upsert_cancelled_snapshot(
+                        db,
+                        mapping,
+                        full,
+                        webhook_payload={
+                            "event_type": "poll.canceled-orders",
+                            "event_time": int(utc_now().timestamp()),
+                            "meta": {
+                                "resource_id": order_id,
+                                "user_id": mapping.uber_store_id,
+                            },
+                        },
+                    )
+                    self._ensure_provisional_claim(db, mapping, snapshot)
+                    if existing is None:
+                        created += 1
+                    else:
+                        updated += 1
+            except Exception as exc:
+                errors.append(f"{mapping.uber_store_id}:{exc}")
+        db.commit()
+        return UberPollResult(
+            stores_checked=len(mappings),
+            cancellations_seen=seen,
+            snapshots_created=created,
+            snapshots_updated=updated,
+            errors=tuple(errors[:50]),
+        )
+
 
     def verify_webhook_signature(self, db: Session, body: bytes, signature: str | None) -> bool:
         if not signature:
@@ -555,6 +673,19 @@ class UberConnectorService:
                 select(Restaurant).where(Restaurant.uber_merchant_id == store_id)
             )
             if restaurant is None:
+                name = _optional_text(store.get("name"))
+                if name:
+                    lookup_key = canonical_restaurant_lookup_key(name)
+                    candidates = [
+                        item
+                        for item in db.scalars(
+                            select(Restaurant).where(Restaurant.active.is_(True))
+                        ).all()
+                        if canonical_restaurant_lookup_key(item.name) == lookup_key
+                    ]
+                    if len(candidates) == 1:
+                        restaurant = candidates[0]
+            if restaurant is None:
                 continue
             mapping = UberStoreMapping(
                 restaurant_id=restaurant.id,
@@ -687,14 +818,30 @@ class UberConnectorService:
         )
         return self._read_json_response(request)
 
+    def _post_json(self, url: str, payload: dict[str, Any], *, token: str) -> dict[str, Any]:
+        request = Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        return self._read_json_response(request, allow_empty=True)
+
     def _get_json(self, url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
         request = Request(url, headers=headers or {}, method="GET")
         return self._read_json_response(request)
 
-    def _read_json_response(self, request: Request) -> dict[str, Any]:
+    def _read_json_response(self, request: Request, *, allow_empty: bool = False) -> dict[str, Any]:
         try:
             with urlopen(request, timeout=20) as response:
-                return json.loads(response.read().decode("utf-8"))
+                raw = response.read()
+                if not raw and allow_empty:
+                    return {}
+                return json.loads(raw.decode("utf-8")) if raw else {}
         except HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             raise UberConnectorError(_uber_http_error_message(exc.code, body), 502) from exc
