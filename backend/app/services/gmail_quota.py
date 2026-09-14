@@ -20,6 +20,21 @@ def parse_gmail_retry_after(
     if not error_message:
         return None
 
+    lowered = error_message.casefold()
+    # Gmail sometimes returns quota exhaustion without a Retry-After timestamp
+    # (notably PERMISSION_DENIED / Total Query Cost per user). Treat that as a
+    # short per-account backoff instead of hammering the API for every candidate.
+    if (
+        "quota exceeded" in lowered
+        or "userratelimitexceeded" in lowered
+        or "ratelimitexceeded" in lowered
+        or "total query cost" in lowered
+    ):
+        current_time = now or datetime.now(timezone.utc)
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=timezone.utc)
+        return current_time + timedelta(seconds=90 + max(safety_seconds, 0))
+
     match = GMAIL_RETRY_AFTER_RE.search(error_message)
     if match is None:
         return None
