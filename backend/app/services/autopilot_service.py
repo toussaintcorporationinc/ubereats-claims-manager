@@ -274,6 +274,11 @@ def repair_followup_queue(
 
         if latest_verified_followup_email_thread(db, task.order) is not None:
             continue
+        due_at = task.due_at
+        if due_at.tzinfo is None:
+            due_at = due_at.replace(tzinfo=timezone.utc)
+        if due_at > now:
+            continue
         if provider is None or remote_repairs_attempted >= max_remote_thread_repairs:
             continue
 
