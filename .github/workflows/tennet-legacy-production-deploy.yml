@@ -1,0 +1,59 @@
+name: Deploy TENNET to legacy production
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/tennet-legacy-production-deploy.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERCEL_TOKEN_A: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_TOKEN_B: ${{ secrets.VERCEL_ACCESS_TOKEN }}
+      VERCEL_TOKEN_C: ${{ secrets.VERCEL_API_TOKEN }}
+      VERCEL_ORG_ID: team_6ANDQINhLaEu2qEjm70t7yZd
+      VERCEL_PROJECT_ID: prj_DS4cMQkfJylLEcMGn8xjnk27O9Pn
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Vercel token
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN="${VERCEL_TOKEN_A:-${VERCEL_TOKEN_B:-${VERCEL_TOKEN_C:-}}}"
+          if [[ -z "$TOKEN" ]]; then
+            echo "No Vercel token configured."
+            exit 1
+          fi
+          echo "VERCEL_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+      - name: Link legacy TENNET production project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .vercel
+          printf '{"orgId":"%s","projectId":"%s"}\n' "$VERCEL_ORG_ID" "$VERCEL_PROJECT_ID" > .vercel/project.json
+          npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Deploy current TENNET code on legacy production
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes vercel@latest deploy --prod --yes --token="$VERCEL_TOKEN"
+
+      - name: Verify legacy TENNET production
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 5
+          settings_code="$(curl -sS -L -o /tmp/tennet-settings.html -w '%{http_code}' 'https://thetennet.com/settings/email')"
+          echo "TENNET_SETTINGS_HTTP=$settings_code"
+          test "$settings_code" = "200"
