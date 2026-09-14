@@ -404,7 +404,9 @@ def gmail_oauth_callback(
     )
     db.commit()
     return HTMLResponse(
-        "<html><body><h1>Gmail connected</h1><p>You can close this window and return to TENNET.</p></body></html>"
+        "<html><head><meta http-equiv=\"refresh\" content=\"1;url=/settings/email?gmail=connected\"></head>"
+        "<body><h1>Gmail connected</h1><p>Retour automatique vers TENNET...</p>"
+        "<p><a href=\"/settings/email?gmail=connected\">Retourner aux parametres Gmail</a></p></body></html>"
     )
 
 
