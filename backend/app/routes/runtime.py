@@ -347,7 +347,7 @@ def _run_followup_worker(
     )
 
     try:
-        result = run_autopilot(
+        followup_result = run_autopilot(
             db,
             owner,
             mode="followups",
@@ -356,6 +356,19 @@ def _run_followup_worker(
             provider=provider,
             max_candidates=4,
             trusted_runtime_followups=True,
+        )
+        # Appeals are a second pass so a refusal received by Gmail can be
+        # analyzed, countered and escalated automatically without weakening
+        # follow-up pacing or anti-duplicate checks.
+        appeal_result = run_autopilot(
+            db,
+            owner,
+            mode="appeals",
+            restaurant_id=None,
+            dry_run=False,
+            provider=provider,
+            max_candidates=4,
+            trusted_runtime_appeals=True,
         )
     except AutopilotError as exc:
         db.rollback()
@@ -373,17 +386,48 @@ def _run_followup_worker(
                 "skipped_count": 0,
                 "failed_count": 0,
                 "error_message": exc.message,
+                "appeals": {
+                    "status": "blocked",
+                    "run_id": None,
+                    "total_candidates": 0,
+                    "sent_count": 0,
+                    "skipped_count": 0,
+                    "failed_count": 0,
+                    "error_message": exc.message,
+                },
             }
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
     payload = {
-        "status": result.run.status,
-        "run_id": result.run.id,
-        "total_candidates": result.run.total_candidates,
-        "sent_count": result.run.sent_count,
-        "skipped_count": result.run.skipped_count,
-        "failed_count": result.run.failed_count,
-        "error_message": result.run.error_message,
+        "status": (
+            "failed"
+            if followup_result.run.status == "failed" or appeal_result.run.status == "failed"
+            else "completed"
+        ),
+        "run_id": followup_result.run.id,
+        "total_candidates": followup_result.run.total_candidates + appeal_result.run.total_candidates,
+        "sent_count": followup_result.run.sent_count + appeal_result.run.sent_count,
+        "skipped_count": followup_result.run.skipped_count + appeal_result.run.skipped_count,
+        "failed_count": followup_result.run.failed_count + appeal_result.run.failed_count,
+        "error_message": followup_result.run.error_message or appeal_result.run.error_message,
+        "followups": {
+            "status": followup_result.run.status,
+            "run_id": followup_result.run.id,
+            "total_candidates": followup_result.run.total_candidates,
+            "sent_count": followup_result.run.sent_count,
+            "skipped_count": followup_result.run.skipped_count,
+            "failed_count": followup_result.run.failed_count,
+            "error_message": followup_result.run.error_message,
+        },
+        "appeals": {
+            "status": appeal_result.run.status,
+            "run_id": appeal_result.run.id,
+            "total_candidates": appeal_result.run.total_candidates,
+            "sent_count": appeal_result.run.sent_count,
+            "skipped_count": appeal_result.run.skipped_count,
+            "failed_count": appeal_result.run.failed_count,
+            "error_message": appeal_result.run.error_message,
+        },
         "self_heal": asdict(repair),
     }
     db.commit()
