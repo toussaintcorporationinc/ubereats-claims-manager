@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -33,6 +33,9 @@ class GmailOAuthRuntimeConfig:
 
 
 def _row(db: Session, key: str):
+    bind = db.get_bind()
+    if not inspect(bind).has_table("runtime_settings"):
+        return None
     return db.execute(
         text(
             """
