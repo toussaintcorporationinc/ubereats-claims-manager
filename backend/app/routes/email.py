@@ -81,7 +81,7 @@ from app.services.gmail_inbound_sync_service import (
     GmailInboundSyncResult,
     GmailInboundSyncService,
 )
-from app.services.gmail_quota import parse_gmail_retry_after_from_errors, seconds_until_gmail_retry
+from app.services.gmail_quota import parse_gmail_retry_after, parse_gmail_retry_after_from_errors, seconds_until_gmail_retry
 from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
 from app.services.runtime_settings_service import (
     get_gmail_oauth_runtime_config,
@@ -1606,7 +1606,9 @@ def sync_gmail_inbound(
     request_payload = payload or GmailInboundSyncRequest()
     lookback_days = request_payload.lookback_days or settings.gmail_inbound_sync_lookback_days
     requested_max_messages = request_payload.max_messages or settings.gmail_inbound_max_messages_per_sync
-    max_messages = min(requested_max_messages, 500)
+    # Manual sync is deliberately bounded to protect Gmail's per-user query-cost quota.
+    # Larger history is drained incrementally by the background worker.
+    max_messages = min(requested_max_messages, 20)
     service = GmailInboundSyncService(provider)
     try:
         result = service.sync(
@@ -1626,7 +1628,7 @@ def sync_gmail_inbound(
         )
         if retry_after is not None:
             return GmailInboundSyncResponse(
-                status="failed",
+                status="idle",
                 synced_messages=0,
                 linked_messages=0,
                 unlinked_messages=0,
