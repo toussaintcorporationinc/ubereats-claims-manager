@@ -998,7 +998,9 @@ class GmailWarRoomResponse(BaseModel):
 
 class GmailInboundSyncRequest(BaseModel):
     lookback_days: int | None = Field(default=None, ge=1, le=365)
-    max_messages: int | None = Field(default=None, ge=1, le=500)
+    # Backward-compatible with older TENNET frontends that still send 1000.
+    # The route clamps the effective batch to 500 to protect Gmail quota.
+    max_messages: int | None = Field(default=None, ge=1, le=1000)
     analyze_responses: bool = True
     apply_reviews: bool = True
     run_autopilot_after_sync: bool = True
