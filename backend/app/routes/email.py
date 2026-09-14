@@ -46,6 +46,8 @@ from app.schemas.domain import (
     GmailInboundStatusResponse,
     GmailInboundSyncRequest,
     GmailInboundSyncResponse,
+    GmailOAuthConfigRead,
+    GmailOAuthConfigUpdate,
     GmailOAuthStartResponse,
     GmailRelanceActionItem,
     GmailRelanceDashboardResponse,
@@ -81,6 +83,10 @@ from app.services.gmail_inbound_sync_service import (
 )
 from app.services.gmail_quota import parse_gmail_retry_after_from_errors, seconds_until_gmail_retry
 from app.services.gmail_response_intelligence_service import GmailResponseIntelligenceService
+from app.services.runtime_settings_service import (
+    get_gmail_oauth_runtime_config,
+    save_gmail_oauth_runtime_config,
+)
 from app.services.gmail_send_safety_service import (
     GmailSendSafetyError,
     lock_and_validate_gmail_send,
@@ -371,13 +377,80 @@ def resend_status(
     return GmailConnectionStatus.model_validate(provider.get_connection_status(db, current_user).__dict__)
 
 
+@router.get("/v1/email/gmail/oauth/config", response_model=GmailOAuthConfigRead)
+def get_gmail_oauth_config(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner_or_manager),
+) -> GmailOAuthConfigRead:
+    config = get_gmail_oauth_runtime_config(db)
+    return GmailOAuthConfigRead(
+        configured=config.callback_configured,
+        client_id=config.client_id,
+        client_secret_configured=bool(config.client_secret),
+        redirect_uri=config.redirect_uri,
+        client_id_source=config.client_id_source,
+        client_secret_source=config.client_secret_source,
+        redirect_uri_source=config.redirect_uri_source,
+    )
+
+
+@router.put("/v1/email/gmail/oauth/config", response_model=GmailOAuthConfigRead)
+def update_gmail_oauth_config(
+    payload: GmailOAuthConfigUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_owner),
+) -> GmailOAuthConfigRead:
+    current = get_gmail_oauth_runtime_config(db)
+    redirect_uri = (payload.redirect_uri or current.redirect_uri).strip()
+    try:
+        config = save_gmail_oauth_runtime_config(
+            db,
+            client_id=payload.client_id,
+            client_secret=payload.client_secret,
+            redirect_uri=redirect_uri,
+            user_id=current_user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    add_audit_log(
+        db,
+        entity_type="runtime_setting",
+        entity_id=current_user.id,
+        action="gmail_oauth_config.updated",
+        user_id=current_user.id,
+        new_value={
+            "client_id_configured": bool(config.client_id),
+            "client_secret_configured": bool(config.client_secret),
+            "redirect_uri": config.redirect_uri,
+        },
+    )
+    db.commit()
+    return GmailOAuthConfigRead(
+        configured=config.callback_configured,
+        client_id=config.client_id,
+        client_secret_configured=bool(config.client_secret),
+        redirect_uri=config.redirect_uri,
+        client_id_source=config.client_id_source,
+        client_secret_source=config.client_secret_source,
+        redirect_uri_source=config.redirect_uri_source,
+    )
+
+
 @router.get("/v1/email/gmail/oauth/start", response_model=GmailOAuthStartResponse)
 def start_gmail_oauth(
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     provider: GmailEmailProvider = Depends(get_gmail_provider),
 ) -> GmailOAuthStartResponse:
+    config = get_gmail_oauth_runtime_config(db)
+    if not config.callback_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="gmail_oauth_not_configured",
+        )
     try:
-        authorization_url = provider.build_authorization_url(current_user)
+        authorization_url = provider.build_authorization_url(current_user, db)
     except EmailProviderError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     return GmailOAuthStartResponse(authorization_url=authorization_url)
