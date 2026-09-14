@@ -133,6 +133,7 @@ class GmailEmailProvider:
             require_secret=False,
             client_id=client_id,
             redirect_uri=redirect_uri,
+            allow_disabled_provider=True,
         )
         requested_scopes = gmail_scopes_with_modify(settings.gmail_scopes)
         state = create_access_token(
@@ -163,13 +164,14 @@ class GmailEmailProvider:
         self.ensure_enabled_and_configured(
             require_secret=True,
             client_id=oauth_config.client_id,
-            client_secret=oauth_config.client_secret,
+            oauth_secret=oauth_config.client_secret,
             redirect_uri=oauth_config.redirect_uri,
+            allow_disabled_provider=True,
         )
         token_payload = self.exchange_code_for_tokens(
             code,
             client_id=oauth_config.client_id,
-            client_secret=oauth_config.client_secret,
+            oauth_secret=oauth_config.client_secret,
             redirect_uri=oauth_config.redirect_uri,
         )
         access_token = token_payload.get("access_token")
@@ -868,7 +870,7 @@ class GmailEmailProvider:
             token_payload = self.refresh_access_token(
                 refresh_token,
                 client_id=oauth_config.client_id,
-                client_secret=oauth_config.client_secret,
+                oauth_secret=oauth_config.client_secret,
             )
         except EmailProviderError as exc:
             if gmail_authorization_needs_reconnect(exc.message):
@@ -906,17 +908,17 @@ class GmailEmailProvider:
         code: str,
         *,
         client_id: str | None = None,
-        client_secret: str | None = None,
+        oauth_secret: str | None = None,
         redirect_uri: str | None = None,
     ) -> dict:
         settings = get_settings()
         effective_client_id = client_id or settings.gmail_oauth_client_id
-        effective_client_secret = client_secret or settings.gmail_oauth_client_secret
+        effective_secret = oauth_secret or settings.gmail_oauth_client_secret
         effective_redirect_uri = redirect_uri or settings.gmail_oauth_redirect_uri
         self.ensure_enabled_and_configured(
             require_secret=True,
             client_id=effective_client_id,
-            client_secret=effective_client_secret,
+            oauth_secret=effective_secret,
             redirect_uri=effective_redirect_uri,
         )
         return self.post_form(
@@ -924,7 +926,7 @@ class GmailEmailProvider:
             {
                 "code": code,
                 "client_id": effective_client_id or "",
-                "client_secret": effective_client_secret or "",
+                "client_secret": effective_secret or "",
                 "redirect_uri": effective_redirect_uri,
                 "grant_type": "authorization_code",
             },
@@ -935,15 +937,15 @@ class GmailEmailProvider:
         refresh_token: str,
         *,
         client_id: str | None = None,
-        client_secret: str | None = None,
+        oauth_secret: str | None = None,
     ) -> dict:
         settings = get_settings()
         effective_client_id = client_id or settings.gmail_oauth_client_id
-        effective_client_secret = client_secret or settings.gmail_oauth_client_secret
+        effective_secret = oauth_secret or settings.gmail_oauth_client_secret
         self.ensure_enabled_and_configured(
             require_secret=True,
             client_id=effective_client_id,
-            client_secret=effective_client_secret,
+            oauth_secret=effective_secret,
             redirect_uri=settings.gmail_oauth_redirect_uri,
         )
         return self.post_form(
@@ -951,7 +953,7 @@ class GmailEmailProvider:
             {
                 "refresh_token": refresh_token,
                 "client_id": effective_client_id or "",
-                "client_secret": effective_client_secret or "",
+                "client_secret": effective_secret or "",
                 "grant_type": "refresh_token",
             },
         )
@@ -1137,18 +1139,19 @@ class GmailEmailProvider:
         *,
         require_secret: bool,
         client_id: str | None = None,
-        client_secret: str | None = None,
+        oauth_secret: str | None = None,
         redirect_uri: str | None = None,
+        allow_disabled_provider: bool = False,
     ) -> None:
         settings = get_settings()
-        if not settings.email_provider_enabled and not self.trusted_runtime:
+        if not settings.email_provider_enabled and not self.trusted_runtime and not allow_disabled_provider:
             raise EmailProviderError("Email provider is disabled", 503)
         effective_client_id = client_id or settings.gmail_oauth_client_id
         effective_redirect_uri = redirect_uri or settings.gmail_oauth_redirect_uri
-        effective_client_secret = client_secret or settings.gmail_oauth_client_secret
+        effective_secret = oauth_secret or settings.gmail_oauth_client_secret
         if not effective_client_id or not effective_redirect_uri:
             raise EmailProviderError("gmail_oauth_not_configured", 503)
-        if require_secret and not effective_client_secret:
+        if require_secret and not effective_secret:
             raise EmailProviderError("gmail_oauth_client_secret_not_configured", 503)
 
     def extract_inbound_attachments(self, access_token: str, payload: dict[str, Any]) -> list[InboundEmailAttachment]:
