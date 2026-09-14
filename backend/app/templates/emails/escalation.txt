@@ -7,7 +7,9 @@ Montant concerne : {order_amount} {currency}
 Pieces jointes :
 {evidence_list}
 
-Merci de verifier a nouveau les elements transmis et de regulariser le paiement si la demande est justifiee.
+Le dossier ayant deja fait l'objet de relances sans resolution suffisamment precise, merci de le transmettre a un niveau de revue superieur.
+
+Si les elements transmis confirment la demande, merci de regulariser le paiement. Si le refus est maintenu, merci de communiquer le motif individualise, le calcul applique et la piece ou regle utilisee pour cette decision afin que le restaurant puisse comprendre et, le cas echeant, completer utilement le dossier.
 
 Cordialement,
 {signature}
