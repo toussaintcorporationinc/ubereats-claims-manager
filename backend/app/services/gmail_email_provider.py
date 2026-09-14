@@ -883,6 +883,7 @@ class GmailEmailProvider:
                 refresh_token,
                 client_id=oauth_config.client_id,
                 oauth_secret=oauth_config.client_secret,
+                redirect_uri=oauth_config.redirect_uri,
             )
         except EmailProviderError as exc:
             if gmail_authorization_needs_reconnect(exc.message):
@@ -950,15 +951,17 @@ class GmailEmailProvider:
         *,
         client_id: str | None = None,
         oauth_secret: str | None = None,
+        redirect_uri: str | None = None,
     ) -> dict:
         settings = get_settings()
         effective_client_id = client_id or settings.gmail_oauth_client_id
         effective_secret = oauth_secret or settings.gmail_oauth_client_secret
+        effective_redirect_uri = redirect_uri or settings.gmail_oauth_redirect_uri
         self.ensure_enabled_and_configured(
             require_secret=True,
             client_id=effective_client_id,
             oauth_secret=effective_secret,
-            redirect_uri=settings.gmail_oauth_redirect_uri,
+            redirect_uri=effective_redirect_uri,
         )
         return self.post_form(
             GMAIL_TOKEN_URL,
