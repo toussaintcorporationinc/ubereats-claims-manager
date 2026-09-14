@@ -23,7 +23,7 @@ const primaryNavigationHrefs = new Set([
   "/dashboard",
   "/relance-gmail",
   "/finance",
-  "/settings/email",
+  "/settings",
 ]);
 
 type Props = {
