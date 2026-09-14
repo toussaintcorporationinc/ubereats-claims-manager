@@ -1605,7 +1605,8 @@ def sync_gmail_inbound(
 
     request_payload = payload or GmailInboundSyncRequest()
     lookback_days = request_payload.lookback_days or settings.gmail_inbound_sync_lookback_days
-    max_messages = request_payload.max_messages or settings.gmail_inbound_max_messages_per_sync
+    requested_max_messages = request_payload.max_messages or settings.gmail_inbound_max_messages_per_sync
+    max_messages = min(requested_max_messages, 500)
     service = GmailInboundSyncService(provider)
     try:
         result = service.sync(
