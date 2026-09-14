@@ -121,6 +121,287 @@ class PreparedDraftResumeResult:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class FollowupQueueRepairResult:
+    requeued_quota_drafts: int = 0
+    completed_sent_tasks: int = 0
+    aligned_task_states: int = 0
+    repaired_thread_links: int = 0
+    unresolved_send_requested: int = 0
+    quota_deferred_thread_repairs: int = 0
+
+
+def gmail_provider_error_is_retryable(message: str | None) -> bool:
+    text = str(message or "").strip().casefold()
+    if not text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "gmail_quota_retry_after:",
+            "quota exceeded",
+            "userratelimitexceeded",
+            "ratelimitexceeded",
+            "rate limit exceeded",
+            "total query cost",
+            "retry after",
+        )
+    )
+
+
+def repair_followup_queue(
+    db: Session,
+    user: User,
+    provider: EmailProvider | None = None,
+    *,
+    max_items: int = 500,
+    max_remote_thread_repairs: int = 4,
+    stale_send_requested_minutes: int = 15,
+) -> FollowupQueueRepairResult:
+    """Reconcile recoverable follow-up states before the worker scans candidates.
+
+    This function only performs repairs that are safe and idempotent:
+    - complete a task when its provider draft is already confirmed sent;
+    - restore legacy Gmail quota failures to a retryable draft state;
+    - align task status with an already-created local/provider draft;
+    - recover a missing local Gmail thread from the mapped mailbox using the
+      exact Uber order identifier.
+
+    Ambiguous send_requested rows are never resent blindly because Gmail may
+    have accepted the send even if TENNET lost the API response.
+    """
+
+    tasks = list(
+        db.scalars(
+            select(FollowUpTask)
+            .join(ClaimOrder)
+            .join(Restaurant)
+            .where(
+                FollowUpTask.task_type.in_(tuple(FOLLOWUP_ACTION_BY_TASK.keys())),
+                FollowUpTask.status.in_(("pending", "draft_created", "provider_draft_created")),
+                Restaurant.active.is_(True),
+                Restaurant.autopilot_enabled.is_(True),
+            )
+            .order_by(FollowUpTask.due_at, FollowUpTask.id)
+            .limit(max(1, max_items))
+        )
+    )
+
+    requeued_quota_drafts = 0
+    completed_sent_tasks = 0
+    aligned_task_states = 0
+    repaired_thread_links = 0
+    unresolved_send_requested = 0
+    quota_deferred_thread_repairs = 0
+    remote_repairs_attempted = 0
+    blocked_remote_accounts: set[int] = set()
+    now = utc_now()
+    stale_cutoff = now - timedelta(minutes=max(1, stale_send_requested_minutes))
+
+    for task in tasks:
+        provider_draft = task.generated_provider_draft
+
+        if provider_draft is not None and provider_draft.status == "sent":
+            completed = complete_task_for_sent_provider_draft(db, user, provider_draft)
+            if completed is not None:
+                completed_sent_tasks += 1
+            continue
+
+        if provider_draft is not None and provider_draft.status == "send_requested":
+            updated_at = provider_draft.updated_at or provider_draft.created_at
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            if updated_at <= stale_cutoff:
+                unresolved_send_requested += 1
+            continue
+
+        if (
+            provider_draft is not None
+            and provider_draft.provider == "gmail"
+            and provider_draft.status == "failed"
+            and provider_draft.provider_draft_id
+            and gmail_provider_error_is_retryable(provider_draft.last_error or provider_draft.error_message)
+        ):
+            old_task_status = task.status
+            old_draft_status = provider_draft.status
+            provider_draft.status = "provider_draft_created"
+            provider_draft.updated_at = now
+            task.status = "provider_draft_created"
+            task.updated_at = now
+            add_audit_log(
+                db,
+                entity_type="email_provider_draft",
+                entity_id=provider_draft.id,
+                action="autopilot.self_heal_quota_draft",
+                user_id=user.id,
+                old_value={"status": old_draft_status, "task_status": old_task_status},
+                new_value={
+                    "status": provider_draft.status,
+                    "task_status": task.status,
+                    "reason": provider_draft.last_error or provider_draft.error_message,
+                },
+            )
+            requeued_quota_drafts += 1
+
+        if provider_draft is not None and provider_draft.status == "provider_draft_created":
+            if task.status != "provider_draft_created":
+                old_status = task.status
+                task.status = "provider_draft_created"
+                task.updated_at = now
+                add_audit_log(
+                    db,
+                    entity_type="followup_task",
+                    entity_id=task.id,
+                    action="autopilot.self_heal_followup_state",
+                    user_id=user.id,
+                    old_value={"status": old_status},
+                    new_value={"status": task.status, "provider_draft_id": provider_draft.id},
+                )
+                aligned_task_states += 1
+        elif provider_draft is None and task.generated_email_draft_id is not None and task.status == "pending":
+            task.status = "draft_created"
+            task.updated_at = now
+            add_audit_log(
+                db,
+                entity_type="followup_task",
+                entity_id=task.id,
+                action="autopilot.self_heal_followup_state",
+                user_id=user.id,
+                old_value={"status": "pending"},
+                new_value={"status": "draft_created", "email_draft_id": task.generated_email_draft_id},
+            )
+            aligned_task_states += 1
+
+        if latest_verified_followup_email_thread(db, task.order) is not None:
+            continue
+        if provider is None or remote_repairs_attempted >= max_remote_thread_repairs:
+            continue
+
+        mapping = db.scalar(
+            select(EmailAccountRestaurantMapping)
+            .where(EmailAccountRestaurantMapping.restaurant_id == task.order.restaurant_id)
+            .order_by(EmailAccountRestaurantMapping.id.desc())
+            .limit(1)
+        )
+        if mapping is None or mapping.email_account_id in blocked_remote_accounts:
+            continue
+        account = db.get(EmailAccount, mapping.email_account_id)
+        if account is None or account.disconnected_at is not None or account.user_id != user.id:
+            continue
+
+        list_refs = getattr(provider, "list_message_refs_for_account", None)
+        get_payload = getattr(provider, "get_message_for_account_payload", None)
+        if not callable(list_refs) or not callable(get_payload):
+            continue
+
+        raw_identifier = task.order.uber_order_number or task.order.internal_reference
+        normalized_identifier = "".join(
+            character for character in str(raw_identifier or "").upper() if character.isalnum()
+        )
+        if not normalized_identifier:
+            continue
+
+        remote_repairs_attempted += 1
+        try:
+            refs = list(
+                list_refs(
+                    db,
+                    account,
+                    query=f'in:sent "{raw_identifier}"',
+                    max_results=5,
+                )
+            )
+            repaired = False
+            for ref in refs:
+                message_id = str(ref.get("id") or "") if isinstance(ref, dict) else str(ref or "")
+                if not message_id:
+                    continue
+                payload = get_payload(
+                    db,
+                    account,
+                    message_id,
+                    include_attachments=False,
+                    enrich_starred=False,
+                )
+                if not payload.provider_thread_id:
+                    continue
+                extracted_identifier = current_payload_response_order_number(payload)
+                payload_text = f"{payload.subject or ''}\n{payload.body_text or ''}\n{payload.snippet or ''}"
+                payload_key = "".join(character for character in payload_text.upper() if character.isalnum())
+                if extracted_identifier:
+                    identity_matches = order_identifiers_equivalent(
+                        extracted_identifier,
+                        task.order.uber_order_number,
+                        task.order.internal_reference,
+                    )
+                else:
+                    identity_matches = normalized_identifier in payload_key
+                if not identity_matches:
+                    continue
+
+                existing_thread = db.scalar(
+                    select(EmailThread.id)
+                    .where(
+                        EmailThread.order_id == task.order_id,
+                        EmailThread.provider == "gmail",
+                        EmailThread.direction == "outbound",
+                        EmailThread.thread_id == payload.provider_thread_id,
+                    )
+                    .limit(1)
+                )
+                if existing_thread is None:
+                    db.add(
+                        EmailThread(
+                            order_id=task.order_id,
+                            provider="gmail",
+                            thread_id=payload.provider_thread_id,
+                            message_id=payload.provider_message_id,
+                            direction="outbound",
+                            subject=payload.subject,
+                            body=payload.body_text or payload.snippet,
+                            sent_at=payload.received_at,
+                        )
+                    )
+                    db.flush()
+                add_audit_log(
+                    db,
+                    entity_type="followup_task",
+                    entity_id=task.id,
+                    action="autopilot.self_heal_gmail_thread",
+                    user_id=user.id,
+                    new_value={
+                        "order_id": task.order_id,
+                        "email_account_id": account.id,
+                        "provider_thread_id": payload.provider_thread_id,
+                        "provider_message_id": payload.provider_message_id,
+                    },
+                )
+                repaired_thread_links += 1
+                repaired = True
+                break
+            if repaired:
+                continue
+        except Exception as exc:  # noqa: BLE001 - quota pauses must not poison the worker.
+            retry_after = parse_gmail_retry_after(
+                str(getattr(exc, "message", exc)),
+                safety_seconds=get_settings().gmail_quota_retry_safety_seconds,
+            )
+            if retry_after is not None or gmail_provider_error_is_retryable(str(getattr(exc, "message", exc))):
+                blocked_remote_accounts.add(account.id)
+                quota_deferred_thread_repairs += 1
+                continue
+
+    db.flush()
+    return FollowupQueueRepairResult(
+        requeued_quota_drafts=requeued_quota_drafts,
+        completed_sent_tasks=completed_sent_tasks,
+        aligned_task_states=aligned_task_states,
+        repaired_thread_links=repaired_thread_links,
+        unresolved_send_requested=unresolved_send_requested,
+        quota_deferred_thread_repairs=quota_deferred_thread_repairs,
+    )
+
+
 def today_utc_start() -> datetime:
     now = utc_now()
     return datetime.combine(now.date(), time.min, tzinfo=timezone.utc)
