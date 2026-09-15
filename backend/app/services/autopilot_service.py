@@ -1450,26 +1450,27 @@ def appeal_candidates(
             return []
         statement = statement.where(AppealWorkflow.restaurant_id.in_(restaurant_ids))
 
-    # Scan well beyond the small worker send batch. Limiting before local
-    # eligibility checks can permanently starve the queue when the oldest few
-    # workflows are blocked by cooldown/evidence/manual-review rules.
+    # Scan far beyond the worker send batch. A SQL LIMIT applied before
+    # eligibility checks caused the same few locally-blocked appeals to occupy
+    # every cycle and starve later valid dossiers.
     if limit is not None and limit > 0:
         statement = statement.limit(max(limit * 100, limit))
     workflows = list(db.scalars(statement).all())
 
-    eligible_workflows: list[AppealWorkflow] = []
+    eligible: list[AppealWorkflow] = []
+    blocked: list[AppealWorkflow] = []
     for workflow in workflows:
         repair_appeal_workflow_for_autopilot(db, user, workflow, allow_ai=False)
-        if appeal_action_type(workflow) != "send_appeal":
-            continue
-        if appeal_skip_reason(db, workflow) is not None:
-            continue
-        eligible_workflows.append(workflow)
+        if appeal_action_type(workflow) == "send_appeal" and appeal_skip_reason(db, workflow) is None:
+            eligible.append(workflow)
+        else:
+            blocked.append(workflow)
 
-    # Fair-share across Gmail accounts, just like follow-ups, so one mailbox or
-    # restaurant cannot monopolize the front of the appeal queue.
-    if limit is not None and limit > 0 and len(eligible_workflows) > limit:
-        restaurant_ids_for_workflows = {workflow.restaurant_id for workflow in eligible_workflows}
+    # Fair-share eligible appeals across Gmail accounts so each connected
+    # mailbox gets access to its own 500/24h allowance.
+    selected: list[AppealWorkflow] = []
+    if limit is not None and limit > 0 and len(eligible) > limit:
+        restaurant_ids_for_workflows = {workflow.restaurant_id for workflow in eligible}
         mapping_rows = db.execute(
             select(
                 EmailAccountRestaurantMapping.restaurant_id,
@@ -1484,7 +1485,7 @@ def appeal_candidates(
         }
         buckets: dict[tuple[str, int], list[AppealWorkflow]] = {}
         bucket_order: list[tuple[str, int]] = []
-        for workflow in eligible_workflows:
+        for workflow in eligible:
             restaurant_key = workflow.restaurant_id
             email_account_id = account_by_restaurant.get(restaurant_key)
             bucket_key = (
@@ -1497,7 +1498,6 @@ def appeal_candidates(
                 bucket_order.append(bucket_key)
             buckets[bucket_key].append(workflow)
 
-        selected: list[AppealWorkflow] = []
         while len(selected) < limit:
             added = False
             for bucket_key in bucket_order:
@@ -1510,22 +1510,35 @@ def appeal_candidates(
                     break
             if not added:
                 break
-        eligible_workflows = selected
-    elif limit is not None and limit > 0:
-        eligible_workflows = eligible_workflows[:limit]
+    else:
+        selected = eligible[:limit] if limit is not None and limit > 0 else list(eligible)
 
+    # Preserve blocked-case diagnostics when there are not enough eligible
+    # candidates to fill the requested batch. This keeps API observability and
+    # regression behavior without letting blockers starve the queue.
+    if limit is not None and limit > 0:
+        remaining = limit - len(selected)
+        if remaining > 0:
+            selected.extend(blocked[:remaining])
+    else:
+        selected.extend(blocked)
+
+    eligible_ids = {workflow.id for workflow in eligible}
     return [
         Candidate(
             case_type="appeal_workflow",
             case_id=workflow.id,
             restaurant_id=workflow.restaurant_id,
-            action_type="send_appeal",
-            reason="appeal_due_eligible",
+            action_type=appeal_action_type(workflow),
+            reason=(
+                "appeal_due_eligible"
+                if workflow.id in eligible_ids
+                else "appeal_due_blocked_probe"
+            ),
             object=workflow,
         )
-        for workflow in eligible_workflows
+        for workflow in selected
     ]
-
 
 def appeal_action_type(workflow: AppealWorkflow) -> str:
     if workflow.next_action_type == "manual_review":
