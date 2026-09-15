@@ -1358,6 +1358,57 @@ def test_autopilot_replies_to_new_starred_response_even_when_cooldown_active(
     assert workflow.appeal_attempt_count == 2
 
 
+def test_appeal_candidates_do_not_starve_eligible_cases_behind_blocked_ones(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client, "Queue Starvation Test")
+    account = add_gmail_account(db_session)
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert owner is not None
+
+    workflows: list[AppealWorkflow] = []
+    orders: list[ClaimOrder] = []
+    for index in range(5):
+        ready = create_ready_order(client, restaurant["id"], f"STARVE-{index}")
+        order = db_session.get(ClaimOrder, ready["order_id"])
+        assert order is not None
+        order.status = "refused"
+        workflow = AppealWorkflow(
+            case_type="claim_order",
+            case_id=order.id,
+            restaurant_id=order.restaurant_id,
+            claim_order_id=order.id,
+            status="appeal_needed",
+            refusal_count=1,
+            next_action_type="create_appeal_draft",
+            next_action_at=utc_now() - timedelta(hours=1),
+        )
+        db_session.add(workflow)
+        workflows.append(workflow)
+        orders.append(order)
+    db_session.commit()
+
+    # The first four workflows are locally blocked because they have no
+    # verified Uber reply thread. The fifth is safe and must still surface
+    # inside a max_candidates=4 worker batch.
+    add_starred_inbound_message(db_session, orders[4], account)
+
+    candidates = iter_candidates(
+        db_session,
+        owner,
+        "appeals",
+        restaurant["id"],
+        max_candidates=4,
+    )
+
+    assert len(candidates) == 4
+    assert candidates[0].case_id == workflows[4].id
+    assert candidates[0].reason == "appeal_due_eligible"
+
+
 def test_autopilot_appeal_requires_verified_gmail_thread(
     client: TestClient,
     db_session: Session,
