@@ -190,13 +190,17 @@ def _next_backfill_target(db: Session, service: GmailInboundSyncService, owner: 
         account.id: _completed_backfill_days(db, account.id)
         for account in accounts
     }
-    day = HISTORICAL_BACKFILL_START
-    while day <= today:
+
+    # Drain newest Uber history first. This feeds currently actionable
+    # cancellations/refusals into TENNET quickly while still walking all the
+    # way back to 2026-01-01 over subsequent cycles.
+    day = today
+    while day >= HISTORICAL_BACKFILL_START:
         day_key = day.isoformat()
         for account in accounts:
             if day_key not in completed_by_account[account.id]:
                 return account, day
-        day += timedelta(days=1)
+        day -= timedelta(days=1)
     return None, None
 
 
@@ -246,7 +250,15 @@ def _run_gmail_backfill(
         }
 
     next_day = day + timedelta(days=1)
-    query = f"after:{day.strftime('%Y/%m/%d')} before:{next_day.strftime('%Y/%m/%d')}"
+    # Restrict historical reads to Uber traffic. Fetching the entire mailbox
+    # consumed Gmail "Total Query Cost" without helping recovery throughput.
+    # 500 relevant Uber messages per account/day is a deliberately hard batch
+    # ceiling; normal volumes are far below it.
+    query = (
+        f"after:{day.strftime('%Y/%m/%d')} "
+        f"before:{next_day.strftime('%Y/%m/%d')} "
+        "{from:uber.com to:restaurantsfrance@uber.com}"
+    )
     try:
         result = service.sync_account(
             db,
@@ -258,7 +270,7 @@ def _run_gmail_backfill(
             apply_reviews=True,
             reprocess_existing_limit=500,
             query_override=query,
-            full_history=True,
+            full_history=False,
             include_starred_discovery=False,
         )
     except EmailProviderError as exc:
