@@ -2,10 +2,21 @@ name: TENNET Gmail history backfill
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/tennet-gmail-backfill.yml'
+      - 'backend/app/routes/runtime.py'
+      - 'backend/app/services/gmail_inbound_sync_service.py'
+      - 'backend/app/services/gmail_email_provider.py'
+  schedule:
+    - cron: '17 3 * * *'
 
 permissions:
   contents: read
   id-token: write
+  actions: write
 
 concurrency:
   group: tennet-gmail-history-backfill
@@ -14,59 +25,65 @@ concurrency:
 jobs:
   backfill:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
-      - name: Inspect available TENNET production secrets
-        env:
-          DATABASE_URL_1: ${{ secrets.DATABASE_URL }}
-          DATABASE_URL_2: ${{ secrets.DATABASE_URL_PRODUCTION }}
-          DATABASE_URL_3: ${{ secrets.TENNET_DATABASE_URL }}
-          DATABASE_URL_4: ${{ secrets.POSTGRES_URL }}
-          DATABASE_URL_5: ${{ secrets.NEON_DATABASE_URL }}
-          SECRET_KEY_VALUE: ${{ secrets.SECRET_KEY }}
-          GMAIL_CLIENT_ID_VALUE: ${{ secrets.GMAIL_OAUTH_CLIENT_ID }}
-          GMAIL_CLIENT_SECRET_VALUE: ${{ secrets.GMAIL_OAUTH_CLIENT_SECRET }}
+      - name: Drain Uber Gmail history continuously
         shell: bash
         run: |
-          set -euo pipefail
-          for name in DATABASE_URL_1 DATABASE_URL_2 DATABASE_URL_3 DATABASE_URL_4 DATABASE_URL_5 SECRET_KEY_VALUE GMAIL_CLIENT_ID_VALUE GMAIL_CLIENT_SECRET_VALUE; do
-            if [[ -n "${!name:-}" ]]; then
-              echo "$name=PRESENT"
-            else
-              echo "$name=MISSING"
+          set -u
+
+          for tick in $(seq 1 10); do
+            echo "TENNET Gmail history tick ${tick}/10"
+
+            oidc_json="$(curl --fail-with-body --silent --show-error \
+              --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=tennet-runtime")" || {
+                echo "Unable to mint OIDC token for this tick" >&2
+                if [ "$tick" -lt 10 ]; then sleep 120; fi
+                continue
+              }
+
+            runtime_token="$(python -c 'import json,sys; print(json.load(sys.stdin)["value"])' <<<"$oidc_json")"
+            echo "::add-mask::$runtime_token"
+
+            status="$(curl --silent --show-error --request POST \
+              --header "Authorization: Bearer ${runtime_token}" \
+              --header "Accept: application/json" \
+              --output response.json \
+              --write-out "%{http_code}" \
+              "https://ubereats-claims-manager.vercel.app/api/v1/runtime/gmail-backfill" || true)"
+
+            cat response.json 2>/dev/null || true
+            echo
+            echo "TENNET Gmail history HTTP ${status}"
+
+            if [ -f response.json ] && grep -q '"status":"complete"' response.json; then
+              echo "Historical Gmail backfill is complete."
+              break
+            fi
+
+            if [ "$tick" -lt 10 ]; then
+              sleep 120
             fi
           done
 
-      - name: Get short-lived GitHub OIDC token
+      - name: Re-arm TENNET Gmail history backfill
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          oidc_json="$(curl --fail-with-body --silent --show-error \
-            --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=tennet-runtime")"
-          runtime_token="$(python -c 'import json,sys; print(json.load(sys.stdin)["value"])' <<<"$oidc_json")"
-          echo "::add-mask::$runtime_token"
-          python - "$runtime_token" <<'PY'
-          import base64, json, sys
-          payload = sys.argv[1].split(".")[1]
-          payload += "=" * (-len(payload) % 4)
-          claims = json.loads(base64.urlsafe_b64decode(payload))
-          safe = {k: claims.get(k) for k in ("iss", "aud", "repository", "ref", "workflow_ref")}
-          print("TENNET_OIDC_SAFE_CLAIMS=" + json.dumps(safe, sort_keys=True))
-          PY
-          echo "TENNET_RUNTIME_TOKEN=$runtime_token" >> "$GITHUB_ENV"
 
-      - name: Backfill one Gmail day safely
-        run: |
-          set -euo pipefail
-          status="$(curl --silent --show-error --request POST \
-            --header "Authorization: Bearer ${TENNET_RUNTIME_TOKEN}" \
-            --header "Accept: application/json" \
-            --output response.json \
-            --write-out "%{http_code}" \
-            "https://ubereats-claims-manager.vercel.app/api/v1/runtime/gmail-backfill")"
-          cat response.json
-          case "$status" in
-            2*) ;;
-            *) echo "TENNET history backfill returned HTTP $status" >&2; exit 1 ;;
-          esac
+          if [ -f response.json ] && grep -q '"status":"complete"' response.json; then
+            echo "Backfill complete; no re-arm required."
+            exit 0
+          fi
+
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/tennet-gmail-backfill.yml/dispatches" \
+            --data '{"ref":"main"}'
