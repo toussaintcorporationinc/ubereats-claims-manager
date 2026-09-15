@@ -1449,21 +1449,81 @@ def appeal_candidates(
         if not restaurant_ids:
             return []
         statement = statement.where(AppealWorkflow.restaurant_id.in_(restaurant_ids))
+
+    # Scan well beyond the small worker send batch. Limiting before local
+    # eligibility checks can permanently starve the queue when the oldest few
+    # workflows are blocked by cooldown/evidence/manual-review rules.
     if limit is not None and limit > 0:
-        statement = statement.limit(limit)
-    workflows = db.scalars(statement).all()
+        statement = statement.limit(max(limit * 100, limit))
+    workflows = list(db.scalars(statement).all())
+
+    eligible_workflows: list[AppealWorkflow] = []
     for workflow in workflows:
         repair_appeal_workflow_for_autopilot(db, user, workflow, allow_ai=False)
+        if appeal_action_type(workflow) != "send_appeal":
+            continue
+        if appeal_skip_reason(db, workflow) is not None:
+            continue
+        eligible_workflows.append(workflow)
+
+    # Fair-share across Gmail accounts, just like follow-ups, so one mailbox or
+    # restaurant cannot monopolize the front of the appeal queue.
+    if limit is not None and limit > 0 and len(eligible_workflows) > limit:
+        restaurant_ids_for_workflows = {workflow.restaurant_id for workflow in eligible_workflows}
+        mapping_rows = db.execute(
+            select(
+                EmailAccountRestaurantMapping.restaurant_id,
+                EmailAccountRestaurantMapping.email_account_id,
+            ).where(
+                EmailAccountRestaurantMapping.restaurant_id.in_(restaurant_ids_for_workflows)
+            )
+        ).all()
+        account_by_restaurant = {
+            restaurant_id: email_account_id
+            for restaurant_id, email_account_id in mapping_rows
+        }
+        buckets: dict[tuple[str, int], list[AppealWorkflow]] = {}
+        bucket_order: list[tuple[str, int]] = []
+        for workflow in eligible_workflows:
+            restaurant_key = workflow.restaurant_id
+            email_account_id = account_by_restaurant.get(restaurant_key)
+            bucket_key = (
+                ("account", email_account_id)
+                if email_account_id is not None
+                else ("restaurant", restaurant_key)
+            )
+            if bucket_key not in buckets:
+                buckets[bucket_key] = []
+                bucket_order.append(bucket_key)
+            buckets[bucket_key].append(workflow)
+
+        selected: list[AppealWorkflow] = []
+        while len(selected) < limit:
+            added = False
+            for bucket_key in bucket_order:
+                bucket = buckets[bucket_key]
+                if not bucket:
+                    continue
+                selected.append(bucket.pop(0))
+                added = True
+                if len(selected) >= limit:
+                    break
+            if not added:
+                break
+        eligible_workflows = selected
+    elif limit is not None and limit > 0:
+        eligible_workflows = eligible_workflows[:limit]
+
     return [
         Candidate(
             case_type="appeal_workflow",
             case_id=workflow.id,
             restaurant_id=workflow.restaurant_id,
-            action_type=appeal_action_type(workflow),
-            reason="appeal_due",
+            action_type="send_appeal",
+            reason="appeal_due_eligible",
             object=workflow,
         )
-        for workflow in workflows
+        for workflow in eligible_workflows
     ]
 
 
