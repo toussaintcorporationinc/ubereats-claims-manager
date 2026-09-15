@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - name: Run TENNET followups every three minutes
+      - name: Run TENNET followups at Gmail-safe maximum pace
         shell: bash
         run: |
           set -u
@@ -34,7 +34,7 @@ jobs:
               --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
               "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=tennet-runtime")" || {
                 echo "Unable to mint OIDC token for this tick" >&2
-                if [ "$tick" -lt 10 ]; then sleep 180; fi
+                if [ "$tick" -lt 10 ]; then sleep 173; fi
                 continue
               }
 
@@ -53,7 +53,7 @@ jobs:
             echo "TENNET runtime HTTP ${status}"
 
             if [ "$tick" -lt 10 ]; then
-              sleep 180
+              sleep 173
             fi
           done
 
