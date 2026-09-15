@@ -1,6 +1,7 @@
 import json
 import time
 import logging
+from collections import Counter
 from dataclasses import asdict
 from datetime import date, timedelta
 from secrets import compare_digest
@@ -304,6 +305,20 @@ def _run_gmail_backfill(
 
 
 
+def _autopilot_blocker_summary(result) -> list[dict[str, object]]:
+    if result is None:
+        return []
+    counts = Counter(
+        action.skipped_reason
+        for action in result.actions
+        if action.status == "skipped" and action.skipped_reason
+    )
+    return [
+        {"reason": reason, "count": count}
+        for reason, count in counts.most_common(20)
+    ]
+
+
 def _run_followup_worker(
     authorization: str | None,
     db: Session,
@@ -353,7 +368,7 @@ def _run_followup_worker(
     appeal_result = None
     refund_result = None
     lane_order = ["followups", "appeals", "refunds"]
-    lane_offset = int(time.time() // 180) % len(lane_order)
+    lane_offset = int(time.time() // 173) % len(lane_order)
     lane_order = lane_order[lane_offset:] + lane_order[:lane_offset]
 
     try:
@@ -366,7 +381,7 @@ def _run_followup_worker(
                     restaurant_id=None,
                     dry_run=False,
                     provider=provider,
-                    max_candidates=4,
+                    max_candidates=12,
                     trusted_runtime_followups=True,
                 )
             elif lane == "appeals":
@@ -377,7 +392,7 @@ def _run_followup_worker(
                     restaurant_id=None,
                     dry_run=False,
                     provider=provider,
-                    max_candidates=4,
+                    max_candidates=12,
                     trusted_runtime_appeals=True,
                 )
             else:
@@ -385,7 +400,7 @@ def _run_followup_worker(
                     db,
                     owner,
                     provider,
-                    max_candidates=4,
+                    max_candidates=12,
                 )
     except AutopilotError as exc:
         db.rollback()
@@ -470,7 +485,9 @@ def _run_followup_worker(
         "error_message": error_message,
         "lane_order": lane_order,
         "followups": followup_payload,
+        "followup_blockers": _autopilot_blocker_summary(followup_result),
         "appeals": appeal_payload,
+        "appeal_blockers": _autopilot_blocker_summary(appeal_result),
         "customer_refunds": refund_payload,
         "self_heal": asdict(repair),
     }
