@@ -16,9 +16,16 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.models import AuditLog, User
+from app.models import AuditLog, ClaimOrder, FollowUpTask, Restaurant, User
+from app.models.domain import utc_now
 from app.services.audit import add_audit_log
-from app.services.autopilot_service import AutopilotError, repair_followup_queue, run_autopilot
+from app.services.autopilot_service import (
+    FOLLOWUP_ACTION_BY_TASK,
+    AutopilotError,
+    followup_skip_reason,
+    repair_followup_queue,
+    run_autopilot,
+)
 from app.services.customer_refund_autopilot_service import run_customer_refund_autopilot
 from app.services.email_provider import EmailProviderError
 from app.services.gmail_email_provider import GmailEmailProvider
@@ -331,6 +338,59 @@ def _autopilot_blocker_summary(result) -> list[dict[str, object]]:
     ]
 
 
+def _followup_queue_diagnostics(
+    db: Session,
+    *,
+    scan_limit: int = 50,
+) -> dict[str, object]:
+    """Explain why due follow-up tasks are not reaching AutoPilot.
+
+    This is read-only diagnostic metadata for the trusted runtime worker.  It
+    deliberately contains counts/reasons only: no order numbers, customer data,
+    email addresses, message bodies or provider identifiers.
+    """
+    tasks = list(
+        db.scalars(
+            select(FollowUpTask)
+            .join(ClaimOrder, FollowUpTask.order_id == ClaimOrder.id)
+            .join(Restaurant, ClaimOrder.restaurant_id == Restaurant.id)
+            .where(
+                FollowUpTask.task_type.in_(tuple(FOLLOWUP_ACTION_BY_TASK.keys())),
+                FollowUpTask.status.in_(("pending", "draft_created", "provider_draft_created")),
+                FollowUpTask.due_at <= utc_now(),
+            )
+            .order_by(FollowUpTask.due_at, FollowUpTask.id)
+            .limit(scan_limit)
+        ).all()
+    )
+
+    blockers: Counter[str] = Counter()
+    status_counts: Counter[str] = Counter()
+    for task in tasks:
+        status_counts[task.status] += 1
+        restaurant = task.order.restaurant
+        if not restaurant.active:
+            reason = "restaurant_inactive"
+        elif not restaurant.autopilot_enabled:
+            reason = "restaurant_autopilot_disabled"
+        else:
+            reason = followup_skip_reason(db, task) or "eligible"
+        blockers[reason] += 1
+
+    return {
+        "due_scanned": len(tasks),
+        "scan_limit": scan_limit,
+        "possibly_truncated": len(tasks) >= scan_limit,
+        "status_counts": dict(status_counts),
+        "blockers": [
+            {"reason": reason, "count": count}
+            for reason, count in blockers.most_common(20)
+        ],
+        "cooldown_hours": get_settings().autopilot_cooldown_hours,
+        "max_followups_per_order": get_settings().max_followups_per_order,
+    }
+
+
 def _run_followup_worker(
     authorization: str | None,
     db: Session,
@@ -487,6 +547,12 @@ def _run_followup_worker(
         or ("; ".join(refund_payload["errors"][:5]) if refund_payload["errors"] else None)
     )
 
+    followup_queue = (
+        _followup_queue_diagnostics(db)
+        if int(followup_payload["total_candidates"]) == 0
+        else {"status": "candidates_present"}
+    )
+
     payload = {
         "status": "failed" if failed_count else "completed",
         "run_id": followup_payload["run_id"] or appeal_payload["run_id"],
@@ -498,6 +564,7 @@ def _run_followup_worker(
         "lane_order": lane_order,
         "followups": followup_payload,
         "followup_blockers": _autopilot_blocker_summary(followup_result),
+        "followup_queue": followup_queue,
         "appeals": appeal_payload,
         "appeal_blockers": _autopilot_blocker_summary(appeal_result),
         "customer_refunds": refund_payload,
