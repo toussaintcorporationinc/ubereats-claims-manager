@@ -1,49 +1,27 @@
 name: TENNET Gmail history backfill
 
-# Historical recovery is intentionally manual while TENNET is draining the
-# live follow-up queue. Continuous historical reads consumed Gmail per-user
-# query quota and could throttle verified sends. Live Gmail sync remains
-# enabled in tennet-gmail-sync.yml.
+# PAUSED: historical mailbox recovery must not compete with live TENNET sends.
+# The live Gmail sync and follow-up worker remain active. Re-enable historical
+# recovery only after the live queue has drained.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/tennet-gmail-backfill.yml'
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: tennet-gmail-history-backfill
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  backfill:
+  paused:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 2
     steps:
-      - name: Run one bounded historical Gmail backfill pass
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          oidc_json="$(curl --fail-with-body --silent --show-error \
-            --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=tennet-runtime")"
-
-          runtime_token="$(python -c 'import json,sys; print(json.load(sys.stdin)["value"])' <<<"$oidc_json")"
-          echo "::add-mask::$runtime_token"
-
-          status="$(curl --silent --show-error --request POST \
-            --header "Authorization: Bearer ${runtime_token}" \
-            --header "Accept: application/json" \
-            --output response.json \
-            --write-out "%{http_code}" \
-            "https://ubereats-claims-manager.vercel.app/api/v1/runtime/gmail-backfill")"
-
-          cat response.json
-          echo
-          echo "TENNET Gmail history HTTP ${status}"
-
-          case "$status" in
-            2*) ;;
-            *) echo "Historical backfill returned HTTP $status" >&2; exit 1 ;;
-          esac
+      - name: Historical Gmail backfill paused
+        run: echo "Historical Gmail backfill is paused to preserve Gmail quota for live TENNET sends."
