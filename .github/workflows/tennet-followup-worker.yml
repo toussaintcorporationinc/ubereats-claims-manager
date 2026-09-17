@@ -2,8 +2,6 @@ name: TENNET followup worker
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '*/30 * * * *'
   push:
     branches:
       - main
