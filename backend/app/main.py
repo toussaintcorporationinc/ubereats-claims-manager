@@ -163,5 +163,9 @@ app.include_router(dashboard.router)
 app.include_router(response_reviews.router)
 app.include_router(users.router)
 app.include_router(smart_import.router)
+# Vercel routes public /api/* traffic to the backend service. Register the
+# Uber connector under both forms so signed Uber webhooks remain reachable
+# whether the service router preserves or strips the /api prefix.
+app.include_router(uber.router, prefix="/api")
 app.include_router(uber.router)
 app.include_router(workspace.router)
