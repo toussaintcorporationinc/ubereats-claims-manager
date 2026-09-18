@@ -1319,6 +1319,45 @@ def test_autopilot_replies_to_starred_thread_without_amount(
     assert "TENNET" not in draft.body
 
 
+def test_autopilot_starred_reply_zero_amount_avoids_payment_claim(
+    client: TestClient,
+    db_session: Session,
+    fake_gmail_provider: FakeAutopilotGmailProvider,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client, "Frit Dodo")
+    ready = create_ready_order(client, restaurant["id"], "ZERO1")
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    assert order is not None
+    order.order_amount = Decimal("0.00")
+    order.status = "refused"
+    workflow = AppealWorkflow(
+        case_type="claim_order",
+        case_id=order.id,
+        restaurant_id=order.restaurant_id,
+        claim_order_id=order.id,
+        status="appeal_needed",
+        refusal_count=1,
+        next_action_type="create_appeal_draft",
+        next_action_at=utc_now() - timedelta(hours=1),
+    )
+    db_session.add(workflow)
+    db_session.commit()
+    account = add_gmail_account(db_session)
+    add_starred_inbound_message(db_session, order, account)
+
+    response = client.post("/v1/autopilot/run", json={"mode": "appeals", "restaurant_id": restaurant["id"], "dry_run": False})
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["run"]["sent_count"] == 1
+    draft = db_session.scalar(select(EmailDraft).where(EmailDraft.order_id == order.id).order_by(EmailDraft.id.desc()))
+    assert draft is not None
+    assert "Montant concerne : 0.00" not in draft.body
+    assert "confirmer le paiement du montant concerne" not in draft.body
+    assert "rendre une decision individualisee" in draft.body
+
+
 def test_autopilot_replies_to_new_starred_response_even_when_cooldown_active(
     client: TestClient,
     db_session: Session,
