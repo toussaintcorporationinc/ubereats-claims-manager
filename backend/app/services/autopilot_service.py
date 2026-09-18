@@ -2612,12 +2612,24 @@ def build_starred_thread_reply_body(
         "Bonjour,",
         opening,
     ]
-    if order.order_amount is not None:
+    positive_amount = (
+        order.order_amount is not None
+        and Decimal(order.order_amount) > Decimal("0")
+    )
+    if positive_amount:
         paragraphs.append(f"Montant concerne : {format_amount(order.order_amount)} {order.currency or 'EUR'}")
+    request_line = (
+        "Merci de rouvrir ce dossier et de confirmer le paiement du montant concerne. "
+        "A defaut, indiquez le motif precis, le calcul retenu et la piece exacte qui justifierait le refus."
+        if positive_amount
+        else
+        "Merci de rouvrir ce dossier et de rendre une decision individualisee. "
+        "A defaut, indiquez le motif precis, le calcul retenu et la piece exacte qui justifierait le refus."
+    )
     paragraphs.extend(
         [
             argument,
-            "Merci de rouvrir ce dossier et de confirmer le paiement du montant concerne. A defaut, indiquez le motif precis, le calcul retenu et la piece exacte qui justifierait le refus.",
+            request_line,
             f"Cordialement,\n{format_restaurant_signature(restaurant) if restaurant else 'Restaurant'}",
         ]
     )
