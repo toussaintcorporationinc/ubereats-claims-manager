@@ -58,3 +58,18 @@ jobs:
               sleep 90
             fi
           done
+
+          echo "TENNET followup drain after historical recovery"
+          status="$(curl --silent --show-error --request POST \
+            --header "Authorization: Bearer ${runtime_token}" \
+            --header "Accept: application/json" \
+            --output followup-response.json \
+            --write-out "%{http_code}" \
+            "https://ubereats-claims-manager.vercel.app/api/v1/runtime/followup-worker" || true)"
+          cat followup-response.json 2>/dev/null || true
+          echo
+          echo "TENNET followup drain HTTP ${status}"
+          case "$status" in
+            2*) ;;
+            *) echo "TENNET followup drain returned HTTP $status" >&2; exit 1 ;;
+          esac
