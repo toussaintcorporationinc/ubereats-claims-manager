@@ -1,9 +1,8 @@
 name: TENNET Gmail history backfill
 
-# PAUSED: historical mailbox recovery must not compete with live TENNET sends.
-# The live Gmail sync and follow-up worker remain active. Re-enable historical
-# recovery only after the live queue has drained.
 on:
+  schedule:
+    - cron: "4,14,24,34,44,54 * * * *"
   workflow_dispatch:
   push:
     branches:
@@ -13,15 +12,49 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: tennet-gmail-history-backfill
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  paused:
+  backfill:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 8
     steps:
-      - name: Historical Gmail backfill paused
-        run: echo "Historical Gmail backfill is paused to preserve Gmail quota for live TENNET sends."
+      - name: Drain two historical Uber Gmail slices
+        shell: bash
+        run: |
+          set -u
+
+          for tick in 1 2; do
+            echo "TENNET Gmail historical backfill ${tick}/2"
+
+            oidc_json="$(curl --fail-with-body --silent --show-error \
+              --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+              "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=tennet-runtime")" || exit 1
+
+            runtime_token="$(python -c 'import json,sys; print(json.load(sys.stdin)["value"])' <<<"$oidc_json")"
+            echo "::add-mask::$runtime_token"
+
+            status="$(curl --silent --show-error --request POST \
+              --header "Authorization: Bearer ${runtime_token}" \
+              --header "Accept: application/json" \
+              --output response.json \
+              --write-out "%{http_code}" \
+              "https://ubereats-claims-manager.vercel.app/api/v1/runtime/gmail-backfill" || true)"
+
+            cat response.json 2>/dev/null || true
+            echo
+            echo "TENNET backfill runtime HTTP ${status}"
+
+            case "$status" in
+              2*) ;;
+              *) echo "TENNET backfill returned HTTP $status" >&2; exit 1 ;;
+            esac
+
+            if [ "$tick" -lt 2 ]; then
+              sleep 90
+            fi
+          done
