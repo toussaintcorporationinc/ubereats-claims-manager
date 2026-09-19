@@ -31,6 +31,7 @@ from app.services.email_provider import EmailProviderError
 from app.services.gmail_email_provider import GmailEmailProvider
 from app.services.gmail_inbound_auto_sync_service import GmailInboundAutoSyncService
 from app.services.gmail_inbound_sync_service import GmailInboundSyncService
+from app.services.followup_policy_service import FOLLOWUP_ELIGIBLE_STATUSES, FollowUpPolicyService
 from app.services.runtime_settings_service import get_runtime_bool_setting
 from app.services.uber_connector_service import UberConnectorError, UberConnectorService
 
@@ -427,6 +428,18 @@ def _run_followup_worker(
             detail="No active TENNET owner is configured",
         )
 
+    # Rebuild any missing due follow-up tasks before scanning. This is
+    # idempotent: FollowUpPolicyService will not duplicate an existing task.
+    # It lets historical Gmail recovery feed the live sender immediately.
+    recalculate = FollowUpPolicyService().recalculate(
+        db,
+        owner,
+        select(ClaimOrder)
+        .where(ClaimOrder.status.in_(FOLLOWUP_ELIGIBLE_STATUSES))
+        .order_by(ClaimOrder.id),
+        dry_run=False,
+    )
+
     provider = GmailEmailProvider(trusted_runtime=True)
     repair = repair_followup_queue(
         db,
@@ -453,7 +466,7 @@ def _run_followup_worker(
                     restaurant_id=None,
                     dry_run=False,
                     provider=provider,
-                    max_candidates=12,
+                    max_candidates=100,
                     trusted_runtime_followups=True,
                 )
             elif lane == "appeals":
@@ -464,7 +477,7 @@ def _run_followup_worker(
                     restaurant_id=None,
                     dry_run=False,
                     provider=provider,
-                    max_candidates=12,
+                    max_candidates=100,
                     trusted_runtime_appeals=True,
                 )
             else:
@@ -472,7 +485,7 @@ def _run_followup_worker(
                     db,
                     owner,
                     provider,
-                    max_candidates=12,
+                    max_candidates=100,
                 )
     except AutopilotError as exc:
         db.rollback()
@@ -568,6 +581,12 @@ def _run_followup_worker(
         "appeals": appeal_payload,
         "appeal_blockers": _autopilot_blocker_summary(appeal_result),
         "customer_refunds": refund_payload,
+        "followup_recalculate": {
+            "created_tasks": recalculate.created_tasks,
+            "skipped_orders": recalculate.skipped_orders,
+            "manual_review_orders": recalculate.manual_review_orders,
+            "errors": recalculate.errors[:20],
+        },
         "self_heal": asdict(repair),
     }
     db.commit()
