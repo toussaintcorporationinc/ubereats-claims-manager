@@ -21,15 +21,15 @@ concurrency:
 jobs:
   backfill:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - name: Drain two historical Uber Gmail slices
         shell: bash
         run: |
           set -u
 
-          for tick in 1 2; do
-            echo "TENNET Gmail historical backfill ${tick}/2"
+          for tick in 1 2 3 4; do
+            echo "TENNET Gmail historical backfill ${tick}/4"
 
             oidc_json="$(curl --fail-with-body --silent --show-error \
               --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
@@ -54,7 +54,7 @@ jobs:
               *) echo "TENNET backfill returned HTTP $status" >&2; exit 1 ;;
             esac
 
-            if [ "$tick" -lt 2 ]; then
+            if [ "$tick" -lt 4 ]; then
               sleep 90
             fi
           done
