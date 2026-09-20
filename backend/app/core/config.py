@@ -120,7 +120,7 @@ class Settings(BaseSettings):
     autopilot_require_complete_evidence: bool = True
     autopilot_require_complete_restaurant_signature: bool = True
     autopilot_require_gmail_connected: bool = True
-    autopilot_cooldown_hours: int = 48
+    autopilot_cooldown_hours: int = 24
     autopilot_refusal_retry_enabled: bool = True
     autopilot_max_appeal_attempts: int = 6
     autopilot_never_close_on_refusal: bool = True

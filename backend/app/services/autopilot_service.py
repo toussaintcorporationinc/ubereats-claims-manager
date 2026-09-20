@@ -766,6 +766,7 @@ def run_autopilot(
     dry_run: bool,
     provider: EmailProvider,
     max_candidates: int | None = None,
+    trusted_runtime_initial_claims: bool = False,
     trusted_runtime_followups: bool = False,
     trusted_runtime_appeals: bool = False,
 ) -> AutopilotExecutionResult:
@@ -785,6 +786,7 @@ def run_autopilot(
         if (
             not settings.autopilot_enabled
             and not runtime_followups_enabled
+            and not (trusted_runtime_initial_claims and mode in {"initial_claims", "all"})
             and not (trusted_runtime_followups and mode in {"followups", "all"})
             and not (trusted_runtime_appeals and mode in {"appeals", "all"})
         ):
@@ -854,6 +856,9 @@ def run_autopilot(
             allow_followups_disabled=(
                 (trusted_runtime_followups and mode in {"followups", "all"})
                 or runtime_followups_enabled
+            ),
+            allow_initial_claims_disabled=(
+                trusted_runtime_initial_claims and mode in {"initial_claims", "all"}
             ),
             allow_appeals_disabled=(
                 trusted_runtime_appeals and mode in {"appeals", "all"}
@@ -1568,6 +1573,7 @@ def candidate_skip_reason(
     candidate: Candidate,
     connection: EmailConnectionStatus,
     *,
+    allow_initial_claims_disabled: bool = False,
     allow_followups_disabled: bool = False,
     allow_appeals_disabled: bool = False,
 ) -> str | None:
@@ -1583,7 +1589,7 @@ def candidate_skip_reason(
             return recipient_error
 
     if candidate.action_type == "send_initial_claim":
-        if not settings.autopilot_initial_claims_enabled:
+        if not settings.autopilot_initial_claims_enabled and not allow_initial_claims_disabled:
             return "initial_claims_disabled"
         return initial_claim_skip_reason(db, candidate.object)  # type: ignore[arg-type]
     if candidate.action_type.startswith("send_followup") or candidate.action_type == "send_escalation":

@@ -449,16 +449,28 @@ def _run_followup_worker(
         max_remote_thread_repairs=4,
     )
 
+    initial_claim_result = None
     followup_result = None
     appeal_result = None
     refund_result = None
-    lane_order = ["followups", "appeals", "refunds"]
+    lane_order = ["initial_claims", "followups", "appeals", "refunds"]
     lane_offset = int(time.time() // 173) % len(lane_order)
     lane_order = lane_order[lane_offset:] + lane_order[:lane_offset]
 
     try:
         for lane in lane_order:
-            if lane == "followups":
+            if lane == "initial_claims":
+                initial_claim_result = run_autopilot(
+                    db,
+                    owner,
+                    mode="initial_claims",
+                    restaurant_id=None,
+                    dry_run=False,
+                    provider=provider,
+                    max_candidates=100,
+                    trusted_runtime_initial_claims=True,
+                )
+            elif lane == "followups":
                 followup_result = run_autopilot(
                     db,
                     owner,
@@ -507,6 +519,15 @@ def _run_followup_worker(
             }
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
+    initial_claim_payload = {
+        "status": initial_claim_result.run.status if initial_claim_result is not None else "not_run",
+        "run_id": initial_claim_result.run.id if initial_claim_result is not None else None,
+        "total_candidates": initial_claim_result.run.total_candidates if initial_claim_result is not None else 0,
+        "sent_count": initial_claim_result.run.sent_count if initial_claim_result is not None else 0,
+        "skipped_count": initial_claim_result.run.skipped_count if initial_claim_result is not None else 0,
+        "failed_count": initial_claim_result.run.failed_count if initial_claim_result is not None else 0,
+        "error_message": initial_claim_result.run.error_message if initial_claim_result is not None else None,
+    }
     followup_payload = {
         "status": followup_result.run.status if followup_result is not None else "not_run",
         "run_id": followup_result.run.id if followup_result is not None else None,
@@ -535,27 +556,32 @@ def _run_followup_worker(
     }
 
     total_candidates = (
-        int(followup_payload["total_candidates"])
+        int(initial_claim_payload["total_candidates"])
+        + int(followup_payload["total_candidates"])
         + int(appeal_payload["total_candidates"])
         + int(refund_payload["candidates"])
     )
     sent_count = (
-        int(followup_payload["sent_count"])
+        int(initial_claim_payload["sent_count"])
+        + int(followup_payload["sent_count"])
         + int(appeal_payload["sent_count"])
         + int(refund_payload["sent_count"])
     )
     skipped_count = (
-        int(followup_payload["skipped_count"])
+        int(initial_claim_payload["skipped_count"])
+        + int(followup_payload["skipped_count"])
         + int(appeal_payload["skipped_count"])
         + int(refund_payload["skipped_count"])
     )
     failed_count = (
-        int(followup_payload["failed_count"])
+        int(initial_claim_payload["failed_count"])
+        + int(followup_payload["failed_count"])
         + int(appeal_payload["failed_count"])
         + int(refund_payload["failed_count"])
     )
     error_message = (
-        followup_payload["error_message"]
+        initial_claim_payload["error_message"]
+        or followup_payload["error_message"]
         or appeal_payload["error_message"]
         or ("; ".join(refund_payload["errors"][:5]) if refund_payload["errors"] else None)
     )
@@ -568,13 +594,14 @@ def _run_followup_worker(
 
     payload = {
         "status": "failed" if failed_count else "completed",
-        "run_id": followup_payload["run_id"] or appeal_payload["run_id"],
+        "run_id": initial_claim_payload["run_id"] or followup_payload["run_id"] or appeal_payload["run_id"],
         "total_candidates": total_candidates,
         "sent_count": sent_count,
         "skipped_count": skipped_count,
         "failed_count": failed_count,
         "error_message": error_message,
         "lane_order": lane_order,
+        "initial_claims": initial_claim_payload,
         "followups": followup_payload,
         "followup_blockers": _autopilot_blocker_summary(followup_result),
         "followup_queue": followup_queue,
