@@ -28,8 +28,9 @@ jobs:
         run: |
           set -u
 
-          for tick in 1 2 3 4; do
-            echo "TENNET Gmail historical backfill ${tick}/4"
+          quota_deferred=0
+          for tick in 1 2; do
+            echo "TENNET Gmail historical backfill ${tick}/2"
 
             oidc_json="$(curl --fail-with-body --silent --show-error \
               --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
@@ -51,13 +52,26 @@ jobs:
 
             case "$status" in
               2*) ;;
+              429|502)
+                if grep -Eqi 'quota exceeded|total query cost|rate.?limit|retry after' response.json; then
+                  echo "TENNET Gmail quota reached; deferring this slice to the next scheduled run."
+                  quota_deferred=1
+                  break
+                fi
+                echo "TENNET backfill returned HTTP $status" >&2
+                exit 1
+                ;;
               *) echo "TENNET backfill returned HTTP $status" >&2; exit 1 ;;
             esac
 
-            if [ "$tick" -lt 4 ]; then
-              sleep 90
+            if [ "$tick" -lt 2 ]; then
+              sleep 120
             fi
           done
+
+          if [ "$quota_deferred" -eq 1 ]; then
+            echo "TENNET historical recovery remains pending and will resume automatically."
+          fi
 
           echo "TENNET followup drain after historical recovery"
           status="$(curl --silent --show-error --request POST \
