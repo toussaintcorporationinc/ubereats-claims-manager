@@ -253,6 +253,31 @@ def payload_has_explicit_payment_confirmation(payload: InboundEmailPayload) -> b
     return text_has_explicit_payment_confirmation(current_payload_response_text(payload))
 
 
+
+# An acknowledgement that a support ticket is closed is not a substantive
+# refusal. A Gmail SENT label does not mean that Uber received the reply.
+CLOSED_SUPPORT_THREAD_MARKERS = (
+    "nous ne pouvons pas repondre aux conversations qui ont ete fermees",
+    "votre message n'a pas ete recu par notre equipe d'assistance",
+    "we cannot reply to conversations that have been closed",
+    "we cannot respond to conversations that have been closed",
+    "your message was not received by our support team",
+)
+
+
+def text_is_uber_closed_thread_notice(text: str) -> bool:
+    normalized = normalize_payment_signal_text(text)
+    return any(marker in normalized for marker in CLOSED_SUPPORT_THREAD_MARKERS)
+
+
+def message_is_uber_closed_thread_notice(message: InboundEmailMessage) -> bool:
+    return text_is_uber_closed_thread_notice(current_response_text(message))
+
+
+def payload_is_uber_closed_thread_notice(payload: InboundEmailPayload) -> bool:
+    return text_is_uber_closed_thread_notice(current_payload_response_text(payload))
+
+
 def response_text_order_number(text: str) -> str | None:
     normalized_text = normalize_payment_signal_text(text)
     patterns = (
