@@ -20,6 +20,7 @@ from app.services.customer_refund_review_service import (
 from app.services.gmail_payment_signal_service import (
     current_response_text,
     message_has_explicit_payment_confirmation,
+    message_is_uber_closed_thread_notice,
     normalize_payment_signal_text,
 )
 from app.services.openai_structured_analysis_service import AIGmailClassification, OpenAIStructuredAnalysisService
@@ -249,6 +250,18 @@ class GmailResponseIntelligenceService:
 
     def classify_message(self, message: InboundEmailMessage) -> GmailResponseClassification:
         text = normalize_text(current_response_text(message))
+        # An Uber delivery-failure notice is not a refusal to reimburse a
+        # merchant. The old ticket needs reopening by an accepted support route.
+        if (
+            str(message.from_email or "").strip().casefold().endswith("@uber.com")
+            and message_is_uber_closed_thread_notice(message)
+        ):
+            return GmailResponseClassification(
+                review_type="manual_review",
+                confidence_score=Decimal("1.00"),
+                reason="uber_support_thread_closed",
+                notes="Uber indique que sa conversation est fermee et que la reponse n'a pas ete recue.",
+            )
         is_starred = message_has_provider_label(message, "STARRED")
         amount = detect_amount(text)
         matches = {key: matching_keywords(text, keywords) for key, keywords in KEYWORDS.items()}
