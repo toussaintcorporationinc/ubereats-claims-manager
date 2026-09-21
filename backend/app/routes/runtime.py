@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.models import AuditLog, ClaimOrder, FollowUpTask, Restaurant, User
+from app.models import AuditLog, ClaimOrder, FollowUpTask, InboundEmailMessage, Restaurant, User
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.autopilot_service import (
@@ -41,6 +41,7 @@ router = APIRouter(prefix="/v1/runtime", tags=["runtime"])
 # GitHub Actions OIDC workers trigger these runtime routes.
 
 HISTORICAL_BACKFILL_START = date(2026, 1, 1)
+HISTORICAL_BACKFILL_BATCH_SIZE = 10  # Limit Gmail full-message reads per history pass.
 GITHUB_OIDC_ISSUER = "https://token.actions.githubusercontent.com"
 GITHUB_OIDC_JWKS_URI = "https://token.actions.githubusercontent.com/.well-known/jwks"
 GITHUB_OIDC_AUDIENCE = "tennet-runtime"
@@ -268,28 +269,48 @@ def _run_gmail_backfill(
         }
 
     next_day = day + timedelta(days=1)
-    # Restrict historical reads to Uber traffic. Fetching the entire mailbox
-    # consumed Gmail "Total Query Cost" without helping recovery throughput.
-    # 500 relevant Uber messages per account/day is a deliberately hard batch
-    # ceiling; normal volumes are far below it.
+    # A Gmail list fetch is cheap; downloading hundreds of full messages
+    # saturates the per-user Total Query Cost quota needed for live sends.
+    # Scan all IDs for this day, fetch only *unseen* ones in a small batch,
+    # and only mark the day complete when no unseen IDs remain.
     query = (
         f"after:{day.strftime('%Y/%m/%d')} "
         f"before:{next_day.strftime('%Y/%m/%d')} "
         "{from:uber.com to:restaurantsfrance@uber.com}"
     )
     try:
+        message_ids = service.provider.list_all_messages_for_account(
+            db,
+            account,
+            query=query,
+            page_size=100,
+            max_pages=0,
+        )
+        imported_ids = set(
+            db.scalars(
+                select(InboundEmailMessage.provider_message_id).where(
+                    InboundEmailMessage.provider == "gmail",
+                    InboundEmailMessage.email_account_id == account.id,
+                    InboundEmailMessage.provider_message_id.in_(message_ids),
+                )
+            ).all()
+        ) if message_ids else set()
+        unseen_ids = [message_id for message_id in message_ids if message_id not in imported_ids]
+        pending_ids = unseen_ids[:HISTORICAL_BACKFILL_BATCH_SIZE]
+        remaining_count = len(unseen_ids) - len(pending_ids)
         result = service.sync_account(
             db,
             owner,
             account,
             lookback_days=365,
-            max_messages=500,
+            max_messages=HISTORICAL_BACKFILL_BATCH_SIZE,
             analyze_responses=True,
             apply_reviews=True,
-            reprocess_existing_limit=500,
+            reprocess_existing_limit=HISTORICAL_BACKFILL_BATCH_SIZE,
             query_override=query,
             full_history=False,
             include_starred_discovery=False,
+            provider_message_ids=pending_ids,
         )
     except EmailProviderError as exc:
         db.rollback()
@@ -320,7 +341,9 @@ def _run_gmail_backfill(
         "day": day.isoformat(),
         "email_account_id": account.id,
         "email_address": account.email_address,
-        "status": result.status,
+        "status": "partial" if result.status == "success" and remaining_count else result.status,
+        "remaining_messages": remaining_count,
+        "batch_size": len(pending_ids),
         "synced_messages": result.synced_messages,
         "linked_messages": result.linked_messages,
         "unlinked_messages": result.unlinked_messages,
@@ -336,7 +359,8 @@ def _run_gmail_backfill(
         entity_id=account.id,
         action=(
             "gmail_historical_backfill.day_completed"
-            if result.status == "success"
+            if result.status == "success" and remaining_count == 0
+            else "gmail_historical_backfill.day_partial" if result.status == "success"
             else "gmail_historical_backfill.day_failed"
         ),
         user_id=owner.id,
@@ -344,8 +368,9 @@ def _run_gmail_backfill(
     )
     db.commit()
     logger.info(
-        "TENNET_GMAIL_BACKFILL status=%s imported=%s linked=%s applied=%s errors=%s",
-        result.status,
+        "TENNET_GMAIL_BACKFILL status=%s remaining=%s imported=%s linked=%s applied=%s errors=%s",
+        payload["status"],
+        remaining_count,
         result.synced_messages,
         result.linked_messages,
         result.applied_reviews,
