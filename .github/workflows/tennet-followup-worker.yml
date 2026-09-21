@@ -58,6 +58,12 @@ jobs:
             # its own cooldown, deduplication and per-account Gmail limits.
             if [ "$tick" -eq 1 ]; then
               for lane in gmail-sync gmail-backfill; do
+                # A successful live sync can exhaust the per-user Gmail query
+                # budget for the current minute. Give it time to recover before
+                # any historical batch; preserve Gmail send pacing and cooldowns.
+                if [ "$lane" = "gmail-backfill" ]; then
+                  sleep 120
+                fi
                 echo "TENNET Gmail recovery fallback: ${lane}"
                 lane_status="$(curl --connect-timeout 10 --max-time 95 \
                   --silent --show-error --request POST \
