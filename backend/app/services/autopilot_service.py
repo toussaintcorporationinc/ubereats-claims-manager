@@ -76,6 +76,7 @@ from app.services.gmail_payment_signal_service import (
     current_response_order_number,
     message_has_explicit_payment_confirmation,
     payload_has_explicit_payment_confirmation,
+    payload_is_uber_closed_thread_notice,
 )
 
 AUTOPILOT_FINAL_ORDER_STATUSES = FINAL_CLAIM_STATUSES | {"accepted", "payment_to_verify", "payment_confirmed"}
@@ -2156,6 +2157,10 @@ def remote_thread_safety_skip_reason(
         from_email = str(payload.from_email or "").strip().casefold()
         if not from_email or from_email == account_address:
             continue
+        # Uber explicitly says replies to this closed case never reached support.
+        # Block this Gmail thread instead of counting another undelivered relance.
+        if from_email.endswith("@uber.com") and payload_is_uber_closed_thread_notice(payload):
+            return "uber_support_thread_closed"
         if sender_filter and sender_filter not in from_email:
             continue
         if not payload_has_explicit_payment_confirmation(payload):
