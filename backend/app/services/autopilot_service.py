@@ -1882,6 +1882,19 @@ def restaurant_signature_skip_reason(restaurant: Restaurant | None) -> str | Non
     return None
 
 
+UBER_SUPPORT_SURVEY_PREFIXES = (
+    "partagez votre experience avec le service d'assistance uber",
+    "share your experience with uber support",
+    "rate your support experience",
+)
+
+
+def is_standalone_uber_support_survey_text(text: str) -> bool:
+    """A survey alone is not a new substantive Uber decision to appeal."""
+    normalized = normalize_payment_signal_text(text)
+    return any(marker in normalized[:550] for marker in UBER_SUPPORT_SURVEY_PREFIXES)
+
+
 def latest_verified_appeal_inbound_message(db: Session, order_id: int) -> InboundEmailMessage | None:
     """Return the newest linked Uber reply that is safe to answer automatically."""
     order = db.get(ClaimOrder, order_id)
@@ -1901,6 +1914,10 @@ def latest_verified_appeal_inbound_message(db: Session, order_id: int) -> Inboun
     for message in messages:
         from_email = str(message.from_email or "").strip().casefold()
         if sender_filter and sender_filter not in from_email:
+            continue
+        # Keep the same substantive-reply rule as the remote Gmail preflight:
+        # a newer satisfaction survey must not supersede Uber's last decision.
+        if is_standalone_uber_support_survey_text(current_response_text(message)):
             continue
         response_identifier = current_response_order_number(message)
         if response_identifier and not order_identifiers_equivalent(
@@ -2165,12 +2182,7 @@ def remote_thread_safety_skip_reason(
             sender = str(payload.from_email or "").strip().casefold()
             if payload.provider_thread_id != thread_id or not sender.endswith("@uber.com"):
                 return False
-            response = normalize_payment_signal_text(current_payload_response_text(payload))
-            return not any(marker in response[:550] for marker in (
-                "partagez votre experience avec le service d'assistance uber",
-                "share your experience with uber support",
-                "rate your support experience",
-            ))
+            return not is_standalone_uber_support_survey_text(current_payload_response_text(payload))
         substantive_replies = [payload for payload in payloads if is_substantive_uber_reply(payload)]
         if substantive_replies:
             latest_remote = max(
