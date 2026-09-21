@@ -1,5 +1,5 @@
 name: TENNET Gmail history backfill
-# Recovery trigger: restart bounded historical Gmail import after missing scheduled calls.
+# Recovery trigger: retry bounded historical Gmail import with production failure diagnostics.
 
 on:
   schedule:
