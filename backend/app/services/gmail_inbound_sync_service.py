@@ -182,6 +182,7 @@ class GmailInboundSyncService:
         query_override: str | None = None,
         full_history: bool = False,
         include_starred_discovery: bool = True,
+        provider_message_ids: list[str] | None = None,
     ) -> GmailInboundSyncResult:
         sync_state = self.get_or_create_sync_state(db, account)
         sync_state.status = "running"
@@ -214,7 +215,18 @@ class GmailInboundSyncService:
             settings = get_settings()
             starred_max_messages = max(0, settings.gmail_starred_max_messages_per_sync)
 
-            if full_history:
+            # Historical backfill selects only unseen Gmail IDs from a cheap
+            # list operation. Avoid re-fetching hundreds of existing messages
+            # just to find the few that still need import.
+            if provider_message_ids is not None:
+                get_for_account = getattr(self.provider, "get_message_for_account", None)
+                if not callable(get_for_account):
+                    raise EmailProviderError("gmail_message_fetch_unavailable", 503)
+                primary_payloads = [
+                    get_for_account(db, account, message_id)
+                    for message_id in provider_message_ids[:max(0, max_messages)]
+                ]
+            elif full_history:
                 sync_all_for_account = getattr(self.provider, "sync_all_inbound_replies_for_account", None)
                 if callable(sync_all_for_account):
                     primary_payloads = sync_all_for_account(
