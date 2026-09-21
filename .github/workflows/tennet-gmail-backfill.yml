@@ -1,5 +1,5 @@
 name: TENNET Gmail history backfill
-# Recovery trigger: retry bounded historical Gmail import with production failure diagnostics.
+# Recovery trigger: activate ten-message historical Gmail slices in production.
 
 on:
   schedule:
