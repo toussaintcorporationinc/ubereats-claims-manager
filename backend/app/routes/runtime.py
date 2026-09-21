@@ -293,12 +293,24 @@ def _run_gmail_backfill(
         )
     except EmailProviderError as exc:
         db.rollback()
+        # Keep precise provider failure metadata visible even if the
+        # GitHub worker only reports the HTTP status to Vercel.
+        logger.warning(
+            "TENNET_GMAIL_BACKFILL_FAILED provider_status=%s provider_error=%s",
+            exc.status_code,
+            str(exc.message).replace("\n", " ")[:500],
+        )
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
     except Exception as exc:
         db.rollback()
         safe_error = str(exc).replace("\n", " ").strip()
         if "password=" in safe_error.casefold():
             safe_error = "database_or_provider_error"
+        logger.warning(
+            "TENNET_GMAIL_BACKFILL_FAILED exception_type=%s summary=%s",
+            type(exc).__name__,
+            safe_error[:500],
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"{type(exc).__name__}: {safe_error[:500]}",
