@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings, get_settings
 from app.core.database import SessionLocal
-from app.models import EmailAccount, GmailSyncState, User
+from app.models import EmailAccount, GmailSyncState, InboundEmailMessage, User
 from app.models.domain import utc_now
 from app.services.audit import add_audit_log
 from app.services.autopilot_service import PreparedDraftResumeResult, resume_next_prepared_provider_draft
@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 MIN_AUTO_SYNC_INTERVAL_SECONDS = 15
 MIN_CONTINUOUS_IDLE_SLEEP_SECONDS = 15
 CONTINUOUS_RUNNING_STALE_AFTER_SECONDS = 60
+RECENT_UNWATCHED_UBER_MESSAGES_PER_ACCOUNT = 10
 
 
 @dataclass
@@ -122,6 +123,48 @@ class GmailInboundAutoSyncService:
                         safety_seconds=self.settings.gmail_quota_retry_safety_seconds,
                         now=now,
                     )
+                    # Starred-thread polling must not hide ordinary Uber replies.
+                    # Discover lightweight Gmail IDs for the recent inbox and
+                    # download only unseen messages, with a small quota budget.
+                    if retry_after is None:
+                        list_all_ids = getattr(self.provider, "list_all_messages_for_account", None)
+                        if callable(list_all_ids):
+                            recent_ids = list_all_ids(
+                                db,
+                                account,
+                                query="newer_than:2d from:uber.com",
+                                page_size=100,
+                                max_pages=0,
+                            )
+                            known_ids = set(
+                                db.scalars(
+                                    select(InboundEmailMessage.provider_message_id).where(
+                                        InboundEmailMessage.provider == "gmail",
+                                        InboundEmailMessage.email_account_id == account.id,
+                                        InboundEmailMessage.provider_message_id.in_(recent_ids),
+                                    )
+                                ).all()
+                            ) if recent_ids else set()
+                            pending_ids = [
+                                message_id for message_id in recent_ids
+                                if message_id not in known_ids
+                            ][:RECENT_UNWATCHED_UBER_MESSAGES_PER_ACCOUNT]
+                            if pending_ids:
+                                recent_result = sync_service.sync_account(
+                                    db,
+                                    user,
+                                    account,
+                                    lookback_days=2,
+                                    max_messages=RECENT_UNWATCHED_UBER_MESSAGES_PER_ACCOUNT,
+                                    analyze_responses=True,
+                                    apply_reviews=True,
+                                    reprocess_existing_limit=RECENT_UNWATCHED_UBER_MESSAGES_PER_ACCOUNT,
+                                    query_override="newer_than:2d from:uber.com",
+                                    full_history=False,
+                                    include_starred_discovery=False,
+                                    provider_message_ids=pending_ids,
+                                )
+                                self.add_account_result(result, recent_result)
                     if retry_after is None and self.settings.gmail_inbound_auto_sync_run_autopilot:
                         self.add_prepared_draft_result(
                             result,
