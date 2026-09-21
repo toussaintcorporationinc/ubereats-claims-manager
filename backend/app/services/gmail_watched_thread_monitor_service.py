@@ -52,6 +52,8 @@ from app.services.gmail_payment_signal_service import (
     EXPLICIT_PAYMENT_PROMISE_MARKERS,
     current_response_order_number,
     message_has_explicit_payment_confirmation,
+    message_is_uber_closed_thread_notice,
+    payload_is_uber_closed_thread_notice,
     payload_has_explicit_payment_confirmation,
     text_has_explicit_payment_confirmation,
     visible_email_text,
@@ -1175,6 +1177,11 @@ class GmailWatchedThreadMonitorService:
                 return "latest_uber_reply_is_support_survey"
             latest_payload = substantive_payload
             self._latest_external_message_cache[cache_key] = latest_payload
+        if (
+            str(latest_payload.from_email or "").strip().casefold().endswith("@uber.com")
+            and payload_is_uber_closed_thread_notice(latest_payload)
+        ):
+            return "uber_support_thread_closed"
         if latest_payload.provider_message_id != message.provider_message_id:
             return "superseded_by_newer_uber_message"
         return None
@@ -3259,6 +3266,15 @@ class GmailWatchedThreadMonitorService:
         if thread_order_conflict:
             item.status = "manual_review"
             item.reason = "gmail_thread_order_mismatch"
+            watched.status = "manual_review"
+            watched.star_active = True
+            result.manual_reviews += 1
+        elif (
+            str(message.from_email or "").strip().casefold().endswith("@uber.com")
+            and message_is_uber_closed_thread_notice(message)
+        ):
+            item.status = "manual_review"
+            item.reason = "uber_support_thread_closed"
             watched.status = "manual_review"
             watched.star_active = True
             result.manual_reviews += 1
