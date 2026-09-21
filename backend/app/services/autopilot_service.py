@@ -73,8 +73,11 @@ from app.services.gmail_send_safety_service import (
 )
 from app.services.gmail_payment_signal_service import (
     current_payload_response_order_number,
+    current_payload_response_text,
     current_response_order_number,
+    current_response_text,
     message_has_explicit_payment_confirmation,
+    normalize_payment_signal_text,
     payload_has_explicit_payment_confirmation,
     payload_is_uber_closed_thread_notice,
 )
@@ -2151,6 +2154,46 @@ def remote_thread_safety_skip_reason(
         order.internal_reference,
     ):
         return "gmail_thread_order_identity_mismatch"
+    # The draft may have been composed from an old refusal while Uber has
+    # already answered again. Require the newest substantive Uber response to
+    # be imported and analyzed before any automated appeal is dispatched.
+    if isinstance(candidate.object, AppealWorkflow):
+        latest_local = latest_verified_appeal_inbound_message(db, order.id)
+        if latest_local is None:
+            return "gmail_latest_reply_requires_analysis"
+        def is_substantive_uber_reply(payload: InboundEmailPayload) -> bool:
+            sender = str(payload.from_email or "").strip().casefold()
+            if payload.provider_thread_id != thread_id or not sender.endswith("@uber.com"):
+                return False
+            response = normalize_payment_signal_text(current_payload_response_text(payload))
+            return not any(marker in response[:550] for marker in (
+                "partagez votre experience avec le service d'assistance uber",
+                "share your experience with uber support",
+                "rate your support experience",
+            ))
+        substantive_replies = [payload for payload in payloads if is_substantive_uber_reply(payload)]
+        if substantive_replies:
+            latest_remote = max(
+                substantive_replies,
+                key=lambda message: (
+                    message.received_at.replace(tzinfo=timezone.utc)
+                    if message.received_at and message.received_at.tzinfo is None
+                    else message.received_at or datetime.min.replace(tzinfo=timezone.utc)
+                ),
+            )
+            if latest_remote.provider_message_id != latest_local.provider_message_id:
+                return "new_uber_reply_requires_analysis"
+            latest_text = normalize_payment_signal_text(current_payload_response_text(latest_remote))
+            if "votre compte fait actuellement l'objet d'une enquete" in latest_text and (
+                "acces" in latest_text or "restreint" in latest_text
+            ):
+                return "uber_account_investigation_requires_separate_review"
+            if any(marker in latest_text for marker in (
+                "photo de la commande preparee avec le recu",
+                "images de videosurveillance",
+                "photo of the prepared order with the receipt",
+            )):
+                return "uber_specific_evidence_request_requires_review"
     for payload in payloads:
         if payload.provider_thread_id != thread_id:
             continue
