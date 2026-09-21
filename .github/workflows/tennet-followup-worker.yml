@@ -20,7 +20,7 @@ concurrency:
 jobs:
   followups:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - name: Run TENNET followups at Gmail-safe maximum pace
         shell: bash
@@ -51,6 +51,29 @@ jobs:
             cat response.json 2>/dev/null || true
             echo
             echo "TENNET runtime HTTP ${status}"
+
+            # The dedicated Gmail schedules can be delayed or missed by GitHub.
+            # Use one bounded, authenticated recovery pass per followup run.
+            # This does not send any message directly: the TENNET API applies
+            # its own cooldown, deduplication and per-account Gmail limits.
+            if [ "$tick" -eq 1 ]; then
+              for lane in gmail-sync gmail-backfill; do
+                echo "TENNET Gmail recovery fallback: ${lane}"
+                lane_status="$(curl --connect-timeout 10 --max-time 95 \
+                  --silent --show-error --request POST \
+                  --header "Authorization: Bearer ${runtime_token}" \
+                  --header "Accept: application/json" \
+                  --output "${lane}-response.json" \
+                  --write-out "%{http_code}" \
+                  "https://ubereats-claims-manager.vercel.app/api/v1/runtime/${lane}" || true)"
+                cat "${lane}-response.json" 2>/dev/null || true
+                echo
+                echo "TENNET Gmail ${lane} HTTP ${lane_status}"
+                if [[ ! "${lane_status}" =~ ^2 ]]; then
+                  echo "TENNET ${lane} requires retry or inspection; continuing safe followup worker." >&2
+                fi
+              done
+            fi
 
             if [ "$tick" -lt 10 ]; then
               sleep 173
