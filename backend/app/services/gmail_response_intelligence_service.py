@@ -339,15 +339,6 @@ class GmailResponseIntelligenceService:
                 notes=build_notes("Uber semble accepter la demande.", message, matches),
             )
 
-        if is_starred:
-            return GmailResponseClassification(
-                review_type="refused",
-                confidence_score=Decimal("0.95"),
-                reason="gmail_starred_urgent_followup",
-                matched_keywords=matches,
-                notes=build_notes("Email marque avec une etoile Gmail: refus Uber a relancer en urgence.", message, matches),
-            )
-
         if "evidence_requested" in strong_groups:
             return GmailResponseClassification(
                 review_type="evidence_requested",
@@ -389,6 +380,17 @@ class GmailResponseIntelligenceService:
         ai_classification = self.classify_message_with_ai(message, text, matches)
         if ai_classification is not None:
             return ai_classification
+
+        # A star is not evidence of refusal. Unknown urgent replies go to
+        # manual review rather than generating unsupported automatic appeals.
+        if is_starred:
+            return GmailResponseClassification(
+                review_type="manual_review",
+                confidence_score=Decimal("0.60"),
+                reason="starred_without_explicit_refusal",
+                matched_keywords=matches,
+                notes=build_notes("Message urgent sans refus explicite: revue du contenu necessaire.", message, matches),
+            )
 
         return GmailResponseClassification(
             review_type="manual_review",
