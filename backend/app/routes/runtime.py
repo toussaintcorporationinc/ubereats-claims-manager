@@ -163,6 +163,16 @@ def _run_gmail_sync(
         settings=settings,
     ).sync_due_accounts(db)
     db.commit()
+    logger.info(
+        "TENNET_GMAIL_SYNC status=%s checked=%s synced=%s messages=%s sent=%s failed=%s errors=%s",
+        result.status,
+        result.accounts_checked,
+        result.accounts_synced,
+        result.synced_messages,
+        result.autopilot_sent_count,
+        result.autopilot_failed_count,
+        len(result.errors),
+    )
     return asdict(result)
 
 
@@ -321,6 +331,14 @@ def _run_gmail_backfill(
         new_value=payload,
     )
     db.commit()
+    logger.info(
+        "TENNET_GMAIL_BACKFILL status=%s imported=%s linked=%s applied=%s errors=%s",
+        result.status,
+        result.synced_messages,
+        result.linked_messages,
+        result.applied_reviews,
+        len(result.errors),
+    )
     return payload
 
 
@@ -617,6 +635,19 @@ def _run_followup_worker(
         "self_heal": asdict(repair),
     }
     db.commit()
+    logger.info(
+        "TENNET_FOLLOWUP_WORKER candidates=%s sent=%s skipped=%s failed=%s tasks_created=%s blockers=%s",
+        total_candidates,
+        sent_count,
+        skipped_count,
+        failed_count,
+        recalculate.created_tasks,
+        json.dumps({
+            "followups": payload["followup_blockers"][:8],
+            "appeals": payload["appeal_blockers"][:8],
+            "queue": payload["followup_queue"],
+        }, default=str)[:1800],
+    )
     return payload
 
 
