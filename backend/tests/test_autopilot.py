@@ -1244,6 +1244,8 @@ def test_closed_restaurant_keeps_existing_verified_followups_eligible(
     assert order is not None and stored_restaurant is not None and owner is not None
     order.status = "sent"
     order.first_email_sent_at = utc_now() - timedelta(days=5)
+    # Verified followups require a mapped Uber merchant, even after closure.
+    stored_restaurant.uber_merchant_id = "merchant-closed-followup"
     db_session.add(
         EmailThread(
             order_id=order.id,
