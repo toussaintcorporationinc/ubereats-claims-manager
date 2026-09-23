@@ -1351,7 +1351,8 @@ def followup_candidates(
             FollowUpTask.task_type.in_(tuple(FOLLOWUP_ACTION_BY_TASK.keys())),
             FollowUpTask.status.in_(("pending", "draft_created", "provider_draft_created")),
             FollowUpTask.due_at <= now,
-            Restaurant.active.is_(True),
+            # Restaurant closure does not extinguish claims for past orders.
+            # The owner-controlled autopilot switch remains authoritative.
             Restaurant.autopilot_enabled.is_(True),
         )
         .order_by(FollowUpTask.due_at, FollowUpTask.id)
@@ -1448,7 +1449,7 @@ def appeal_candidates(
         .where(
             AppealWorkflow.status.in_(ELIGIBLE_APPEAL_STATUSES),
             or_(AppealWorkflow.next_action_at.is_(None), AppealWorkflow.next_action_at <= now),
-            Restaurant.active.is_(True),
+            # A closed restaurant may still receive adjustments for prior orders.
             Restaurant.autopilot_enabled.is_(True),
         )
         .order_by(AppealWorkflow.next_action_at, AppealWorkflow.id)
