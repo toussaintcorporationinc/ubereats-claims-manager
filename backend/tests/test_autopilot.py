@@ -1231,6 +1231,94 @@ def test_autopilot_appeal_after_refusal_does_not_close(
     assert workflow.appeal_attempt_count == 1
 
 
+def test_closed_restaurant_keeps_existing_verified_followups_eligible(
+    client: TestClient,
+    db_session: Session,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client, "Closed restaurant with an outstanding claim")
+    ready = create_ready_order(client, restaurant["id"], "CLOSED-FOLLOWUP")
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    stored_restaurant = db_session.get(Restaurant, restaurant["id"])
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert order is not None and stored_restaurant is not None and owner is not None
+    order.status = "sent"
+    order.first_email_sent_at = utc_now() - timedelta(days=5)
+    # Verified followups require a mapped Uber merchant, even after closure.
+    stored_restaurant.uber_merchant_id = "merchant-closed-followup"
+    db_session.add(
+        EmailThread(
+            order_id=order.id,
+            provider="gmail",
+            thread_id="closed-restaurant-existing-thread",
+            direction="outbound",
+            subject=f"Contestation de la commande {order.uber_order_number}",
+            body=f"Commande {order.uber_order_number} : recours pour une commande deja livree.",
+            sent_at=utc_now() - timedelta(days=5),
+        )
+    )
+    task = FollowUpTask(
+        order_id=order.id,
+        task_type="followup_1",
+        status="pending",
+        due_at=utc_now() - timedelta(hours=1),
+    )
+    db_session.add(task)
+    stored_restaurant.active = False
+    db_session.commit()
+
+    candidates = iter_candidates(
+        db_session, owner, "followups", restaurant["id"], max_candidates=10
+    )
+    assert any(candidate.case_id == task.id for candidate in candidates)
+
+    # Closure is not consent to contact Uber: an explicit autopilot opt-out still wins.
+    stored_restaurant.autopilot_enabled = False
+    db_session.commit()
+    assert iter_candidates(db_session, owner, "followups", restaurant["id"], max_candidates=10) == []
+
+
+def test_closed_restaurant_keeps_existing_verified_appeals_eligible(
+    client: TestClient,
+    db_session: Session,
+    autopilot_enabled: None,
+) -> None:
+    restaurant = create_restaurant(client, "Closed restaurant with a disputed refund")
+    ready = create_ready_order(client, restaurant["id"], "CLOSED-APPEAL")
+    order = db_session.get(ClaimOrder, ready["order_id"])
+    stored_restaurant = db_session.get(Restaurant, restaurant["id"])
+    owner = db_session.scalar(select(User).where(User.email == "owner@example.com"))
+    assert order is not None and stored_restaurant is not None and owner is not None
+    order.status = "refused"
+    workflow = AppealWorkflow(
+        case_type="claim_order",
+        case_id=order.id,
+        restaurant_id=order.restaurant_id,
+        claim_order_id=order.id,
+        status="appeal_needed",
+        refusal_count=1,
+        next_action_type="create_appeal_draft",
+        next_action_at=utc_now() - timedelta(hours=1),
+    )
+    db_session.add(workflow)
+    stored_restaurant.active = False
+    db_session.commit()
+    account = add_gmail_account(db_session)
+    add_starred_inbound_message(db_session, order, account)
+
+    candidates = iter_candidates(
+        db_session, owner, "appeals", restaurant["id"], max_candidates=10
+    )
+    assert any(
+        candidate.case_id == workflow.id and candidate.reason == "appeal_due_eligible"
+        for candidate in candidates
+    )
+
+    stored_restaurant.autopilot_enabled = False
+    db_session.commit()
+    assert iter_candidates(db_session, owner, "appeals", restaurant["id"], max_candidates=10) == []
+
+
 def test_autopilot_replies_to_starred_thread_without_customer_or_date(
     client: TestClient,
     db_session: Session,
